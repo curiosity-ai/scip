@@ -91,7 +91,7 @@ public class ExternalSymbolsTests
             await Assert.That(equatable.Documentation[0]).Contains("IEquatable<T>");
 
             var later = document.Occurrences
-                .Where(o => o.Symbol.EndsWith("/Helper#Later().", StringComparison.Ordinal)).ToList();
+                .Where(o => o.Symbol.EndsWith(" Helper#Later().", StringComparison.Ordinal)).ToList();
             await Assert.That(later.Count).IsEqualTo(2);
             await Assert.That(index.ExternalSymbols.Select(info => info.Symbol)).DoesNotContain(later[0].Symbol);
         }

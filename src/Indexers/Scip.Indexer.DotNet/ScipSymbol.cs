@@ -17,6 +17,9 @@ internal sealed class ScipSymbol
     /// <summary>Package placeholder for symbols that are only visible inside this index.</summary>
     public static ScipSymbol IndexLocalPackage { get; } = Package(".", ".");
 
+    /// <summary>False for the empty symbol and for a bare package (no descriptors, e.g. the global namespace).</summary>
+    public bool HasDescriptors() => IsLocal() || (Value.Length > 0 && !Value.EndsWith(' '));
+
     public bool IsLocal() => Value.StartsWith("local ", StringComparison.Ordinal);
 
     /// <summary>True for a global symbol of a real external NuGet/BCL package (not the index-local placeholder).</summary>
