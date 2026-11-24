@@ -41,7 +41,7 @@ public sealed partial class JavaIndexer : IIndexer
             var project = new ProjectDiscovery(new ArtifactLocator()).Discover(sourceRoot, parsed.ConfigPath);
             project.JavaHome = parsed.JdkHome ?? project.JavaHome;
             foreach (var jar in parsed.Classpath) ProjectDiscovery.AddJar(project, Path.GetFullPath(jar, sourceRoot));
-            var rc = await NativeProjectIndexer.RunAsync(project, output, parsed.JdkVersion, options.Arguments, reporter, cancellationToken, lintSafeRelationships: !parsed.AllInverse);
+            var rc = await NativeProjectIndexer.RunAsync(project, output, parsed.JdkVersion, options.Arguments, reporter, cancellationToken);
             if (rc == 0 && !reporter.HasErrors) Console.WriteLine(output);
             return reporter.HasErrors ? 1 : rc;
         }
@@ -126,7 +126,6 @@ public sealed record JavaIndexerArguments
     public List<string> Classpath { get; init; } = [];
     public bool Strict { get; init; }
     public bool NoInverse { get; init; }
-    public bool AllInverse { get; init; }
     public bool AllowEmpty { get; init; }
     public string? Error { get; init; }
 
@@ -148,7 +147,7 @@ public sealed record JavaIndexerArguments
                 case "--classpath": r.Classpath.AddRange(Next().Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--strict": r = r with { Strict = true }; break;
                 case "--no-inverse-relationships": r = r with { NoInverse = true }; break;
-                case "--all-inverse-relationships": r = r with { AllInverse = true }; break;
+                case "--all-inverse-relationships": break; // no-op: all inverse relationships are now the default
                 case "--allow-empty-index": r = r with { AllowEmpty = true }; break;
                 default: return r with { Error = $"unknown argument '{args[i]}'" };
             }

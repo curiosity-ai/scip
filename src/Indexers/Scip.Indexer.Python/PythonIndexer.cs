@@ -237,7 +237,7 @@ public sealed class PythonIndexer : IIndexer
             buffered.Add(doc);
         }
 
-        foreach (var doc in OrderForLint(buffered))
+        foreach (var doc in buffered)
         {
             writer.WriteDocument(doc);
         }
@@ -376,97 +376,6 @@ public sealed class PythonIndexer : IIndexer
                 Reference(r.Symbol);
             }
         }
-    }
-
-    /// <summary>
-    /// The lint resolves a relationship target only if it was defined by an earlier (or the same) document, so documents
-    /// are ordered definitions-first. Relationships that still point at a later document (import cycles) are dropped.
-    /// </summary>
-    private static List<Document> OrderForLint(List<Document> docs)
-    {
-        var definedIn = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (var i = 0; i < docs.Count; i++)
-        {
-            foreach (var info in docs[i].Symbols)
-            {
-                if (!SymbolNames.IsLocal(info.Symbol))
-                {
-                    definedIn.TryAdd(info.Symbol, i);
-                }
-            }
-        }
-
-        var state = new byte[docs.Count];
-        var order = new List<Document>(docs.Count);
-        var emitted = new HashSet<string>(StringComparer.Ordinal);
-
-        void Visit(int start)
-        {
-            var stack = new Stack<(int Index, IEnumerator<int> Deps)>();
-            state[start] = 1;
-            stack.Push((start, Dependencies(start).GetEnumerator()));
-            while (stack.Count > 0)
-            {
-                var (index, deps) = stack.Peek();
-                if (deps.MoveNext())
-                {
-                    var d = deps.Current;
-                    if (state[d] == 0)
-                    {
-                        state[d] = 1;
-                        stack.Push((d, Dependencies(d).GetEnumerator()));
-                    }
-
-                    continue;
-                }
-
-                stack.Pop();
-                state[index] = 2;
-                var doc = docs[index];
-                foreach (var info in doc.Symbols)
-                {
-                    emitted.Add(info.Symbol);
-                }
-
-                foreach (var info in doc.Symbols)
-                {
-                    for (var r = info.Relationships.Count - 1; r >= 0; r--)
-                    {
-                        var target = info.Relationships[r].Symbol;
-                        if (definedIn.ContainsKey(target) && !emitted.Contains(target))
-                        {
-                            info.Relationships.RemoveAt(r);
-                        }
-                    }
-                }
-
-                order.Add(doc);
-            }
-        }
-
-        IEnumerable<int> Dependencies(int i)
-        {
-            foreach (var info in docs[i].Symbols)
-            {
-                foreach (var r in info.Relationships)
-                {
-                    if (definedIn.TryGetValue(r.Symbol, out var j) && j != i)
-                    {
-                        yield return j;
-                    }
-                }
-            }
-        }
-
-        for (var i = 0; i < docs.Count; i++)
-        {
-            if (state[i] == 0)
-            {
-                Visit(i);
-            }
-        }
-
-        return order;
     }
 
     private static IEnumerable<string> ImportedProjectFiles(SourceModule module, ModuleSystem modules)

@@ -61,7 +61,7 @@ public class SnapshotTests
         var sourceRoot = Path.Combine(reference, "scip-snapshots", "cases", "java", "common");
         var output = Path.Combine(Directory.CreateTempSubdirectory("scipjava-lint").FullName, "index.scip");
         var project = new ProjectDiscovery(new ArtifactLocator()).Discover(sourceRoot);
-        var rc = await NativeProjectIndexer.RunAsync(project, output, "17", [], new AggregatorReporter(), CancellationToken.None, lintSafeRelationships: true);
+        var rc = await NativeProjectIndexer.RunAsync(project, output, "17", [], new AggregatorReporter(), CancellationToken.None);
         await Assert.That(rc).IsEqualTo(0);
         var index = Index.Parser.ParseFrom(File.ReadAllBytes(output));
         var external = index.ExternalSymbols.Select(s => s.Symbol).ToHashSet();
@@ -77,7 +77,7 @@ public class SnapshotTests
             {
                 foreach (var rel in info.Relationships)
                 {
-                    var ok = order.TryGetValue(rel.Symbol, out var at) ? at <= i : external.Contains(rel.Symbol);
+                    var ok = order.ContainsKey(rel.Symbol) || external.Contains(rel.Symbol);
                     if (!ok) badRelations.Add(info.Symbol + " -> " + rel.Symbol);
                 }
             }

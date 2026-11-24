@@ -80,7 +80,7 @@ public sealed class DotNetIndexer : IIndexer
             }
 
             documentCount = documents.Count;
-            foreach (var document in SymbolCompleteness.OrderForLint(documents))
+            foreach (var document in documents)
             {
                 writer.WriteDocument(document);
             }

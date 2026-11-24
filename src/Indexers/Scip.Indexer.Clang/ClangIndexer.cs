@@ -171,6 +171,8 @@ public sealed partial class ClangIndexer : IIndexer
             }
         }
 
+        // the same global symbol can carry SymbolInformation in several documents: emit each relationship once per index
+        HashSet<(string Symbol, string Target)> emittedRelationships = [];
         foreach (var doc in documents)
         {
             HashSet<string> locals = new(doc.Symbols.Select(static s => s.Symbol), StringComparer.Ordinal);
@@ -206,6 +208,14 @@ public sealed partial class ClangIndexer : IIndexer
                     s.Relationships.AddRange(combined);
                 }
 
+                if (!SymbolInformationIsLocal(s.Symbol))
+                {
+                    for (var i = s.Relationships.Count - 1; i >= 0; i--)
+                    {
+                        if (!emittedRelationships.Add((s.Symbol, s.Relationships[i].Symbol))) s.Relationships.RemoveAt(i);
+                    }
+                }
+
                 foreach (var r in s.Relationships)
                 {
                     Need(r.Symbol);
@@ -213,7 +223,7 @@ public sealed partial class ClangIndexer : IIndexer
             }
         }
 
-        foreach (var doc in DocumentOrdering.ByRelationshipDependencies(documents))
+        foreach (var doc in documents)
         {
             writer.WriteDocument(doc);
         }
@@ -223,6 +233,8 @@ public sealed partial class ClangIndexer : IIndexer
             writer.WriteExternalSymbol(info);
         }
     }
+
+    private static bool SymbolInformationIsLocal(string symbol) => symbol.StartsWith("local ", StringComparison.Ordinal);
 
     private static List<CompileCommand> DiscoverSources(string root)
     {
