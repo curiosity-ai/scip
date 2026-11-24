@@ -155,7 +155,7 @@ public class IndexerTests
         var doc = IndexProject(dir, "annotations", "1.0").Documents.Single();
         foreach (var (line, expected) in new[]
         {
-            (0, "main/initialized."), (1, "main/uninitialized."), (4, "main/Base#field."), (5, "main/Base#pending."),
+            (0, "main/initialized.initialized."), (1, "main/uninitialized.uninitialized."), (4, "main/Base#field."), (5, "main/Base#pending."),
             (7, "local "), (12, "local "), (16, "main/module_assigned."), (19, "local "), (23, "main/AssignedFirst#class_assigned."),
         })
         {

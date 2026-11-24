@@ -478,6 +478,15 @@ public sealed class TreeVisitor
             case DeclKind.External:
                 EmitExternal(node, decl);
                 return;
+            case DeclKind.Intrinsic:
+            {
+                // pyright's intrinsic declarations belong to the module node: scip-python ends up using its namespace symbol.
+                var module = _state.Modules.ModuleOf(node);
+                var symbol = GetScipSymbol(module.Tree);
+                Push(node, symbol);
+                EmitExternalSymbolInformation(symbol, []);
+                return;
+            }
         }
 
         var declNode = decl.Node!;
@@ -670,7 +679,7 @@ public sealed class TreeVisitor
             return;
         }
 
-        var symbol = ExternalSymbol(package, decl.ExternalModule, decl.Name);
+        var symbol = ExternalSymbol(package, decl.ExternalModule, decl.Name, node.Parent is MemberAccessNode m && m.Member == node);
         Push(node, symbol);
         EmitExternalSymbolInformation(symbol, []);
     }
@@ -679,14 +688,29 @@ public sealed class TreeVisitor
     /// Symbol for a stdlib/untyped-module member. Without typeshed we cannot know the declaration kind, so
     /// CamelCase names are classes, typing special forms and CONSTANTS are terms, everything else a function.
     /// </summary>
-    private string ExternalSymbol(PythonPackage package, string module, string name)
+    private string ExternalSymbol(PythonPackage package, string module, string name, bool memberAccess = false)
     {
-        if (Hardcoded.LooksLikeClass(name) && !Hardcoded.IsTypingSpecialForm(module, name) && module != "__future__")
+        // Only for `typing.Callable`-style member access: names imported with `from typing import X` keep their typing symbol.
+        if (memberAccess && Hardcoded.IsBuiltinsImportedClass(module, name))
+        {
+            // typeshed's builtins.pyi imports these, and pyright resolves them through the builtins scope.
+            return _names.Class(Stdlib, "builtins", name);
+        }
+
+        if (Hardcoded.IsStdlibLowercaseClass(module, name) ||
+            (Hardcoded.LooksLikeClass(name) && !Hardcoded.IsTypingSpecialForm(module, name) && module != "__future__"))
         {
             return _names.Class(package, module, name);
         }
 
-        if (module == "__future__" || Hardcoded.IsTypingSpecialForm(module, name) || name.All(c => char.IsUpper(c) || char.IsDigit(c) || c == '_'))
+        if (module == "__future__" || Hardcoded.IsStdlibAnnotatedVariable(module, name))
+        {
+            // Variables declared with an annotation at the top level of a stub: the annotated name is a term in the term of the name.
+            var owner = SymbolNames.Term(_names.Module(package, module), name);
+            return SymbolNames.Term(owner, name);
+        }
+
+        if (Hardcoded.IsTypingSpecialForm(module, name) || name.All(c => char.IsUpper(c) || char.IsDigit(c) || c == '_'))
         {
             return SymbolNames.Term(_names.Module(package, module), name);
         }
@@ -906,7 +930,10 @@ public sealed class TreeVisitor
             case NameNode n:
                 return MakeNameSymbol(n);
             case TypeAnnotationNode ta:
-                return ta.ValueExpression is NameNode ? GetScipSymbol(ta.ValueExpression) : NextLocal();
+                // scip-python 0.6.8: a (module level) annotated name is a term nested in the term of the same name (`x.x.`).
+                return ta.ValueExpression is NameNode vn
+                    ? SymbolNames.Term(GetScipSymbol((Node?)EnclosingSuite(ta) ?? ta.Parent!), vn.Value)
+                    : NextLocal();
             case DecoratorNode:
                 return NextLocal();
             case AssignmentNode a:
@@ -953,6 +980,12 @@ public sealed class TreeVisitor
         {
             case ModuleEntity m:
             {
+                if (node.Alias is not null)
+                {
+                    // `from pkg import module as alias`: scip-python 0.6.8 gives the alias a local symbol.
+                    return NextLocal();
+                }
+
                 var package = ModuleNameToPackage(parent.Module, null) ?? Project;
                 var parts = parent.Module.NameParts.Select(p => p.Value).Append(node.Name.Value);
                 _ = m;
@@ -1002,7 +1035,7 @@ public sealed class TreeVisitor
             return NextLocal();
         }
 
-        var scope = suite ?? (parent is TypeAnnotationNode ? parent.Parent! : parent);
+        var scope = (Node?)suite ?? parent;
         var owner = GetScipSymbol(scope);
         // Names bound inside a comprehension (e.g. walrus targets) have no enclosing global symbol: use a local.
         return owner.Length == 0 ? NextLocal() : SymbolNames.Term(owner, node.Value);

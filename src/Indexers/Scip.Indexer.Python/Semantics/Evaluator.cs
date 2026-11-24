@@ -140,6 +140,11 @@ public sealed class Evaluator(ModuleSystem modules)
             return decls;
         }
 
+        if (Hardcoded.IsModuleIntrinsic(name.Value))
+        {
+            return [new Declaration { Kind = DeclKind.Intrinsic, Name = name.Value, Module = module }];
+        }
+
         if (Hardcoded.IsBuiltin(name.Value))
         {
             return [new Declaration { Kind = DeclKind.Builtin, Name = name.Value }];
