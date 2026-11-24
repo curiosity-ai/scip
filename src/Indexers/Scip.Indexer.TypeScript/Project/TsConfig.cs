@@ -73,8 +73,11 @@ public static class TsConfig
         var excludeRegexes = excludes.Select(e => PatternToRegex(excludeDir, e, directoryPattern: true)).ToList();
 
         var wildcard = new List<string>();
+        var groupOf = new Dictionary<string, int>(StringComparer.Ordinal);
+        var patternIndex = -1;
         foreach (var pattern in includes)
         {
+            patternIndex++;
             var regex = PatternToRegex(includeDir, pattern, directoryPattern: true);
             var root = StaticRoot(includeDir, pattern);
             if (!Directory.Exists(root)) { continue; }
@@ -84,21 +87,43 @@ public static class TsConfig
                 if (!extensions.Any(e => norm.EndsWith(e, StringComparison.Ordinal))) { continue; }
                 if (!regex.IsMatch(norm) || excludeRegexes.Any(r => r.IsMatch(norm))) { continue; }
                 wildcard.Add(norm);
+                groupOf.TryAdd(norm, patternIndex);
             }
         }
 
         // When several files share a stem (a.ts, a.d.ts, a.js) TypeScript keeps the highest priority one.
+        var kept = new List<string>();
         foreach (var group in wildcard.Distinct().GroupBy(f => StemOf(f)))
         {
             var best = group.OrderBy(f => Priority(f)).First();
-            foreach (var f in group.Where(f => Priority(f) == Priority(best)).OrderBy(f => f, StringComparer.Ordinal))
+            foreach (var f in group.Where(f => Priority(f) == Priority(best)))
             {
-                if (seen.Add(f)) { files.Add(f); }
+                if (seen.Add(f)) { kept.Add(f); }
             }
         }
 
-        files.Sort(StringComparer.Ordinal);
+        // TypeScript's `matchFiles`: results are grouped by the include pattern that matched first; within a group a
+        // directory lists its files (sorted) before descending into its sub-directories (sorted).
+        kept.Sort((a, b) => groupOf[a] != groupOf[b] ? groupOf[a].CompareTo(groupOf[b]) : CompareTraversal(a, b));
+        files.AddRange(kept);
         return new ParsedConfig(files, raw.References, allowJs, raw.Lib, raw.Target, raw.NoLib, raw.CustomConditions, raw.BaseUrl ?? raw.PathsDir, raw.Paths);
+    }
+
+    private static int CompareTraversal(string a, string b)
+    {
+        var pa = a.Split('/');
+        var pb = b.Split('/');
+        for (var i = 0; i < Math.Min(pa.Length, pb.Length); i++)
+        {
+            var c = string.CompareOrdinal(pa[i], pb[i]);
+            if (c == 0) { continue; }
+            var aIsFile = i == pa.Length - 1;
+            var bIsFile = i == pb.Length - 1;
+            if (aIsFile != bIsFile) { return aIsFile ? -1 : 1; }
+            return c;
+        }
+
+        return pa.Length.CompareTo(pb.Length);
     }
 
     /// <summary>

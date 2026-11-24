@@ -59,6 +59,77 @@ public sealed class TsProgram
         return parsed;
     }
 
+    /// <summary>
+    /// The order <c>ts.createProgram</c> lists source files in: roots in order, each file preceded by the files it imports
+    /// (depth first). Symbols shared across files (anonymous type literals, object literal properties) are numbered by the
+    /// first file that names them, so indexing in this order reproduces the numbering of the original indexer.
+    /// </summary>
+    public List<string> ProgramOrder(IReadOnlyList<string> roots)
+    {
+        var order = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var stack = new Stack<(string Name, IEnumerator<string>? Imports)>();
+        foreach (var root in roots)
+        {
+            var normalized = Normalize(root);
+            if (!seen.Add(normalized)) { continue; }
+            stack.Push((normalized, ImportedFiles(normalized).GetEnumerator()));
+            while (stack.Count > 0)
+            {
+                var (name, imports) = stack.Peek();
+                if (imports is not null && imports.MoveNext())
+                {
+                    var next = imports.Current;
+                    if (seen.Add(next)) { stack.Push((next, ImportedFiles(next).GetEnumerator())); }
+                    continue;
+                }
+
+                stack.Pop();
+                order.Add(name);
+            }
+        }
+
+        return order;
+    }
+
+    private IEnumerable<string> ImportedFiles(string fileName)
+    {
+        var file = GetFile(fileName);
+        if (file is null || file.FileName.Contains("/node_modules/", StringComparison.Ordinal)) { yield break; }
+        var specifiers = new List<string>();
+        foreach (var st in file.Root.Elements)
+        {
+            switch (st.Kind)
+            {
+                case SK.ImportDeclaration or SK.ExportDeclaration when st.ModuleSpecifier is { Kind: SK.StringLiteral } ms:
+                    specifiers.Add(ms.Text);
+                    break;
+                case SK.ImportEqualsDeclaration when st.Expression is { Kind: SK.ExternalModuleReference, Expression: { Kind: SK.StringLiteral } er }:
+                    specifiers.Add(er.Text);
+                    break;
+            }
+        }
+
+        // dynamic `import("x")` and (in JavaScript) `require("x")`
+        var stack = new Stack<Node>();
+        stack.Push(file.Root);
+        var dynamic = new List<(int Pos, string Text)>();
+        while (stack.Count > 0)
+        {
+            var n = stack.Pop();
+            if (n.Kind == SK.ImportCall && n.Arguments is [{ Kind: SK.StringLiteral } a]) { dynamic.Add((n.Start, a.Text)); }
+            else if (file.IsJavaScript && n.Kind == SK.CallExpression && n.Expression is { Kind: SK.Identifier, Text: "require" } && n.Arguments is [{ Kind: SK.StringLiteral } r]) { dynamic.Add((n.Start, r.Text)); }
+            foreach (var c in n.Children) { stack.Push(c); }
+        }
+
+        specifiers.AddRange(dynamic.OrderBy(d => d.Pos).Select(d => d.Text));
+        foreach (var spec in specifiers)
+        {
+            var resolved = ResolveModule(file, spec);
+            if (resolved is not null) { yield return resolved.FileName; }
+        }
+    }
+
     public Binder BinderFor(TsSourceFile file)
     {
         if (file.IsLib && !ReferenceEquals(this, LibStore.Program)) { return LibStore.Program.BinderFor(file); }
