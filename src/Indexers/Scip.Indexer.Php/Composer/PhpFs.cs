@@ -78,9 +78,16 @@ internal sealed class PhpFs
         ParsedFile? file = null;
         try
         {
-            file = PhpParser.Parse(ReadLatin1(path));
+            var text = ReadLatin1(path);
+            if (text.Length == 0)
+            {
+                // Upstream refuses empty files as well ("Cannot parse file").
+                throw new ParseException("empty file", 0);
+            }
+
+            file = PhpParser.Parse(text);
         }
-        catch (Exception e) when (e is ParseException or IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is ParseException or IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException)
         {
             onError?.Invoke($"{path}: {e.Message}");
         }

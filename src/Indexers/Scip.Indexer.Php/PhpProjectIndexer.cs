@@ -69,9 +69,18 @@ public sealed class PhpProjectIndexer
             }
 
             var indexer = new DocIndexer(composer, namer, types, parsed.Source);
-            foreach (var node in parsed.PostOrder())
+            try
             {
-                indexer.Index(node);
+                foreach (var node in parsed.PostOrder())
+                {
+                    indexer.Index(node);
+                }
+            }
+            catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException)
+            {
+                _warn?.Invoke($"{file}: indexing failed: {e.Message}");
+                fs.Forget(file);
+                continue;
             }
 
             var doc = new Document

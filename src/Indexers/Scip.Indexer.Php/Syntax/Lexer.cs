@@ -307,20 +307,13 @@ internal sealed class Lexer(string src)
 
         if (c == '"')
         {
-            LexDoubleQuoted(tokens);
+            LexDoubleQuoted(tokens, '"');
             return;
         }
 
         if (c == '`')
         {
-            _i++;
-            while (_i < src.Length && src[_i] != '`')
-            {
-                _i += src[_i] == '\\' ? 2 : 1;
-            }
-
-            _i = Math.Min(_i + 1, src.Length);
-            tokens.Add(Make(TK.String, s, _i, src[s.._i]));
+            LexDoubleQuoted(tokens, '`');
             return;
         }
 
@@ -487,12 +480,12 @@ internal sealed class Lexer(string src)
         return true;
     }
 
-    private void LexDoubleQuoted(List<Token> tokens)
+    private void LexDoubleQuoted(List<Token> tokens, char quote)
     {
         var s = _i;
         var j = _i + 1;
         var interpolated = false;
-        while (j < src.Length && src[j] != '"')
+        while (j < src.Length && src[j] != quote)
         {
             if (src[j] == '\\')
             {
@@ -521,7 +514,7 @@ internal sealed class Lexer(string src)
         }
 
         var t = Make(TK.Template, s, end, src[s..end]);
-        _pos += 1; // opening quote token; the closing one is counted below
+        // The template token's own index stands for the opening quote; the closing quote is counted below.
         t.Parts = ScanTemplate(s + 1, end - 1, heredoc: false);
         _pos++;
         _i = end;
@@ -632,7 +625,7 @@ internal sealed class Lexer(string src)
         else
         {
             var t = Make(TK.Template, s, end, src[s..end]);
-            _pos++; // start heredoc
+            // The template token's own index stands for T_START_HEREDOC.
             t.Parts = ScanTemplate(bodyStart, contentEnd, heredoc: true);
             _pos++; // end heredoc
             tokens.Add(t);

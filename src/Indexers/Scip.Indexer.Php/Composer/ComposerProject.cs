@@ -159,6 +159,16 @@ internal sealed class ComposerProject
             }
         }
 
+        // composer's own loader class is `require`d by autoload_real.php and therefore not part of the classmap.
+        var loaderFile = Path.Combine(composerDir, "ClassLoader.php");
+        if (File.Exists(loaderFile) && _fs.Parse(loaderFile, _warn) is { } loaderAst)
+        {
+            foreach (var c in Declarations.Scan(loaderAst).Classes)
+            {
+                _classMap.TryAdd(c, _fs.Realpath(loaderFile) ?? loaderFile);
+            }
+        }
+
         LoadPrefixes(Path.Combine(composerDir, "autoload_psr4.php"), _psr4);
         LoadPrefixes(Path.Combine(composerDir, "autoload_namespaces.php"), _psr0);
     }
@@ -579,8 +589,29 @@ internal sealed class ComposerProject
 
     public bool IsConst(string c) => Builtins.Constants.Contains(c) || _consts.ContainsKey(c);
 
-    public bool IsClassLike(string c) =>
-        Builtins.Classes.Contains(c) || Builtins.IsEnumInterface(c) || c.Contains("anon-class-", StringComparison.Ordinal) || FindClassFile(c) != null;
+    public bool IsClassLike(string c)
+    {
+        if (Builtins.Classes.Contains(c) || Builtins.IsEnumInterface(c) || c.Contains("anon-class-", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var file = FindClassFile(c);
+        if (file == null)
+        {
+            return false;
+        }
+
+        // The loader also "finds" the file of a namespaced function (PSR-4 maps its name to a path). Like upstream, only
+        // call it a class when no such function exists or the file really declares the class.
+        if (!_functions.ContainsKey(c))
+        {
+            return true;
+        }
+
+        var parsed = _fs.Parse(file, _warn);
+        return parsed != null && Declarations.Scan(parsed).Classes.Contains(c, StringComparer.OrdinalIgnoreCase);
+    }
 
     public bool IsFunc(string f) =>
         _functions.ContainsKey(f) || Builtins.Functions.Contains(f) || f.Contains("anon-func-", StringComparison.Ordinal);
