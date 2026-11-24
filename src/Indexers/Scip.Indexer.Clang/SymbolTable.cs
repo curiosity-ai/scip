@@ -92,6 +92,9 @@ public sealed class Scope(Scope? parent, SKind kind)
     /// <summary>Template scopes: names of the template parameters in declaration order ("" when unnamed).</summary>
     public List<string> TemplateParamNames { get; } = [];
 
+    /// <summary>The scope of a <c>template &lt;&gt;</c> header.</summary>
+    public bool ExplicitSpecialization { get; set; }
+
     public HashSet<string> TemplateTemplateNames { get; } = [];
 
     /// <summary>Where declarations made "in" this scope go (template scopes forward to their parent).</summary>

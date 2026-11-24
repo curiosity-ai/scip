@@ -473,7 +473,7 @@ public sealed partial class CppParser
             return SkipStatement(p, end);
         }
 
-        var ts = new Scope(scope, SKind.Template) { Path = null };
+        var ts = new Scope(scope, SKind.Template) { Path = null, ExplicitSpecialization = close == p + 2 };
         // split parameters
         var segStart = p + 2;
         for (var k = p + 2; k <= close; k++)
@@ -832,7 +832,9 @@ public sealed partial class CppParser
         {
             _anonCounters.TryGetValue(nameTok.File, out var n);
             _anonCounters[nameTok.File] = n + 1;
-            descName = $"$anonymous_type_{AstHash.Hex(_files.Relative(nameTok.File) ?? _files.Path(nameTok.File), 8)}_{n}";
+            descName = target.Kind is SKind.Global or SKind.Namespace
+                ? $"$anonymous_type_{WyHash.HexOfText(_files.Relative(nameTok.File) ?? _files.Path(nameTok.File))}_{n}"
+                : $"$anonymous_type_{n}";
         }
 
         var sk = isEnum ? SymbolInformation.Types.Kind.Enum
@@ -851,7 +853,12 @@ public sealed partial class CppParser
             ent.TemplateScope ??= scope;
         }
 
-        Emit(nameTok, ent, isDef);
+        Emit(nameTok, ent, isDef && !(scope.Kind == SKind.Template && scope.ExplicitSpecialization));
+        if (isDef && scope.Kind == SKind.Template && scope.ExplicitSpecialization)
+        {
+            Emit(nameTok, ent, true);
+        }
+
         if (hasName)
         {
             if (seg.Count > 1)
@@ -1272,15 +1279,15 @@ public sealed partial class CppParser
             if (qs < nameIdx)
             {
                 var segs = new List<int>();
-                for (var x = qs; x < nameIdx; x += 2)
+                for (var x = qs; x < nameIdx; x++)
                 {
-                    if (Id(x))
+                    if (IsName(x))
                     {
                         segs.Add(x);
-                    }
-                    else
-                    {
-                        x--;
+                        if (P(x + 1, "<") && SkipAngles(x + 1, nameIdx, allowAssign: true) is var ac and > 0)
+                        {
+                            x = ac;
+                        }
                     }
                 }
 
@@ -1446,6 +1453,25 @@ public sealed partial class CppParser
         var close = M(open);
         // --- declared name
         var nameIdx = open - 1;
+        if (P(nameIdx, ">") && FindOperatorKeyword(p, open) < 0)
+        {
+            // explicit specialisation / template-id: f<int>(...)
+            var depth = 0;
+            for (var x = nameIdx; x > p; x--)
+            {
+                depth += P(x, ">") ? 1 : P(x, ">>") ? 2 : P(x, "<") ? -1 : 0;
+                if (depth <= 0)
+                {
+                    if (IsName(x - 1))
+                    {
+                        nameIdx = x - 1;
+                    }
+
+                    break;
+                }
+            }
+        }
+
         string name;
         var nameStartTok = _t[nameIdx];
         var nameLen = _t[nameIdx].Len;
@@ -1792,6 +1818,11 @@ public sealed partial class CppParser
                     else
                     {
                         Scan(fs, i, j + 1);
+                        var baseEnt = i == j ? fs.Lookup(_t[i].Text)?.FirstOrDefault(static e => e.Kind == EKind.Class) : null;
+                        if (baseEnt?.Own is { } bo && bo.Names.TryGetValue("<ctor>", out var baseCtors))
+                        {
+                            EmitCtor(fs, [.. baseCtors.Where(static c => c.Kind == EKind.Func)], baseEnt, _t[i], open + 1, M(open), forceRvalue: false);
+                        }
                     }
 
                     Scan(fs, open + 1, M(open));
@@ -2528,11 +2559,4 @@ public sealed partial class CppParser
 
         return Math.Min(n + 1, b);
     }
-}
-
-internal static class AstHash
-{
-    /// <summary>Lower-case hex of the first <paramref name="bytes"/> bytes of SHA-256 (upstream uses a 64-bit hash of the canonical type).</summary>
-    public static string Hex(string text, int bytes) =>
-        Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)).AsSpan(0, bytes));
 }
