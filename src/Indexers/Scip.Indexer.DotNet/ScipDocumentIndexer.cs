@@ -25,6 +25,9 @@ internal sealed class ScipDocumentIndexer
     // --allow-global-symbol-definitions assigns a real package name to a source symbol).
     private readonly Dictionary<string, SymbolInformation> _externalSymbols;
     private readonly HashSet<string> _definedSymbols;
+
+    // A partial type is defined in several documents; each (symbol, related) pair is reported by one document only.
+    private readonly Dictionary<(string Symbol, string Related), Document> _emittedRelationships;
     private readonly string _markdownCodeFenceLanguage;
 
     // Custom formatting options to render symbol documentation. Feel free to tweak these parameters.
@@ -71,8 +74,10 @@ internal sealed class ScipDocumentIndexer
         DotNetIndexOptions options,
         Dictionary<ISymbol, ScipSymbol> globals,
         Dictionary<string, SymbolInformation> externalSymbols,
-        HashSet<string> definedSymbols)
+        HashSet<string> definedSymbols,
+        Dictionary<(string Symbol, string Related), Document>? emittedRelationships = null)
     {
+        _emittedRelationships = emittedRelationships ?? [];
         _doc = doc;
         _options = options;
         _globals = globals;
@@ -102,10 +107,22 @@ internal sealed class ScipDocumentIndexer
         var owner = sym.Kind == SymbolKind.Namespace
             ? CreateScipPackageSymbol(sym)
             : CreateScipSymbol(sym.ContainingSymbol);
+        if (owner == ScipSymbol.Empty)
+        {
+            return ScipSymbol.Empty;
+        }
 
         if (owner.IsLocal())
         {
             return CreateLocalScipSymbol(sym);
+        }
+
+        if (sym is INamespaceSymbol { IsGlobalNamespace: true })
+        {
+            // The global namespace has an empty name, which is not a valid descriptor: members of the global
+            // namespace hang directly off the package.
+            _globals.TryAdd(sym, owner);
+            return owner;
         }
 
         var result = ScipSymbol.Global(owner, new SymbolDescriptor
@@ -268,6 +285,12 @@ internal sealed class ScipDocumentIndexer
 
         var scip = CreateScipSymbol(symbol);
         var scipSymbol = scip.Value;
+        if (!scip.HasDescriptors())
+        {
+            // `dynamic`, the global namespace, ...: nothing a SCIP symbol can name.
+            return;
+        }
+
         var occurrence = new Occurrence
         {
             Symbol = scipSymbol,
@@ -374,6 +397,25 @@ internal sealed class ScipDocumentIndexer
 
                     break;
                 }
+        }
+
+        MergeDuplicateRelationships(info);
+    }
+
+    // A partial type is defined in several documents and would repeat the same relationships in each one,
+    // which `scip lint` flags; keep them on the first document that reports them. Repeats within one
+    // SymbolInformation (a record implementing IEquatable<T> for two T) are kept as upstream emits them.
+    private void MergeDuplicateRelationships(SymbolInformation info)
+    {
+        for (var i = info.Relationships.Count - 1; i >= 0; i--)
+        {
+            var relationship = info.Relationships[i];
+            if (relationship.Symbol.Length == 0
+                || (!_emittedRelationships.TryAdd((info.Symbol, relationship.Symbol), _doc)
+                    && !ReferenceEquals(_emittedRelationships[(info.Symbol, relationship.Symbol)], _doc)))
+            {
+                info.Relationships.RemoveAt(i);
+            }
         }
     }
 
