@@ -39,8 +39,9 @@ Legend: `[x]` done · `[ ]` open. Upstream paths are relative to `.reference/`.
 - [ ] Port `main_test.go`, `print_test.go`, `lint_test.go`, `convert_test.go`
 
 ## 3. `reprolang` (test language, `scip/reprolang`)
-- [ ] Port grammar/parser (tree-sitter replacement or hand-written parser)
-- [ ] Port `testdata` and snapshot harness
+- [x] Port grammar/parser (hand-written parser in `src/Scip.Reprolang`, no native tree-sitter) + `ReproIndexer.Index(directory)`
+- [x] Port `testdata` and snapshot tests (`tests/Scip.Reprolang.Tests`)
+- [ ] Port `test_cmd` pass/fail output expectations once the CLI `test` runner (`test_runner.go`) exists; wire `snapshot`/`test` to `ReproIndexer`
 
 ## 4. Language indexers
 Each needs: a design note in `docs/PORTING.md`, implementation, ported tests/snapshots.

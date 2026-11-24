@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Scip.Reprolang</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>Reprolang: a toy language that emits fully controlled SCIP indexes for testing SCIP tooling.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Scip\Scip.csproj" />
+  </ItemGroup>
+</Project>

@@ -3,6 +3,7 @@
     <Project Path="src/Scip/Scip.csproj" />
     <Project Path="src/Scip.Indexing/Scip.Indexing.csproj" />
     <Project Path="src/Scip.Cli/Scip.Cli.csproj" />
+    <Project Path="src/Scip.Reprolang/Scip.Reprolang.csproj" />
   </Folder>
   <Folder Name="/src/Indexers/">
     <Project Path="src/Indexers/Scip.Indexer.Clang/Scip.Indexer.Clang.csproj" />
@@ -17,5 +18,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Scip.Tests/Scip.Tests.csproj" />
+    <Project Path="tests/Scip.Reprolang.Tests/Scip.Reprolang.Tests.csproj" />
   </Folder>
 </Solution>
