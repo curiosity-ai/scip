@@ -41,7 +41,7 @@ public sealed class SymbolNamer
         return string.Concat(pkg.Split('/').Select(p => JavaSymbols.EncodeName(p) + "/"));
     }
 
-    private static string Full(JavaPackage origin, string bare) => bare.StartsWith("local ", StringComparison.Ordinal) ? bare : $"scip-java {origin.ScipTypedEncoding} {bare}";
+    private static string Full(JavaPackage origin, string bare) => bare.StartsWith("local ", StringComparison.Ordinal) ? bare : $"{JavaPackage.Scheme} {origin.ScipTypedEncoding} {bare}";
 
     private static TypeInfo Top(TypeInfo t)
     {
@@ -51,7 +51,13 @@ public sealed class SymbolNamer
 
     public string BareType(TypeInfo t)
     {
-        if (t.IsAnonymous || t.IsLocal) return Local(t);
+        if (t.IsAnonymous) return Local(t);
+        if (t.IsLocal && t.LocalOwner is { } lo)
+        {
+            var mo = BareMethod(lo);
+            return mo.StartsWith("local ", StringComparison.Ordinal) ? Local(t) : mo + JavaSymbols.EncodeName(t.Simple) + "#";
+        }
+        if (t.IsLocal && t.Outer is null) return Local(t);
         var owner = t.Outer is null ? PackageBare(t.Package) : BareType(t.Outer);
         if (owner.StartsWith("local ", StringComparison.Ordinal)) return Local(t);
         return owner + JavaSymbols.EncodeName(t.Simple) + "#";
@@ -111,7 +117,15 @@ public sealed class SymbolNamer
         return Full(Top(owner.Owner).Origin, o + "[" + JavaSymbols.EncodeName(name) + "]");
     }
 
-    public string Variable(LocalVar v) => Local(v);
+    public string Variable(LocalVar v)
+    {
+        if (v.TermOwner is { } owner)
+        {
+            var bare = BareMethod(owner);
+            if (!bare.StartsWith("local ", StringComparison.Ordinal)) return Full(Top(owner.Owner).Origin, bare + JavaSymbols.EncodeName(v.Name) + ".");
+        }
+        return Local(v);
+    }
 }
 
 /// <summary>Entity behind a <c>Foo#class.</c> class-literal symbol.</summary>

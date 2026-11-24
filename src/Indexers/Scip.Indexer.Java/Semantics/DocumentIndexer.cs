@@ -20,6 +20,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
 
     public Document Index()
     {
+        EmitPackageDeclaration();
         EmitImports();
         foreach (var d in file.Unit.Types) VisitType(file.Declared[d], d, file.Scope);
         var doc = new Document
@@ -152,6 +153,18 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
 
     // ------------------------------------------------------------------ imports
 
+    private void EmitPackageDeclaration()
+    {
+        var parts = file.Unit.Package;
+        if (parts.Count == 0) return;
+        if (file.Unit.PackageMods is { } pm) EmitAnnotations(pm, file.Scope);
+        for (var i = 0; i < parts.Count; i++)
+        {
+            var pkg = string.Join('/', parts.Take(i + 1).Select(p => p.Name));
+            Reference(_names.Package(pkg), parts[i].Start, parts[i].End);
+        }
+    }
+
     private void EmitImports()
     {
         foreach (var imp in file.Unit.Imports)
@@ -236,7 +249,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
             foreach (var e in d.Implements) ws.ResolveType(e, scope, this);
         }
         // implicit default constructor is defined at the class name
-        if (!anon && ti.Methods.FirstOrDefault(m => m.Decl is null && m.IsCtor) is { } ctor && d.Kind != TypeKind.Record)
+        if (!anon && ti.Methods.FirstOrDefault(m => m.Decl is null && m.IsCtor) is { } ctor)
         {
             var cs = _names.Method(ctor);
             Definition(cs, d.NameStart, d.NameStart + d.Name.Length, null);
@@ -374,7 +387,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
 
     private readonly Stack<List<JType>> _returns = new();
 
-    private LocalVar DefineLocal(Node decl, JType type, Scope scope, Kind kind, MethodInfo? method, TypeInfo? owner, Mod flags, int encStart, int encEnd, string? nameOverride = null, int nameStartOverride = -1, Modifiers? mods = null)
+    private LocalVar DefineLocal(Node decl, JType type, Scope scope, Kind kind, MethodInfo? method, TypeInfo? owner, Mod flags, int encStart, int encEnd, string? nameOverride = null, int nameStartOverride = -1, Modifiers? mods = null, bool term = false)
     {
         string name;
         int nameStart;
@@ -387,7 +400,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
             default: throw new InvalidOperationException();
         }
         if (nameOverride is not null) { name = nameOverride; nameStart = nameStartOverride; }
-        var v = new LocalVar { Name = name, Type = type, Flags = flags, Decl = decl, Mods = mods, OwnerMethod = method, OwnerType = owner ?? scope.EnclosingType };
+        var v = new LocalVar { Name = name, Type = type, Flags = flags, Decl = decl, Mods = mods, OwnerMethod = method, OwnerType = owner ?? scope.EnclosingType, TermOwner = term ? scope.EnclosingMethod : null };
         scope.Vars[name] = v;
         var sym = _names.Variable(v);
         Definition(sym, nameStart, nameStart + name.Length, (encStart, encEnd));

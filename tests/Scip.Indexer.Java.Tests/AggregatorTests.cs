@@ -71,13 +71,13 @@ public class AggregatorTests
         await Assert.That(result.Text).IsEqualTo("class Foo {}");
         await Assert.That(string.Join("\n", result.Occurrences.Select(o => o.Symbol))).IsEqualTo(string.Join("\n",
         [
-            "scip-java maven . . a/Foo#",
-            "scip-java maven maven/com.lib/lib 1.0 com/lib/Lib#run().",
-            "scip-java maven jdk 17 java/lang/String#",
+            "semanticdb maven . . a/Foo#",
+            "semanticdb maven maven/com.lib/lib 1.0 com/lib/Lib#run().",
+            "semanticdb maven jdk 17 java/lang/String#",
             "local 0",
-            "scip-java maven . . weird/Thing#",
+            "semanticdb maven . . weird/Thing#",
         ]));
-        await Assert.That(result.Symbols.Single().EnclosingSymbol).IsEqualTo("scip-java maven . . a/");
+        await Assert.That(result.Symbols.Single().EnclosingSymbol).IsEqualTo("semanticdb maven . . a/");
         await Assert.That(result.Occurrences[0].TypedRangeCase).IsEqualTo(Occurrence.TypedRangeOneofCase.SingleLineRange);
     }
 
@@ -101,7 +101,7 @@ public class AggregatorTests
 
         var index = Aggregate(dir, []);
         var rel = index.Documents.Single(d => d.RelativePath == "p/I.java").Symbols.Single().Relationships.Single();
-        await Assert.That(rel.Symbol).IsEqualTo("scip-java maven . . p/C#m().");
+        await Assert.That(rel.Symbol).IsEqualTo("semanticdb maven . . p/C#m().");
         await Assert.That(rel.IsImplementation).IsTrue();
         await Assert.That(rel.IsReference).IsTrue();
 

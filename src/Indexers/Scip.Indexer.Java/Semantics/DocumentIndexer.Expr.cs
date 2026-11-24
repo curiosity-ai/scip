@@ -388,18 +388,36 @@ public sealed partial class DocumentIndexer
         }
     }
 
+    private bool _boxing;
+    private bool _usedVarargs;
+
+    /// <summary>
+    /// Overload resolution after JLS 15.12.2: the first of the strict, loose (boxing) and variable-arity phases that has
+    /// an applicable method wins, then the most specific applicable method; ties fall back to the lowest conversion cost.
+    /// </summary>
     private (MethodInfo Method, Dictionary<string, JType> Subst)? ChooseMethod(
         List<(MethodInfo Method, Dictionary<string, JType> Subst)> candidates, List<JType> args)
     {
         if (candidates.Count == 0) return null;
-        (MethodInfo, Dictionary<string, JType>)? best = null;
-        var bestCost = int.MaxValue;
+        var applicable = new List<(MethodInfo Method, Dictionary<string, JType> Subst, int Cost, int Phase)>();
         foreach (var (m, map) in candidates)
         {
+            _boxing = false;
+            _usedVarargs = false;
             var cost = ApplicabilityCost(m, map, args);
-            if (cost >= 0 && cost < bestCost) { best = (m, map); bestCost = cost; }
+            if (cost < 0) continue;
+            applicable.Add((m, map, cost, _usedVarargs ? 3 : _boxing ? 2 : 1));
         }
-        if (best is not null) return best;
+        if (applicable.Count > 0)
+        {
+            var phase = applicable.Min(a => a.Phase);
+            var set = applicable.Where(a => a.Phase == phase).ToList();
+            if (set.Count == 1) return (set[0].Method, set[0].Subst);
+            var specific = set.Where(a => set.All(b => ReferenceEquals(a.Method, b.Method) || MoreSpecific(a.Method, a.Subst, b.Method, b.Subst, args.Count, phase == 3))).ToList();
+            var pool = specific.Count > 0 ? specific : set;
+            var best = pool.OrderBy(a => a.Cost).First();
+            return (best.Method, best.Subst);
+        }
         // fall back to arity match, then to the first candidate by name
         foreach (var (m, map) in candidates)
         {
@@ -408,19 +426,73 @@ public sealed partial class DocumentIndexer
         return candidates.Count == 1 ? candidates[0] : null;
     }
 
+    private JType ParamAt(MethodInfo m, Dictionary<string, JType> map, int i, bool varargs)
+    {
+        var n = m.Params.Count;
+        var p = varargs && i >= n - 1 ? (m.Params[n - 1] is ArrayT pa ? pa.Elem : JType.Unknown) : m.Params[i];
+        return Workspace.Subst(p, map);
+    }
+
+    private bool MoreSpecific(MethodInfo a, Dictionary<string, JType> amap, MethodInfo b, Dictionary<string, JType> bmap, int argCount, bool varargs)
+    {
+        var k = varargs ? Math.Max(argCount, Math.Max(a.Params.Count, b.Params.Count)) : a.Params.Count;
+        if (!varargs && a.Params.Count != b.Params.Count) return false;
+        for (var i = 0; i < k; i++)
+        {
+            if (!IsSubtypeForSpecificity(ParamAt(a, amap, i, varargs), a, ParamAt(b, bmap, i, varargs), b)) return false;
+        }
+        return true;
+    }
+
+    private JType ErasedBound(JType t, MethodInfo owner)
+    {
+        if (t is VarT v)
+        {
+            var i = owner.TypeParams.IndexOf(v.Name);
+            if (i >= 0 && i < owner.TypeParamBounds.Count) return ErasedBound(owner.TypeParamBounds[i], owner);
+            var ot = owner.Owner;
+            var j = ot.TypeParams.IndexOf(v.Name);
+            if (j >= 0 && j < ot.TypeParamBounds.Count && ot.TypeParamBounds[j] is not VarT) return ErasedBound(ot.TypeParamBounds[j], owner);
+            return JType.Object;
+        }
+        return t is WildT w ? (w.Bound is null || w.Kind == WildKind.Super ? JType.Object : ErasedBound(w.Bound, owner)) : t;
+    }
+
+    private bool IsSubtypeForSpecificity(JType s, MethodInfo sm, JType t, MethodInfo tm)
+    {
+        s = ErasedBound(s, sm);
+        t = ErasedBound(t, tm);
+        if (!s.IsKnown || !t.IsKnown) return true;
+        switch (s)
+        {
+            case PrimT ps:
+                if (t is not PrimT pt) return false;
+                if (ps.Name == pt.Name) return true;
+                var i1 = Array.IndexOf(Numeric, ps.Name);
+                var i2 = Array.IndexOf(Numeric, pt.Name);
+                if (i1 < 0 || i2 < 0 || pt.Name == "char") return false;
+                if (ps.Name == "char") return i2 >= 3;
+                return i2 >= i1;
+            case ArrayT sa:
+                if (t is ArrayT ta) return sa.Elem is PrimT || ta.Elem is PrimT ? Equals(sa.Elem, ta.Elem) : IsSubtypeForSpecificity(sa.Elem, sm, ta.Elem, tm);
+                return t is ClassT { Name: "java/lang/Object" or "java/lang/Cloneable" or "java/io/Serializable" };
+            case ClassT sc:
+                return t is ClassT tc && IsSubclass(sc.Name, tc.Name);
+        }
+        return false;
+    }
+
     private int ApplicabilityCost(MethodInfo m, Dictionary<string, JType> map, List<JType> args)
     {
         var n = m.Params.Count;
         var varargs = m.Varargs && (args.Count != n || !(args.Count > 0 && args[^1] is ArrayT or NullT));
         if (!varargs && args.Count != n) return -1;
         if (varargs && args.Count < n - 1) return -1;
+        _usedVarargs = varargs;
         var total = varargs ? 20 : 0;
         for (var i = 0; i < args.Count; i++)
         {
-            JType p;
-            if (varargs && i >= n - 1) p = m.Params[n - 1] is ArrayT pa ? pa.Elem : JType.Unknown;
-            else p = m.Params[i];
-            p = Workspace.Subst(p, map);
+            var p = ParamAt(m, map, i, varargs);
             var c = AssignCost(args[i], p, m);
             if (c < 0) return -1;
             total += c;
@@ -431,7 +503,25 @@ public sealed partial class DocumentIndexer
     private int AssignCost(JType arg, JType param, MethodInfo m)
     {
         if (!arg.IsKnown || !param.IsKnown) return 2;
-        if (param is VarT or WildT) return arg is PrimT ? 3 : 2;
+        if (param is VarT pv)
+        {
+            // a method type variable only accepts arguments within its bound
+            var bi = m.TypeParams.IndexOf(pv.Name);
+            if (bi >= 0 && bi < m.TypeParamBounds.Count && m.TypeParamBounds[bi] is ClassT { Name: not "java/lang/Object" } bound && arg is not NullT)
+            {
+                var ac = arg is PrimT ap ? Box(ap) : arg;
+                if (arg is PrimT) _boxing = true;
+                if (ac is ClassT acc) { if (!IsSubclass(acc.Name, bound.Name)) return -1; }
+                else if (ac is ArrayT) return bound.Name is "java/lang/Cloneable" or "java/io/Serializable" ? 2 : -1;
+            }
+            else if (arg is PrimT) _boxing = true;
+            return arg is PrimT ? 3 : 2;
+        }
+        if (param is WildT)
+        {
+            if (arg is PrimT) _boxing = true;
+            return arg is PrimT ? 3 : 2;
+        }
         switch (arg)
         {
             case NullT: return param is PrimT ? -1 : 1;
@@ -446,12 +536,20 @@ public sealed partial class DocumentIndexer
                     if (pa.Name == "char") return ip >= 3 ? 1 + (ip - 3) : -1;
                     return ip > ia ? 1 + (ip - ia) : -1;
                 }
-                if (param is ClassT pc) return Box(pa) is ClassT bc && (bc.Name == pc.Name || pc.Name is "java/lang/Object" or "java/lang/Number" or "java/io/Serializable" or "java/lang/Comparable") ? 10 : -1;
+                if (param is ClassT pc && Box(pa) is ClassT bc && (bc.Name == pc.Name || pc.Name is "java/lang/Object" or "java/lang/Number" or "java/io/Serializable" or "java/lang/Comparable" or "java/lang/constant/Constable"))
+                {
+                    _boxing = true;
+                    return 10;
+                }
                 return -1;
             }
             case ClassT ca:
             {
-                if (param is PrimT pp2) return Unbox(ca) is PrimT up && up.Name == pp2.Name ? 10 : -1;
+                if (param is PrimT pp2)
+                {
+                    if (Unbox(ca) is PrimT up && (up.Name == pp2.Name || IsWidening(up.Name, pp2.Name))) { _boxing = true; return 10; }
+                    return -1;
+                }
                 if (param is ClassT cp) return IsSubclass(ca.Name, cp.Name) ? (ca.Name == cp.Name ? 0 : 1) : -1;
                 return -1;
             }
@@ -462,6 +560,15 @@ public sealed partial class DocumentIndexer
                 return 2;
         }
         return 2;
+    }
+
+    private static bool IsWidening(string from, string to)
+    {
+        var ia = Array.IndexOf(Numeric, from);
+        var ip = Array.IndexOf(Numeric, to);
+        if (ia < 0 || ip < 0 || to == "char") return false;
+        if (from == "char") return ip >= 3;
+        return ip > ia;
     }
 
     private bool IsSubclass(string sub, string sup)

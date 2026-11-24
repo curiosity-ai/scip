@@ -41,10 +41,13 @@ public static class Lexer
 {
     private static readonly string[] Ops3 = ["...", "<<=", "->", "::", "++", "--", "&&", "||", "==", "!=", "<=", "+=", "-=", "*=", "/=", "&=", "|=", "^=", "%=", "<<"];
 
-    public static List<Token> Lex(string s)
+    /// <param name="s">Java source text.</param>
+    /// <param name="docs">When given, receives (token start, javadoc text) for every token preceded by a javadoc comment.</param>
+    public static List<Token> Lex(string s, Dictionary<int, string>? docs = null)
     {
         var tokens = new List<Token>();
         var i = 0;
+        string? pendingDoc = null;
         while (i < s.Length)
         {
             var c = s[i];
@@ -57,10 +60,13 @@ public static class Lexer
             if (c == '/' && i + 1 < s.Length && s[i + 1] == '*')
             {
                 var end = s.IndexOf("*/", i + 2, StringComparison.Ordinal);
-                i = end < 0 ? s.Length : end + 2;
+                var commentEnd = end < 0 ? s.Length : end + 2;
+                if (docs is not null && i + 2 < s.Length && s[i + 2] == '*') pendingDoc = ScanDocComment(s.AsSpan(i, commentEnd - i));
+                i = commentEnd;
                 continue;
             }
             var start = i;
+            if (pendingDoc is not null) { docs![start] = pendingDoc; pendingDoc = null; }
             if (char.IsLetter(c) || c == '_' || c == '$' || char.IsSurrogate(c))
             {
                 i++;
@@ -162,34 +168,71 @@ public static class Lexer
         return i;
     }
 
-    /// <summary>Finds the javadoc comment that ends right before <paramref name="declStart"/> (whitespace only in between).</summary>
-    public static string? DocBefore(string s, int declStart)
+    /// <summary>
+    /// The text of a javadoc comment exactly as javac's <c>JavaTokenizer</c> computes it for <c>getDocComment</c>: leading
+    /// whitespace and <c>*</c> decoration are stripped from each line (the first line is stripped of all leading
+    /// whitespace), line breaks are normalised to <c>\n</c> and trailing <c>*</c> characters are dropped.
+    /// </summary>
+    public static string ScanDocComment(ReadOnlySpan<char> c)
     {
-        var i = declStart - 1;
-        while (i >= 0 && char.IsWhiteSpace(s[i])) i--;
-        if (i < 1 || s[i] != '/' || s[i - 1] != '*') return null;
-        var start = s.LastIndexOf("/**", i - 1, StringComparison.Ordinal);
-        if (start < 0 || start + 2 > i - 1 && start + 3 > i) return null;
-        var body = s[(start + 3)..(i - 1)];
-        return CleanDoc(body);
-    }
-
-    /// <summary>Strips leading <c>*</c> decoration and surrounding whitespace the way javac's doc comment API does.</summary>
-    public static string CleanDoc(string body)
-    {
-        var sb = new StringBuilder();
-        var lines = body.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
-        for (var n = 0; n < lines.Length; n++)
+        var n = c.Length;
+        var p = 2;
+        while (p < n && c[p] == '*') p++;
+        if (p < n && c[p] == '/') return "";
+        var first = true;
+        if (p < n)
         {
-            var line = lines[n];
-            if (n > 0)
-            {
-                var t = line.TrimStart();
-                line = t.StartsWith('*') ? t[1..] : line;
-            }
-            sb.Append(line.TrimEnd());
-            if (n < lines.Length - 1) sb.Append('\n');
+            if (c[p] == '\n') { p++; first = false; }
+            else if (c[p] == '\r') { p++; if (p < n && c[p] == '\n') p++; first = false; }
         }
-        return sb.ToString().Trim(' ', '\n');
+        var sb = new StringBuilder();
+        var done = false;
+        while (p < n && !done)
+        {
+            var begin = p;
+            while (p < n && c[p] is ' ' or '\t' or '\f') p++;
+            if (p < n && c[p] == '*')
+            {
+                do p++; while (p < n && c[p] == '*');
+                if (p < n && c[p] == '/') break;
+            }
+            else if (!first) p = begin;
+            var eol = false;
+            while (p < n && !eol)
+            {
+                var ch = c[p];
+                switch (ch)
+                {
+                    case '*':
+                        p++;
+                        if (p < n && c[p] == '/') { done = true; eol = true; break; }
+                        sb.Append('*');
+                        break;
+                    case '\f':
+                        p++;
+                        eol = true;
+                        break;
+                    case '\r':
+                        p++;
+                        if (p < n && c[p] == '\n') p++;
+                        sb.Append('\n');
+                        eol = true;
+                        break;
+                    case '\n':
+                        p++;
+                        sb.Append('\n');
+                        eol = true;
+                        break;
+                    default:
+                        sb.Append(ch);
+                        p++;
+                        break;
+                }
+            }
+            first = false;
+        }
+        var len = sb.Length;
+        while (len > 0 && sb[len - 1] == '*') len--;
+        return sb.ToString(0, len);
     }
 }

@@ -26,6 +26,9 @@ public sealed class Parser
 
     private readonly string _src;
     private readonly List<Token> _t;
+    private readonly Dictionary<int, string> _docs = [];
+
+    private string? DocAt(int tokenStart) => _docs.GetValueOrDefault(tokenStart);
     private int _p;
     private int _lastEnd;
     private bool _noLambda;
@@ -33,7 +36,7 @@ public sealed class Parser
     public Parser(string source)
     {
         _src = source;
-        _t = Lexer.Lex(source);
+        _t = Lexer.Lex(source, _docs);
     }
 
     public static CompilationUnit ParseFile(string source) => new Parser(source).ParseCompilationUnit();
@@ -112,6 +115,7 @@ public sealed class Parser
         if (At("package"))
         {
             Next();
+            cu.PackageMods = mods;
             ReadQualified(cu.Package);
             Expect(";");
         }
@@ -134,7 +138,7 @@ public sealed class Parser
         while (Cur.Kind != Tk.Eof)
         {
             if (Accept(";")) continue;
-            var doc = Lexer.DocBefore(_src, Cur.Start);
+            var doc = DocAt(Cur.Start);
             var m = ParseModifiers();
             if (!AtTypeKeyword()) throw Fail($"expected type declaration but found '{Cur.Text}'");
             cu.Types.Add(ParseTypeDecl(m, doc));
@@ -391,7 +395,7 @@ public sealed class Parser
             while (!At(";") && !At("}"))
             {
                 var cstart = Cur.Start;
-                var doc = Lexer.DocBefore(_src, cstart);
+                var doc = DocAt(cstart);
                 var mods = ParseModifiers();
                 var n = ExpectIdent();
                 var ec = new EnumConstant { Name = n.Text, NameStart = n.Start, Mods = mods, Doc = doc };
@@ -420,7 +424,7 @@ public sealed class Parser
     private void ParseMember(TypeDecl owner)
     {
         var start = Cur.Start;
-        var doc = Lexer.DocBefore(_src, start);
+        var doc = DocAt(start);
         if (At("{"))
         {
             var ib = new InitBlock { Body = ParseBlock() };

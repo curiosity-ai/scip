@@ -12,6 +12,9 @@ public sealed class LocalVar
     public Node? Decl { get; set; }
     public MethodInfo? OwnerMethod { get; set; }
     public TypeInfo? OwnerType { get; set; }
+
+    /// <summary>Resource and pattern-binding variables are not javac <c>LOCAL_VARIABLE</c>s, so semanticdb-javac gives them global <c>method().name.</c> symbols.</summary>
+    public MethodInfo? TermOwner { get; set; }
 }
 
 /// <summary>Lexical scope: locals, type variables and local classes, chained to enclosing scopes up to the file.</summary>
@@ -162,6 +165,7 @@ public sealed class Workspace : IDisposable
             Decl = d,
             Outer = outer,
             IsLocal = !anon,
+            LocalOwner = anon ? null : scope.EnclosingMethod,
             IsAnonymous = anon,
             Flags = d.Mods.Flags,
         };
@@ -283,6 +287,7 @@ public sealed class Workspace : IDisposable
                             mi.Varargs |= p.Varargs;
                         }
                     }
+                    mi.TypeParamBounds = md.TypeParams.Select(tp => tp.Bounds.Count > 0 ? ResolveType(tp.Bounds[0], ms, null) : JType.Object).ToList();
                     mi.Return = md.Ret is null ? JType.Void : ResolveType(md.Ret, ms, null);
                     mi.Throws = md.Throws.Select(x => ResolveType(x, ms, null)).ToList();
                     if (t.IsInterface)

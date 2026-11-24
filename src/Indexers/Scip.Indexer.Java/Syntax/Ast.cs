@@ -144,6 +144,7 @@ public sealed class Import : Node
 public sealed class CompilationUnit : Node
 {
     public List<(string Name, int Start, int End)> Package { get; } = [];
+    public Modifiers? PackageMods { get; set; }
     public List<Import> Imports { get; } = [];
     public List<TypeDecl> Types { get; } = [];
     public string Source { get; set; } = "";

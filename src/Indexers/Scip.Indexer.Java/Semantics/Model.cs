@@ -52,6 +52,9 @@ public sealed class MethodInfo
     public JType Return { get; set; } = JType.Void;
     public Mod Flags { get; set; }
     public List<string> TypeParams { get; set; } = [];
+
+    /// <summary>First (erased) bound of each entry of <see cref="TypeParams"/>; empty when unknown (treated as Object).</summary>
+    public List<JType> TypeParamBounds { get; set; } = [];
     public List<JType> Throws { get; set; } = [];
     public bool Varargs { get; set; }
     public TypeInfo Owner { get; set; } = null!;
@@ -84,6 +87,9 @@ public sealed class TypeInfo
     public JavaPackage Origin { get; set; } = JavaPackage.Empty;
     public bool IsAnonymous { get; set; }
     public bool IsLocal { get; set; }
+
+    /// <summary>The method a named local class is declared in; its symbol is then a global descriptor under that method (as semanticdb-javac does).</summary>
+    public MethodInfo? LocalOwner { get; set; }
     public bool FromSource => Decl is not null;
     public bool IsInterface => Kind is TypeKind.Interface or TypeKind.Annotation;
 

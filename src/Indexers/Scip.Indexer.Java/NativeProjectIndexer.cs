@@ -30,7 +30,7 @@ public static class NativeProjectIndexer
         foreach (var (path, pkg) in files.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             ct.ThrowIfCancellationRequested();
-            if (Path.GetFileName(path) is "module-info.java" or "package-info.java") continue;
+            if (Path.GetFileName(path) is "module-info.java") continue;
             var rel = Path.GetRelativePath(project.Root, path).Replace('\\', '/');
             try
             {
