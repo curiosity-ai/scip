@@ -35,6 +35,19 @@ public sealed class Entity(string name, EKind kind, string symbol, Scope declSco
 
     public bool Defined { get; set; }
 
+    /// <summary>Descriptor path of the symbol (null for locals).</summary>
+    public List<SymbolDescriptor>? Path { get; set; }
+
+    public string Disambiguator { get; set; } = "";
+
+    public bool IsVirtual { get; set; }
+
+    /// <summary>The function's declared return type is an rvalue reference.</summary>
+    public bool ReturnsRvalueRef { get; set; }
+
+    /// <summary>Symbols this entity relates to (implementation of base classes / overridden methods).</summary>
+    public List<(string Symbol, bool Reference)> Relationships { get; } = [];
+
     public bool IsStatic { get; set; }
 
     /// <summary>Entities that resolve names but never produce occurrences (namespace aliases).</summary>
@@ -63,6 +76,11 @@ public sealed class Scope(Scope? parent, SKind kind)
     public SKind Kind { get; } = kind;
 
     public Entity? Owner { get; set; }
+
+    /// <summary>Set on function-body scopes: the enclosing function's descriptor path (used for local classes).</summary>
+    public List<SymbolDescriptor>? OwnFnPath { get; set; }
+
+    public List<SymbolDescriptor>? FnPath => OwnFnPath ?? Parent?.FnPath;
 
     /// <summary>Symbol descriptors leading to this scope; null inside functions (declarations there are local).</summary>
     public List<SymbolDescriptor>? Path { get; set; }

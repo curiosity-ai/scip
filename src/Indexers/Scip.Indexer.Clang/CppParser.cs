@@ -44,6 +44,10 @@ public sealed partial class CppParser
     private readonly Dictionary<string, List<Entity>> _members = [];
     private bool _pass2;
     private readonly TypeCanon _canon;
+    private readonly List<Entity> _entities = [];
+
+    /// <summary>Every entity declared while parsing, in declaration order.</summary>
+    public IReadOnlyList<Entity> Entities => _entities;
 
     public Scope Global { get; } = new(null, SKind.Global) { Path = [] };
 
@@ -132,7 +136,7 @@ public sealed partial class CppParser
     }
 
     /// <summary>Index of the matching '&gt;' for the '&lt;' at <paramref name="i"/>, or -1 if this does not look like template arguments.</summary>
-    private int SkipAngles(int i, int limit)
+    private int SkipAngles(int i, int limit, bool allowAssign = false)
     {
         var depth = 0;
         for (var k = i; k < limit && k < _t.Count; k++)
@@ -161,6 +165,16 @@ public sealed partial class CppParser
                     }
 
                     k = M(k);
+                    break;
+                case ">>":
+                    depth -= 2;
+                    if (depth <= 0)
+                    {
+                        return k;
+                    }
+
+                    break;
+                case "=" or "&&" when allowAssign:
                     break;
                 case ";" or "}" or ")" or "]" or "&&" or "||" or "=":
                     return -1;
@@ -218,7 +232,13 @@ public sealed partial class CppParser
     private Entity NewEntity(Scope into, string name, EKind kind, SymbolDescriptor desc, Tok at, SymbolInformation.Types.Kind sk, string? key = null)
     {
         string symbol;
-        if (into.Path is null)
+        List<SymbolDescriptor>? path = null;
+        if (into.Path is null && kind is EKind.Class or EKind.Enum or EKind.Typedef or EKind.EnumConst && into.FnPath is { } fnPath)
+        {
+            path = [.. fnPath, desc];
+            symbol = MakeSymbol(path);
+        }
+        else if (into.Path is null)
         {
             _localCounters.TryGetValue(at.File, out var n);
             _localCounters[at.File] = n + 1;
@@ -226,10 +246,12 @@ public sealed partial class CppParser
         }
         else
         {
-            symbol = MakeSymbol([.. into.Path, desc]);
+            path = [.. into.Path, desc];
+            symbol = MakeSymbol(path);
         }
 
-        var e = new Entity(name, kind, symbol, into, _files.Relative(at.File) is not null) { SymbolKind = sk };
+        var e = new Entity(name, kind, symbol, into, _files.Relative(at.File) is not null) { SymbolKind = sk, Path = path, Disambiguator = desc.Disambiguator };
+        _entities.Add(e);
         into.Add(e, key);
         if (into.Kind == SKind.Class && kind is EKind.Func or EKind.Field or EKind.Var)
         {
@@ -256,7 +278,7 @@ public sealed partial class CppParser
 
     private static Scope OwnScope(Entity e, Scope parent, SKind kind, SymbolDescriptor desc, Scope? lexicalParent = null)
     {
-        var s = new Scope(lexicalParent ?? parent, kind) { Owner = e, Path = parent.Path is null ? null : [.. parent.Path, desc] };
+        var s = new Scope(lexicalParent ?? parent, kind) { Owner = e, Path = parent.Path is not null ? [.. parent.Path, desc] : parent.FnPath is { } fp ? [.. fp, desc] : null };
         e.Own = s;
         return s;
     }
@@ -445,7 +467,7 @@ public sealed partial class CppParser
             return SkipStatement(p, end); // explicit instantiation
         }
 
-        var close = SkipAngles(p + 1, end);
+        var close = SkipAngles(p + 1, end, allowAssign: true);
         if (close < 0)
         {
             return SkipStatement(p, end);
@@ -578,6 +600,11 @@ public sealed partial class CppParser
             ent.Defined = true;
             Emit(nameTok, ent, true);
             Defer(() => Scan(scope, p + 3, e));
+            return e < end ? e + 1 : e;
+        }
+
+        if (UsingDeclaration(scope, p, e))
+        {
             return e < end ? e + 1 : e;
         }
 
@@ -737,7 +764,7 @@ public sealed partial class CppParser
             q++;
             if (P(q, "<"))
             {
-                var c = SkipAngles(q, end);
+                var c = SkipAngles(q, end, allowAssign: true);
                 if (c > 0)
                 {
                     q = c + 1;
@@ -1391,6 +1418,16 @@ public sealed partial class CppParser
                 stop = e;
             }
 
+            if (kind is EKind.Local or EKind.Var && !isTypedef && typeStart >= 0)
+            {
+                var qq = q;
+                var ee = stop;
+                var nt = nameTok;
+                var sc2 = lexical;
+                var vent = ent;
+                Defer(() => ConstructorRef(sc2, vent, nt, qq, ee));
+            }
+
             first = false;
             if (P(stop, ","))
             {
@@ -1628,7 +1665,9 @@ public sealed partial class CppParser
             }
 
             ent.IsStatic = isStatic;
+            ent.IsVirtual = Enumerable.Range(p, Math.Max(0, headEnd - p)).Any(x => Id(x) && _t[x].Text == "virtual") || Enumerable.Range(close + 1, Math.Max(0, Math.Min(end, bodyOpen > 0 ? bodyOpen : q) - close - 1)).Any(x => Id(x) && _t[x].Text is "override" or "final");
             ent.ParamTypes = paramTypes;
+            ent.ReturnsRvalueRef = Enumerable.Range(p, Math.Max(0, headEnd - p)).Any(x => P(x, "&&"));
             ent.Type = headEnd > p ? MakeTypeRef(scope, p, headEnd) : null;
         }
 
@@ -1647,7 +1686,7 @@ public sealed partial class CppParser
         var segsCopy = qualSegs;
         var pStart = p;
         var hEnd = headEnd;
-        var fs = new Scope(lexicalParent, SKind.Function) { Path = null };
+        var fs = new Scope(lexicalParent, SKind.Function) { Path = null, OwnFnPath = ent.Path };
         var bodyO = hasBody ? bodyOpen : -1;
         var tS = trailingStart;
         var tE = trailingEnd;

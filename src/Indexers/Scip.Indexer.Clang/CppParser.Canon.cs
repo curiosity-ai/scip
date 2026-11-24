@@ -171,4 +171,187 @@ public sealed partial class CppParser
 
         return (full, full, []);
     }
+
+    /// <summary>
+    /// <c>using Base::f;</c>: references every overload found through the qualifier and defines a shadow symbol for each
+    /// function in the current scope (as Clang's <c>UsingShadowDecl</c>), so later lookups find the local name.
+    /// </summary>
+    private bool UsingDeclaration(Scope scope, int p, int e)
+    {
+        var a = p + 1;
+        if (P(a, "typename"))
+        {
+            a++;
+        }
+
+        var segs = new List<int>();
+        var x = a;
+        if (P(x, "::"))
+        {
+            x++;
+        }
+
+        while (x < e && IsName(x))
+        {
+            segs.Add(x);
+            x++;
+            if (P(x, "::") && x + 1 < e)
+            {
+                x++;
+                continue;
+            }
+
+            break;
+        }
+
+        if (segs.Count < 2 || x != e)
+        {
+            return false;
+        }
+
+        var qual = ResolveSegments(scope, segs.Take(segs.Count - 1).ToList(), emit: true);
+        if (qual?.Own is not { } holder)
+        {
+            return false;
+        }
+
+        var nameTok = _t[segs[^1]];
+        var cands = holder.LookupHere(nameTok.Text);
+        if (cands is null)
+        {
+            return false;
+        }
+
+        var target = scope.Target;
+        foreach (var c in cands.ToList())
+        {
+            Emit(nameTok, c, false);
+            if (c.Kind == EKind.Func && target.Path is not null && !InTemplate(scope))
+            {
+                var desc = D(c.Name, SymbolDescriptor.Types.Suffix.Method, c.Disambiguator);
+                var shadow = NewEntity(target, c.Name, EKind.Func, desc, nameTok, c.SymbolKind);
+                shadow.Signature = c.Signature;
+                shadow.MinArgs = c.MinArgs;
+                shadow.MaxArgs = c.MaxArgs;
+                shadow.ParamTypes = c.ParamTypes;
+                shadow.Type = c.Type;
+                shadow.IsStatic = c.IsStatic;
+                shadow.Defined = true;
+                Emit(nameTok, shadow, true);
+
+                // Uses resolve to the underlying declaration, as in Clang: the shadow only exists as a definition.
+                if (target.Names.TryGetValue(c.Name, out var named))
+                {
+                    named.Remove(shadow);
+                }
+
+                if (_members.TryGetValue(c.Name, out var mem))
+                {
+                    mem.Remove(shadow);
+                }
+            }
+            else if (c.Kind != EKind.Func)
+            {
+                target.Add(c, nameTok.Text);
+            }
+        }
+
+        return true;
+    }
+
+    private static bool InTemplate(Scope s)
+    {
+        for (var x = s; x is not null; x = x.Parent)
+        {
+            if (x.Kind == SKind.Template && x.TemplateParamNames.Count > 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Fills <see cref="Entity.Relationships"/> for classes (all transitive bases) and overriding virtual methods.</summary>
+    public void ComputeRelationships()
+    {
+        foreach (var cls in _entities.Where(static e => e.Kind == EKind.Class && e.Own is not null))
+        {
+            var seen = new HashSet<Entity>();
+            CollectBases(cls, seen);
+            seen.Remove(cls);
+            foreach (var b in seen.OrderBy(static b => b.Symbol, StringComparer.Ordinal))
+            {
+                cls.Relationships.Add((b.Symbol, false));
+            }
+        }
+
+        // Virtual methods: direct overrides (nearest declaration along each base path)
+        foreach (var cls in _entities.Where(static e => e.Kind == EKind.Class && e.Own is not null))
+        {
+            foreach (var m in cls.Own!.Names.Values.SelectMany(static l => l).Where(static f => f.Kind == EKind.Func && !f.IsStatic && f.Symbol.Length > 0).ToList())
+            {
+                var found = new List<Entity>();
+                foreach (var b in cls.Bases)
+                {
+                    if (SymbolTable.ResolveType(b) is { Kind: EKind.Class } baseCls)
+                    {
+                        FindOverridden(baseCls, m, found, []);
+                    }
+                }
+
+                if (found.Count > 0)
+                {
+                    m.IsVirtual = true;
+                    foreach (var o in found.Select(static o => o.Symbol).Distinct().OrderBy(static s => s, StringComparer.Ordinal))
+                    {
+                        m.Relationships.Add((o, true));
+                    }
+                }
+            }
+        }
+    }
+
+    private static void CollectBases(Entity cls, HashSet<Entity> seen)
+    {
+        if (!seen.Add(cls))
+        {
+            return;
+        }
+
+        foreach (var b in cls.Bases)
+        {
+            if (SymbolTable.ResolveType(b) is { Kind: EKind.Class } baseCls)
+            {
+                CollectBases(baseCls, seen);
+            }
+        }
+    }
+
+    private static void FindOverridden(Entity cls, Entity method, List<Entity> found, HashSet<Entity> seen)
+    {
+        if (!seen.Add(cls) || cls.Own is null)
+        {
+            return;
+        }
+
+        var hit = cls.Own.Names.TryGetValue(method.Name, out var l) ? l.FirstOrDefault(f => f.Kind == EKind.Func && f.Signature == method.Signature && f.Symbol != method.Symbol && f.Path is not null && f.Path[^1].Name == method.Name) : null;
+        if (hit is not null)
+        {
+            if (hit.IsVirtual)
+            {
+                found.Add(hit);
+            }
+
+            return;
+        }
+
+        foreach (var b in cls.Bases)
+        {
+            if (SymbolTable.ResolveType(b) is { Kind: EKind.Class } baseCls)
+            {
+                FindOverridden(baseCls, method, found, seen);
+            }
+        }
+    }
 }

@@ -356,4 +356,149 @@ public sealed partial class CppParser
 
         return after;
     }
+
+    /// <summary>Reference to the constructor selected by a variable declaration's initialiser (user-declared constructors only).</summary>
+    private void ConstructorRef(Scope scope, Entity variable, Tok nameTok, int q, int stop)
+    {
+        var cls = ClassOf(variable.Type);
+        if (cls?.Own is null || variable.Type is { Indirect: true } || !cls.Own.Names.TryGetValue("<ctor>", out var ctors))
+        {
+            return;
+        }
+
+        var cands = ctors.Where(static c => c.Kind == EKind.Func).ToList();
+        if (cands.Count == 0)
+        {
+            return;
+        }
+
+        Tok at = nameTok;
+        int argA, argB;
+        if (P(q, "{") && M(q) > q)
+        {
+            (argA, argB) = (q + 1, M(q));
+        }
+        else if (P(q, "(") && M(q) > q)
+        {
+            (argA, argB) = (q + 1, M(q));
+        }
+        else if (P(q, "=") && q + 1 < stop)
+        {
+            var r = q + 1;
+            if (P(r, "{") && M(r) > r)
+            {
+                at = _t[r];
+                (argA, argB) = (r + 1, M(r));
+            }
+            else if (Id(r) && (P(r + 1, "(") || P(r + 1, "{")) && M(r + 1) > r + 1)
+            {
+                var callee = scope.Lookup(_t[r].Text)?.FirstOrDefault(static e => e.Kind is EKind.Class or EKind.Func or EKind.Typedef);
+                if (callee is { Kind: EKind.Func } fn && fn.ReturnsRvalueRef)
+                {
+                    at = _t[r];
+                    (argA, argB) = (r, r + 1); // single rvalue argument
+                    EmitCtor(scope, cands, cls, at, argA, argB, forceRvalue: true);
+                    return;
+                }
+
+                if (callee is not null && (callee == cls || ClassOf(new TypeRef(scope, [_t[r].Text], false)) == cls))
+                {
+                    at = _t[r];
+                    (argA, argB) = (r + 2, M(r + 1));
+                }
+                else
+                {
+                    return;
+                }
+            }
+            else if (Id(r) && r + 1 == stop)
+            {
+                var v = scope.Lookup(_t[r].Text)?.FirstOrDefault(static e => e.Kind is EKind.Var or EKind.Local or EKind.Param or EKind.Field);
+                if (v is not null && ClassOf(v.Type) == cls && v.Type is { Indirect: false })
+                {
+                    at = _t[r];
+                    EmitCtor(scope, cands, cls, at, r, r + 1, forceRvalue: false);
+                }
+
+                return;
+            }
+            else
+            {
+                return;
+            }
+        }
+        else
+        {
+            (argA, argB) = (q, q);
+        }
+
+        EmitCtor(scope, cands, cls, at, argA, argB, forceRvalue: false);
+    }
+
+    private void EmitCtor(Scope scope, List<Entity> cands, Entity cls, Tok at, int argA, int argB, bool forceRvalue)
+    {
+        var argc = forceRvalue ? 1 : CountArgsIn(argA, argB);
+        string? kind = null;
+        if (forceRvalue)
+        {
+            kind = "rvalue";
+        }
+        else if (argc >= 1)
+        {
+            if (Id(argA) && (P(argA + 1, "(") || P(argA + 1, "{")) && M(argA + 1) > argA + 1)
+            {
+                var callee = scope.Lookup(_t[argA].Text)?.FirstOrDefault(static e => e.Kind is EKind.Class or EKind.Func);
+                if (callee == cls || (callee is { Kind: EKind.Func } fn && fn.ReturnsRvalueRef))
+                {
+                    kind = "rvalue";
+                }
+            }
+            else if (Id(argA) && argA + 1 == argB && scope.Lookup(_t[argA].Text)?.FirstOrDefault(static e => e.Kind is EKind.Var or EKind.Local or EKind.Param or EKind.Field) is { } v
+                && ClassOf(v.Type) == cls && v.Type is { Indirect: false })
+            {
+                kind = "lvalue";
+            }
+        }
+
+        var viable = cands.Where(c => argc >= c.MinArgs && argc <= c.MaxArgs).ToList();
+        if (viable.Count == 0)
+        {
+            return;
+        }
+
+        Entity pick = viable[0];
+        if (argc == 1 && kind is not null)
+        {
+            var match = viable.FirstOrDefault(c => c.ParamTypes.Count == 1 && (kind == "rvalue" ? c.ParamTypes[0].EndsWith("&&", StringComparison.Ordinal) : c.ParamTypes[0].StartsWith("const ", StringComparison.Ordinal) && c.ParamTypes[0].EndsWith('&')));
+            if (match is not null)
+            {
+                pick = match;
+            }
+        }
+
+        Emit(at, pick, false);
+    }
+
+    private int CountArgsIn(int a, int b)
+    {
+        if (b <= a)
+        {
+            return 0;
+        }
+
+        var n = 1;
+        for (var k = a; k < b; k++)
+        {
+            if (_t[k].Kind == TokKind.Punct && _t[k].Text is "(" or "[" or "{" && M(k) > k)
+            {
+                k = M(k);
+            }
+            else if (P(k, ",") && _t[k].Kind == TokKind.Punct)
+            {
+                n++;
+            }
+        }
+
+        return n;
+    }
 }
