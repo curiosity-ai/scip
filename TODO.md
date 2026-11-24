@@ -8,8 +8,11 @@ Legend: `[x]` done · `[ ]` open. Upstream paths are relative to `.reference/`.
 - [x] Solution layout, `Directory.Build.props`, central package management, `global.json` (.NET 11)
 - [x] Protobuf generation from `scip.proto` (`tools/sync-proto.sh`, Grpc.Tools)
 - [x] CLAUDE.md, README.md, TODO.md, docs/PORTING.md
-- [ ] New CI workflow for the C# solution (only when requested)
-- [ ] NuGet packaging metadata + icon/readme for `Scip` and `Scip.Cli` tool
+- [x] Azure DevOps pipeline (`.azure-devops/build-nuget.yml`): build, test, pack, publish to NuGet from main
+- [ ] Create the `nuget-curiosity-org` service connection / confirm NuGet package-id ownership (`Scip`, `Scip.Cli`, `Scip.Indexer.*`)
+- [ ] `scip --version` should report the packaged build version (currently the embedded upstream `version.txt`)
+- [x] NuGet packaging: one package per library/indexer + `Scip.Cli` tool (verified: pack + local tool install + run)
+- [ ] Package icon; per-package READMEs
 - [ ] Decide on AOT / trimming for the `scip` CLI
 
 ## 1. Core library `src/Scip` (from `scip/bindings/go/scip`)
@@ -57,7 +60,7 @@ Each needs: a design note in `docs/PORTING.md`, implementation, ported tests/sna
 - [~] **python** ← `scip-python`: native tokenizer/parser/binder/import resolver. 22 upstream snapshots (6 divergent, documented). Open: typeshed/hover, generics/narrowing/flow analysis, match patterns, CLI option forwarding (--project-name etc.)
 - [~] **dart** ← `scip-dart`: native syntactic indexer. Defs match upstream snapshots; refs precision >90%/recall >50%. Open: type resolution, SDK/3rd-party symbols, instance members, locals
 - [x] **php** ← `scip-php`: native lexer/parser/resolver, Composer. 10/10 upstream goldens exact. Open: phpstorm-stubs for built-ins, parse error recovery, property hooks
-- [ ] Forward indexer-specific CLI options (e.g. --project-name, --plugin, --jobs) from `scip index <lang>` to indexers
+- [x] Forward indexer-specific CLI options from `scip index <lang>` to indexers (unmatched tokens pass through)
 - [ ] Shared indexing helpers in `Scip.Indexing` (document builder, package metadata) — extract duplication across the nine indexers
 - [x] Decision: pure native C# for all indexers (no runtime compilers/toolchains; see CLAUDE.md)
 

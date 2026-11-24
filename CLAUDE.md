@@ -18,6 +18,7 @@ namespaces, primary constructors, collection expressions, `Span`-based parsing w
 | `src/Scip.Cli` | The `scip` dotnet tool (port of `cmd/scip`) + `scip index <lang>` entry points. |
 | `tests/Scip.Tests` | TUnit tests (Microsoft.Testing.Platform). |
 | `tools/sync-proto.sh` | Regenerates `src/Scip/Protos/scip.proto` from `.reference/scip/scip.proto`. |
+| `.azure-devops/` | Build/test/pack/publish pipeline (NuGet packages + the `scip` tool). |
 | `.reference/` | **Read-only** upstream sources (Go SCIP + the per-language indexers). See below. |
 | `TODO.md` | The port backlog. Keep it current: tick items as you finish them, add what you discover. |
 
@@ -56,7 +57,10 @@ Build output goes to `artifacts/` (via `ArtifactsPath`), not next to the project
 - **Pure native port.** Indexers must not depend at runtime on external compilers/toolchains (node/tsc, javac, clang,
   rustc, ruby, python, dart, php, language servers, plugin jars). Implement lexers/parsers/resolution in C#. External
   toolchains are allowed only in tests (cross-checks), which must skip gracefully when the tool is unavailable.
-- Don't add CI workflows without being asked.
+- CI/CD is the Azure DevOps pipeline `.azure-devops/build-nuget.yml` (modelled on `.reference/tesserae`). Packages:
+  `Scip`, `Scip.Indexing`, `Scip.Indexer.<Lang>` (one per language), `Scip.Cli` (dotnet tool `scip`). Package metadata lives
+  in `Directory.Build.props`; version comes from the pipeline (`/p:Version=yyyy.M.buildId`). `Scip.Reprolang` and tests
+  are not packable. Don't add GitHub workflows without being asked.
 
 ## Porting workflow for an indexer
 

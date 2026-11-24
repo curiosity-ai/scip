@@ -18,6 +18,23 @@ tests/Scip.Tests      TUnit tests
 .reference/           upstream Go SCIP and the language indexers being ported (read-only)
 ```
 
+## Install
+
+```bash
+dotnet tool install -g Scip.Cli      # the `scip` command
+scip index python --project-root .   # also: dotnet, java, typescript, rust, clang, ruby, dart, php
+scip print index.scip
+```
+
+NuGet packages (all published from `main` by `.azure-devops/build-nuget.yml`):
+
+| Package | Contents |
+|---|---|
+| `Scip.Cli` | the `scip` .NET tool, bundling every indexer |
+| `Scip` | core library: protobuf types, symbols, positions, index writer |
+| `Scip.Indexing` | indexer abstractions (`IIndexer`) |
+| `Scip.Indexer.DotNet` / `.Java` / `.TypeScript` / `.Python` / `.Ruby` / `.Rust` / `.Clang` / `.Dart` / `.Php` | one package per language indexer |
+
 ## Build & test
 
 Requires the .NET 11 SDK.
@@ -26,6 +43,7 @@ Requires the .NET 11 SDK.
 dotnet build
 dotnet test
 dotnet run --project src/Scip.Cli -- --help
+dotnet pack Scip.slnx -c Release /p:Version=1.0.0   # packages land in artifacts/package/release
 ```
 
 ## Library example

@@ -22,6 +22,8 @@ internal static class IndexCommand
                 DefaultValueFactory = _ => IndexerOptions.DefaultOutputPath,
             };
             var sub = new Command(indexer.Name, $"{indexer.Languages} (port of {indexer.UpstreamProject})") { root, output };
+            // Indexer-specific options (e.g. --jobs, --project-name) are parsed by the indexer itself.
+            sub.TreatUnmatchedTokensAsErrors = false;
             sub.SetAction((parse, ct) => indexer.IndexAsync(
                 new IndexerOptions(parse.GetRequiredValue(root).FullName, parse.GetRequiredValue(output), parse.UnmatchedTokens),
                 ct));

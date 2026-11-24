@@ -2,6 +2,7 @@
   <PropertyGroup>
     <RootNamespace>Scip.Reprolang</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
     <Description>Reprolang: a toy language that emits fully controlled SCIP indexes for testing SCIP tooling.</Description>
   </PropertyGroup>
   <ItemGroup>

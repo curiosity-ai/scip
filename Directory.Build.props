@@ -12,8 +12,19 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
     <Authors>SCIP Maintainers</Authors>
+    <Company>Curiosity GmbH</Company>
+    <Copyright>Copyright (c) SCIP Maintainers (Apache-2.0); .NET port by Curiosity GmbH</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/theolivenbaum/scip</PackageProjectUrl>
     <RepositoryUrl>https://github.com/theolivenbaum/scip</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>scip;code-intelligence;indexer;lsif;code-navigation</PackageTags>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- Overridden by the build pipeline: dotnet pack /p:Version=yyyy.M.buildId -->
     <Version>0.10.0</Version>
   </PropertyGroup>
 </Project>

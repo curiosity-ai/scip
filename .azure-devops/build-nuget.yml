@@ -1,0 +1,108 @@
+# Builds, tests and packs the SCIP .NET port, and publishes to NuGet from main.
+#
+# Produces (artifacts/package/release):
+#   Scip                      core library
+#   Scip.Indexing             indexer abstractions
+#   Scip.Indexer.<Language>   one package per language indexer (DotNet, Java, TypeScript, Python, Ruby, Rust, Clang, Dart, Php)
+#   Scip.Cli                  the `scip` .NET tool  (dotnet tool install -g Scip.Cli)
+#
+# Conventions follow curiosity-ai/tesserae (.reference/tesserae/.azure-devops/build-nuget-h5.yml.disabled):
+# yyyy.M.<buildId> versions and the `nuget-curiosity-org` service connection.
+
+variables:
+  buildConfiguration: 'Release'
+  # NOTE: never name a pipeline variable after an MSBuild property (Version, PackageVersion, ...): every pipeline
+  # variable is also exported as an environment variable, and MSBuild reads those as properties.
+  # Hence `buildVersion` and not `version`.
+
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    exclude:
+    - .reference/*
+    - docs/*
+    - '*.md'
+
+pr:
+  branches:
+    include:
+    - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- checkout: self
+
+- task: PowerShell@2
+  displayName: 'Set Version'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $date = Get-Date -Format yyyy.M
+      Write-Host "##vso[task.setvariable variable=buildVersion]$date.$(Build.BuildId)"
+
+- task: UseDotNet@2
+  displayName: 'Use .NET 11 SDK'
+  inputs:
+    packageType: sdk
+    version: 11.x
+    includePreviewVersions: true
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- task: CmdLine@2
+  displayName: 'Restore'
+  inputs:
+    script: 'dotnet restore Scip.slnx'
+
+- task: CmdLine@2
+  displayName: 'Build'
+  inputs:
+    script: 'dotnet build Scip.slnx -c $(buildConfiguration) --no-restore /p:Version=$(buildVersion)'
+
+- task: CmdLine@2
+  displayName: 'Test'
+  inputs:
+    # TUnit runs on Microsoft.Testing.Platform (see global.json); TRX is produced per test project.
+    script: 'dotnet test --solution Scip.slnx -c $(buildConfiguration) --no-build --report-trx --results-directory $(Agent.TempDirectory)/test-results'
+
+- task: PublishTestResults@2
+  displayName: 'Publish test results'
+  condition: succeededOrFailed()
+  inputs:
+    testResultsFormat: 'VSTest'
+    testResultsFiles: '**/*.trx'
+    searchFolder: '$(Agent.TempDirectory)/test-results'
+    failTaskOnFailedTests: true
+
+- task: CmdLine@2
+  displayName: 'Pack (libraries, indexers and the scip tool)'
+  inputs:
+    script: 'dotnet pack Scip.slnx -c $(buildConfiguration) --no-build /p:Version=$(buildVersion)'
+
+- task: CmdLine@2
+  displayName: 'Smoke test: install the scip tool from the freshly built package'
+  inputs:
+    script: |
+      dotnet tool install Scip.Cli --tool-path $(Agent.TempDirectory)/scip-tool --add-source $(Build.SourcesDirectory)/artifacts/package/release --version $(buildVersion)
+      $(Agent.TempDirectory)/scip-tool/scip --version
+      $(Agent.TempDirectory)/scip-tool/scip index --help
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish packages as build artifact'
+  inputs:
+    PathtoPublish: '$(Build.SourcesDirectory)/artifacts/package/release'
+    ArtifactName: 'nuget-packages'
+
+# Only publish from main, never from PR validation builds.
+# nuget push also uploads the adjacent .snupkg symbol package of each .nupkg.
+- task: NuGetCommand@2
+  displayName: 'Push packages to NuGet'
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
+  inputs:
+    command: 'push'
+    packagesToPush: '$(Build.SourcesDirectory)/artifacts/package/release/*.nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
