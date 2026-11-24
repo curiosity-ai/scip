@@ -1,7 +1,24 @@
 namespace Scip.Indexer.Ruby;
 
 /// <summary>A parsed Sorbet <c>sig</c>: return type (null for <c>void</c>/unknown) and parameter types by name.</summary>
-internal sealed record SigInfo(TypeFn? Ret, Dictionary<string, TypeFn> Params);
+internal sealed record SigInfo(TypeFn? Ret, Dictionary<string, TypeFn> Params)
+{
+    /// <summary>Source text of each declared parameter type, for hover.</summary>
+    public Dictionary<string, string> ParamText { get; init; } = [];
+
+    /// <summary>Source text of the declared return type, or <c>void</c>.</summary>
+    public string? RetText { get; init; }
+
+    public bool Abstract { get; init; }
+
+    public bool Override { get; init; }
+
+    public bool Overridable { get; init; }
+
+    public bool Final { get; init; }
+
+    public string[] TypeParameters { get; init; } = [];
+}
 
 /// <summary>Bookkeeping for one open <c>(</c> / <c>[</c>: what the expression evaluates to once it closes.</summary>
 internal sealed class ParenEntry
@@ -317,9 +334,35 @@ internal sealed partial class RubyWalker
 
         TypeFn? ret = null;
         Dictionary<string, TypeFn> parms = [];
+        Dictionary<string, string> parmText = [];
+        string? retText = null;
+        bool isAbstract = false, isOverride = false, isOverridable = false, isFinal = from < j;
+        List<string> typeParameters = [];
         for (var k = j; k < end; k++)
         {
-            if (_t[k].Kind != Tk.Ident || Tok(k + 1) is not { Kind: Tk.Punct, Text: "(" })
+            if (_t[k].Kind != Tk.Ident)
+            {
+                continue;
+            }
+
+            var hasParens = Tok(k + 1) is { Kind: Tk.Punct, Text: "(" };
+            switch (_t[k].Text)
+            {
+                case "void" when !hasParens:
+                    retText = "void";
+                    continue;
+                case "abstract" when !hasParens:
+                    isAbstract = true;
+                    continue;
+                case "override":
+                    isOverride = true;
+                    break;
+                case "overridable" when !hasParens:
+                    isOverridable = true;
+                    continue;
+            }
+
+            if (!hasParens)
             {
                 continue;
             }
@@ -328,13 +371,24 @@ internal sealed partial class RubyWalker
             if (_t[k].Text == "returns")
             {
                 ret = ParseType(k + 2).Fn;
+                retText = TokenText(k + 2, close - 1);
+            }
+            else if (_t[k].Text == "type_parameters")
+            {
+                for (var n = k + 2; n < close - 1; n++)
+                {
+                    if (_t[n].Kind == Tk.Symbol)
+                    {
+                        typeParameters.Add(_t[n].Text.StartsWith(':') ? _t[n].Text : ":" + _t[n].Text);
+                    }
+                }
             }
             else if (_t[k].Text == "params")
             {
                 var n = k + 2;
                 while (n < close - 1)
                 {
-                    if (_t[n].Kind == Tk.Label)
+                    if (_t[n].Kind == Tk.Label || _t[n].Kind == Tk.Str && Tok(n + 1) is { Kind: Tk.Punct, Text: ":" })
                     {
                         var (fn, nx) = ParseType(n + 1);
                         if (fn is not null)
@@ -342,7 +396,29 @@ internal sealed partial class RubyWalker
                             parms[_t[n].Text] = fn;
                         }
 
-                        n = Math.Max(nx, n + 1);
+                        // Text of the type: up to the next top-level comma.
+                        var e = n + 1;
+                        var depth = 0;
+                        while (e < close - 1)
+                        {
+                            if (_t[e] is { Kind: Tk.Punct, Text: "(" or "[" or "{" })
+                            {
+                                depth++;
+                            }
+                            else if (_t[e] is { Kind: Tk.Punct, Text: ")" or "]" or "}" })
+                            {
+                                depth--;
+                            }
+                            else if (depth == 0 && _t[e] is { Kind: Tk.Punct, Text: "," })
+                            {
+                                break;
+                            }
+
+                            e++;
+                        }
+
+                        parmText[_t[n].Text.Trim('"')] = TokenText(n + 1, e);
+                        n = Math.Max(Math.Max(nx, e), n + 1);
                     }
                     else
                     {
@@ -354,6 +430,15 @@ internal sealed partial class RubyWalker
             k = close - 1;
         }
 
-        _pendingSig = new SigInfo(ret, parms);
+        _pendingSig = new SigInfo(ret, parms)
+        {
+            ParamText = parmText,
+            RetText = retText,
+            Abstract = isAbstract,
+            Override = isOverride,
+            Overridable = isOverridable,
+            Final = isFinal,
+            TypeParameters = [.. typeParameters],
+        };
     }
 }

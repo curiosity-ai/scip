@@ -159,7 +159,7 @@ public sealed class RubyIndexer : IIndexer
                     continue;
                 }
 
-                var o = new Occurrence { Symbol = symbol, SymbolRoles = occ.Roles };
+                var o = new Occurrence { Symbol = symbol, SymbolRoles = ApplyDefaultRole(symbol, occ.Roles) };
                 o.SingleLineRange = new SingleLineRange
                 {
                     Line = occ.Line,
@@ -192,10 +192,27 @@ public sealed class RubyIndexer : IIndexer
                         existing.Kind = occ.Kind;
                     }
 
+                    if (isDef)
+                    {
+                        AddDocumentation(project, occ, infos[symbol]);
+                        AddRelationships(project, occ, infos[symbol]);
+                    }
+
                     if (isDef && !isLocal)
                     {
                         defined.Add(symbol);
                     }
+                }
+                else if (occ.Field is { } field && project.FieldRelationships(field.Path, field.Name) is { Count: > 0 } fieldRels)
+                {
+                    // A used-but-not-defined-here field still carries its inheritance relationships (upstream's "ref-only" infos).
+                    if (!infos.TryGetValue(symbol, out var refInfo))
+                    {
+                        infos[symbol] = refInfo = new SymbolInformation { Symbol = symbol };
+                    }
+
+                    AddRelationships(project, occ, refInfo);
+                    defined.Add(symbol);
                 }
                 else
                 {
@@ -220,6 +237,58 @@ public sealed class RubyIndexer : IIndexer
 
         return docs;
     }
+
+    private static void AddRelationships(RubyProject project, Occ occ, SymbolInformation info)
+    {
+        var rels = new List<Relationship>();
+        if (occ.Field is { } field)
+        {
+            rels.AddRange(project.FieldRelationships(field.Path, field.Name));
+        }
+
+        if (occ.AliasOf?.Invoke(project) is { Length: > 0 } aliased && aliased != info.Symbol)
+        {
+            rels.Add(new Relationship { Symbol = aliased, IsReference = true });
+        }
+
+        foreach (var rel in rels)
+        {
+            if (!info.Relationships.Any(r => r.Symbol == rel.Symbol && r.IsDefinition == rel.IsDefinition && r.IsReference == rel.IsReference))
+            {
+                info.Relationships.Add(rel);
+            }
+        }
+    }
+
+    private static void AddDocumentation(RubyProject project, Occ occ, SymbolInformation info)
+    {
+        if (info.Documentation.Count > 0)
+        {
+            // A later definition of a reopened class/module may carry the doc comment.
+            if (occ.Comment is { Length: > 0 } later && info.Documentation.Count == 1
+                && (info.Documentation[0].StartsWith("```ruby\nclass ", StringComparison.Ordinal) || info.Documentation[0].StartsWith("```ruby\nmodule ", StringComparison.Ordinal)))
+            {
+                info.Documentation.Add(later);
+            }
+
+            return;
+        }
+
+        if (occ.Markdown?.Invoke(project) is { Length: > 0 } markdown)
+        {
+            info.Documentation.Add($"```ruby\n{markdown}\n```");
+        }
+
+        if (occ.Comment is { Length: > 0 } comment)
+        {
+            info.Documentation.Add(comment);
+        }
+    }
+
+    /// <summary>Upstream marks every non-method reference (constants, locals, fields) ReadAccess unless it is a write.</summary>
+    private static int ApplyDefaultRole(string symbol, int roles) =>
+        (roles & RubyWalker.NoRole) != 0 ? roles & ~RubyWalker.NoRole
+        : roles == 0 && !symbol.EndsWith(").", StringComparison.Ordinal) && !symbol.Contains(").(", StringComparison.Ordinal) ? (int)SymbolRole.ReadAccess : roles;
 
     private static SymbolInformation.Types.Kind GuessKind(string symbol) => symbol switch
     {

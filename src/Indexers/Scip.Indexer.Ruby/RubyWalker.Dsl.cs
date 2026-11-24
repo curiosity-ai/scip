@@ -98,6 +98,9 @@ internal sealed partial class RubyWalker
         (singleton ? info.SingletonMethods : info.Methods).Add(name);
         _project.InvalidateAncestors();
         var occ = Emit(tok, _project.MethodSymbol(owner, singleton, name), (int)SymbolRole.Definition, null, kind, startCol: startCol ?? (colon ? tok.Col - 1 : tok.Col), endCol: nameEndCol);
+        var setter = kind == SymbolInformation.Types.Kind.Setter && name.EndsWith('=');
+        var synthMd = PrettyMethod(name, singleton, setter ? [new ParamSpec(name[..^1], ParamKind.Required)] : [], null);
+        WithDocs(occ, _ => synthMd, comment: false);
         occ.Enclosing = [tok.Line, tok.Col, endLine, endCol];
         return occ;
     }
@@ -268,9 +271,16 @@ internal sealed partial class RubyWalker
         info.Defined = true;
         info.ProjectDefined = true;
         info.IsSpec = true;
+        if (parent.Length > 0)
+        {
+            // A nested `describe` is a subclass of the enclosing group.
+            info.Super ??= new RefSpec([], parent, true);
+        }
+
         _project.InvalidateAncestors();
         var sym = _project.TypeSymbol(path);
-        AddOcc(new Occ { Line = tok.Line, Col = start, EndCol = end, Symbol = sym, Roles = (int)SymbolRole.Definition, Kind = SymbolInformation.Types.Kind.Class });
+        var describeMd = $"class {RubyProject.Key(path)}" + (parent.Length > 0 ? $" < {RubyProject.Key(parent)}" : "");
+        AddOcc(new Occ { Line = tok.Line, Col = start, EndCol = end, Symbol = sym, Roles = (int)SymbolRole.Definition, Kind = SymbolInformation.Types.Kind.Class, Markdown = _ => describeMd });
         if (parent.Length > 0)
         {
             AddOcc(new Occ { Line = tok.Line, Col = start, EndCol = end, Symbol = _project.TypeSymbol(parent) });
@@ -300,6 +310,8 @@ internal sealed partial class RubyWalker
             Line = tok.Line, Col = start, EndCol = end, Symbol = _project.MethodSymbol(path, false, text), Roles = (int)SymbolRole.Definition,
             Kind = SymbolInformation.Types.Kind.Method,
         };
+        var letMd = PrettyMethod(text, false, [], null);
+        occ.Markdown = _ => letMd;
         AddOcc(occ);
         _exampleBlock = (path, text, occ, t.Line, t.Col);
         _i++;
@@ -381,6 +393,8 @@ internal sealed partial class RubyWalker
             Line = line, Col = startCol, EndCol = endCol, Roles = (int)SymbolRole.Definition, Kind = SymbolInformation.Types.Kind.Method,
             Resolver = p => p.IsSpecGroup(path) ? sym : null,
         };
+        var exampleMd = PrettyMethod(name, false, [], null);
+        occ.Markdown = _ => exampleMd;
         AddOcc(occ);
         _exampleBlock = (path, name, occ, t.Line, t.Col);
         _i++;
