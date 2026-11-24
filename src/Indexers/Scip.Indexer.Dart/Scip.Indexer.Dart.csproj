@@ -4,6 +4,9 @@
     <Description>SCIP indexer for Dart (port of scip-dart).</Description>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Scip.Indexer.Dart.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
   </ItemGroup>
 </Project>
