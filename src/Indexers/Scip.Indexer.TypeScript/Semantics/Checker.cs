@@ -173,6 +173,11 @@ public sealed class Checker(TsProgram program)
                 var target = ResolveAlias(d, depth + 1);
                 if (target is not null) { result.AddRange(target); continue; }
             }
+            else if (d.Kind == SK.VariableDeclaration && RequireAliasTarget(d) is { } required)
+            {
+                result.AddRange(required);
+                continue;
+            }
 
             result.Add(d);
         }
@@ -292,11 +297,32 @@ public sealed class Checker(TsProgram program)
         return null;
     }
 
+    /// <summary>
+    /// A JavaScript <c>var x = require("./m")</c> is an alias of the module: references resolve to what the module exports
+    /// (its <c>module.exports = ...</c> assignment, or the module itself).
+    /// </summary>
+    private List<Node>? RequireAliasTarget(Node declaration)
+    {
+        if (declaration.File is not { IsJavaScript: true } || declaration.Name is not { Kind: SK.Identifier }) { return null; }
+        if (declaration.Initializer is not { Kind: SK.CallExpression, Expression: { Kind: SK.Identifier, Text: "require" }, Arguments: [{ Kind: SK.StringLiteral } spec] }) { return null; }
+        var target = Program.ResolveModule(declaration.File, spec.Text);
+        if (target is null) { return null; }
+        var table = Program.BinderFor(target).ExportTable(target.Root);
+        return table is not null && table.TryGetValue("export=", out var assignment) ? ExpandExport(target, [assignment[^1]]) : [target.Root];
+    }
+
     private List<Node> ExpandExport(TsSourceFile file, List<Node> decls)
     {
         var result = new List<Node>();
         foreach (var d in decls)
         {
+            if (d.Kind == SK.BinaryExpression && d.Right is { Kind: SK.Identifier } rhs)
+            {
+                // `module.exports = createApplication` aliases the declaration.
+                var local = Program.BinderFor(file).Lookup(rhs, rhs.Text, Meaning.Any);
+                if (local is not null) { result.AddRange(DeAlias(local, 0)); continue; }
+            }
+
             if (d.Kind == SK.ExportAssignment)
             {
                 if (d.Expression is { Kind: SK.Identifier } id)
@@ -638,6 +664,8 @@ public sealed class Checker(TsProgram program)
 
             case SK.ExportAssignment:
                 return d.Expression is null ? [] : ValueConts(d.Expression, depth + 1);
+            case SK.BinaryExpression when d.Text == "=" && d.Right is not null:
+                return ValueConts(d.Right, depth + 1);
             default:
                 return [];
         }
@@ -736,6 +764,12 @@ public sealed class Checker(TsProgram program)
                 {
                     var export = LookupExport(decl.File!, name, []);
                     foreach (var e in export ?? []) { found.Add(new Hit(e, null, c)); }
+                    if (found.Count == 0 && B(decl).ExportTable(decl)?.GetValueOrDefault("export=") is { } equals)
+                    {
+                        // `export = x` / `module.exports = x`: the module's members are the members of x.
+                        found.AddRange(Members(ContainersOfDecls(ExpandExport(decl.File!, equals), depth + 1, asValue: true), name, visited, depth + 1));
+                    }
+
                     break;
                 }
 
