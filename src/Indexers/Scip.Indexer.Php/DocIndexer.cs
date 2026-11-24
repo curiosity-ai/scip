@@ -215,8 +215,11 @@ internal sealed class DocIndexer
         Occurrences.Add(MakeOccurrence(posNode.Start, posNode.End, symbol, SymbolRole.Definition, kind));
     }
 
-    private void DocDef(string symbol, int start, int end) =>
+    private void DocDef(string symbol, int start, int end)
+    {
+        Symbols.TryAdd(symbol, new SymbolInformation { Symbol = symbol }); // lint: every definition needs SymbolInformation
         Occurrences.Add(MakeOccurrence(start, end, symbol, SymbolRole.Definition, SyntaxKind.Identifier));
+    }
 
     private void Ref(string symbol, Node posNode, SyntaxKind kind)
     {

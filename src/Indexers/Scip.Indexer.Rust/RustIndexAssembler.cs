@@ -119,12 +119,13 @@ public static class RustIndexAssembler
             }
 
             duplicates.Add((location, symbol));
-            return true;
+            return false; // `scip lint` rejects repeated SymbolInformation; the duplicate is still reported to the log
         }
 
         using var writer = new IndexWriter(output, leaveOpen: true);
         writer.WriteMetadata(metadata);
         HashSet<string> paths = [];
+        List<Document> kept = [];
         foreach (var document in documents)
         {
             if (document.Occurrences.Count == 0 || !paths.Add(document.RelativePath))
@@ -135,15 +136,39 @@ public static class RustIndexAssembler
             var keep = document.Symbols.Where(s => ShouldEmit(s.Symbol, document.RelativePath)).ToList();
             document.Symbols.Clear();
             document.Symbols.AddRange(keep);
-            writer.WriteDocument(document);
+            kept.Add(document);
         }
 
+        List<SymbolInformation> externals = [];
         foreach (var ext in externalSymbols)
         {
             if (ShouldEmit(ext.Symbol, "<external>"))
             {
-                writer.WriteExternalSymbol(ext);
+                externals.Add(ext);
             }
+        }
+
+        // Every non-local occurrence symbol needs a SymbolInformation (e.g. `mod x;` declarations whose module file
+        // is not itself a crate root): synthesize a bare one next to the first occurrence.
+        foreach (var document in kept)
+        {
+            foreach (var occ in document.Occurrences)
+            {
+                if (occ.Symbol.Length > 0 && !occ.Symbol.StartsWith("local ", StringComparison.Ordinal) && emitted.Add(occ.Symbol))
+                {
+                    document.Symbols.Add(new SymbolInformation { Symbol = occ.Symbol });
+                }
+            }
+        }
+
+        foreach (var document in kept)
+        {
+            writer.WriteDocument(document);
+        }
+
+        foreach (var ext in externals)
+        {
+            writer.WriteExternalSymbol(ext);
         }
 
         if (duplicates.Count > 0)

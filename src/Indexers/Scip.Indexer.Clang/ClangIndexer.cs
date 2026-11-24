@@ -128,6 +128,7 @@ public sealed partial class ClangIndexer : IIndexer
             ToolInfo = new ToolInfo { Name = "scip-clang", Version = "0.1.0-dotnet" },
         });
 
+        List<Document> documents = [];
         foreach (var (path, acc) in merged.OrderBy(static kv => kv.Key, StringComparer.Ordinal))
         {
             var doc = new Document
@@ -144,10 +145,80 @@ public sealed partial class ClangIndexer : IIndexer
             }
 
             doc.Symbols.AddRange(acc.Symbols.Values.OrderBy(static s => s.Symbol, StringComparer.Ordinal));
+            documents.Add(doc);
+        }
+
+        // `scip lint` needs a SymbolInformation for every occurrence symbol and relationship target, and rejects a symbol
+        // present both in a document and in the external symbols. Symbols with no declaration we modelled (builtin
+        // headers, attributes, macro-generated names, bases in unindexed code) get a bare external entry.
+        var allExternal = new Dictionary<string, SymbolInformation>(external, StringComparer.Ordinal);
+        HashSet<string> known = new(StringComparer.Ordinal);
+        foreach (var doc in documents)
+        {
+            foreach (var s in doc.Symbols)
+            {
+                known.Add(s.Symbol);
+                allExternal.Remove(s.Symbol);
+            }
+        }
+
+        void Need(string symbol)
+        {
+            if (symbol.Length > 0 && !symbol.StartsWith("local ", StringComparison.Ordinal)
+                && !known.Contains(symbol) && !allExternal.ContainsKey(symbol))
+            {
+                allExternal[symbol] = new SymbolInformation { Symbol = symbol };
+            }
+        }
+
+        foreach (var doc in documents)
+        {
+            HashSet<string> locals = new(doc.Symbols.Select(static s => s.Symbol), StringComparer.Ordinal);
+            foreach (var o in doc.Occurrences)
+            {
+                if (o.Symbol.StartsWith("local ", StringComparison.Ordinal))
+                {
+                    if (locals.Add(o.Symbol))
+                    {
+                        doc.Symbols.Add(new SymbolInformation { Symbol = o.Symbol });
+                    }
+                }
+                else
+                {
+                    Need(o.Symbol);
+                }
+            }
+
+            foreach (var s in doc.Symbols)
+            {
+                if (s.Relationships.Count > 1)
+                {
+                    // one relationship per target (lint warns otherwise): OR the flags together
+                    var combined = s.Relationships.GroupBy(static r => r.Symbol).Select(static g => new Relationship
+                    {
+                        Symbol = g.Key,
+                        IsReference = g.Any(static r => r.IsReference),
+                        IsImplementation = g.Any(static r => r.IsImplementation),
+                        IsTypeDefinition = g.Any(static r => r.IsTypeDefinition),
+                        IsDefinition = g.Any(static r => r.IsDefinition),
+                    }).ToList();
+                    s.Relationships.Clear();
+                    s.Relationships.AddRange(combined);
+                }
+
+                foreach (var r in s.Relationships)
+                {
+                    Need(r.Symbol);
+                }
+            }
+        }
+
+        foreach (var doc in DocumentOrdering.ByRelationshipDependencies(documents))
+        {
             writer.WriteDocument(doc);
         }
 
-        foreach (var info in external.Values.OrderBy(static s => s.Symbol, StringComparer.Ordinal))
+        foreach (var info in allExternal.Values.OrderBy(static s => s.Symbol, StringComparer.Ordinal))
         {
             writer.WriteExternalSymbol(info);
         }
