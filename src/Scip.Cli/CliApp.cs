@@ -1,48 +1,96 @@
 using System.CommandLine;
-using Google.Protobuf;
+using System.CommandLine.Invocation;
+using Scip.Cli.Commands;
 using Scip.Indexing;
 
 namespace Scip.Cli;
 
-internal static class CliApp
+/// <summary>An expected failure: the message is printed to stderr and the process exits with <see cref="ExitCode"/>.</summary>
+public sealed class CliException(string message, int exitCode = 1) : Exception(message)
 {
+    public int ExitCode { get; } = exitCode;
+}
+
+/// <summary>Root of the <c>scip</c> command line (port of <c>cmd/scip/main.go</c>).</summary>
+public static class CliApp
+{
+    /// <summary>The CLI version, e.g. <c>v0.10.0</c> (from the embedded <c>version.txt</c>).</summary>
+    public static string Version { get; } = ReadVersion();
+
+    private static string ReadVersion()
+    {
+        using var stream = typeof(CliApp).Assembly.GetManifestResourceStream("version.txt")
+            ?? throw new InvalidOperationException("embedded version.txt is missing");
+        using var reader = new StreamReader(stream);
+        return "v" + reader.ReadToEnd().Trim();
+    }
+
+    public const string Description =
+        "For more details, see the project README at:\n\n\thttps://github.com/scip-code/scip";
+
+    /// <summary>Builds the command tree.</summary>
     public static RootCommand Build()
     {
-        var root = new RootCommand("SCIP Code Intelligence Protocol CLI");
-        root.Subcommands.Add(BuildPrint());
-        root.Subcommands.Add(BuildIndex());
+        var root = new RootCommand("SCIP Code Intelligence Protocol CLI\n\n" + Description);
+
+        // Replace the built-in --version (assembly informational version) with the CLI version.
+        foreach (var builtin in root.Options.OfType<VersionOption>().ToList())
+        {
+            root.Options.Remove(builtin);
+        }
+
+        var version = new Option<bool>("--version", "-v") { Description = "print the version" };
+        version.Action = new VersionAction();
+        root.Options.Add(version);
+
+        root.Subcommands.Add(LintCommand.Create());
+        root.Subcommands.Add(PrintCommand.Create());
+        root.Subcommands.Add(SnapshotCommand.Create());
+        root.Subcommands.Add(StatsCommand.Create());
+        root.Subcommands.Add(TestCommand.Create());
+        root.Subcommands.Add(ConvertCommand.Create());
+        root.Subcommands.Add(IndexCommand.Create(IndexerRegistry.All));
         return root;
     }
 
-    private static Command BuildPrint()
+    /// <summary>Runs the CLI with the given streams and returns the process exit code.</summary>
+    public static async Task<int> RunAsync(
+        IReadOnlyList<string> args, TextWriter output, TextWriter error, CancellationToken cancellationToken = default)
     {
-        var path = new Argument<FileInfo>("path") { Description = "Path to a SCIP index file" };
-        var cmd = new Command("print", "Print a human-readable (JSON) view of a SCIP index") { path };
-        cmd.SetAction(parse =>
+        var configuration = new InvocationConfiguration
         {
-            var file = parse.GetRequiredValue(path);
-            using var stream = file.OpenRead();
-            var index = Index.Parser.ParseFrom(stream);
-            Console.WriteLine(JsonFormatter.Default.Format(index));
-            return 0;
-        });
-        return cmd;
-    }
-
-    private static Command BuildIndex()
-    {
-        var index = new Command("index", "Index a project using a per-language indexer");
-        foreach (var indexer in IndexerRegistry.All)
+            Output = output,
+            Error = error,
+            EnableDefaultExceptionHandler = false,
+        };
+        try
         {
-            var root = new Option<DirectoryInfo>("--project-root") { Description = "Project directory", DefaultValueFactory = _ => new DirectoryInfo(".") };
-            var output = new Option<string>("--output") { Description = "Output file", DefaultValueFactory = _ => IndexerOptions.DefaultOutputPath };
-            var sub = new Command(indexer.Name, $"{indexer.Languages} (port of {indexer.UpstreamProject})") { root, output };
-            sub.SetAction((parse, ct) => indexer.IndexAsync(
-                new IndexerOptions(parse.GetRequiredValue(root).FullName, parse.GetRequiredValue(output), parse.UnmatchedTokens),
-                ct));
-            index.Subcommands.Add(sub);
+            return await Build().Parse([.. args]).InvokeAsync(configuration, cancellationToken);
         }
+        catch (CliException e)
+        {
+            if (e.Message.Length > 0)
+            {
+                error.WriteLine(e.Message);
+            }
 
-        return index;
+            return e.ExitCode;
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or Google.Protobuf.InvalidProtocolBufferException
+                                      or UnauthorizedAccessException or SymbolParseException or InvalidOperationException)
+        {
+            error.WriteLine(e.Message);
+            return 1;
+        }
     }
+
+    private sealed class VersionAction : SynchronousCommandLineAction
+    {
+        public override int Invoke(ParseResult parseResult)
+        {
+            parseResult.InvocationConfiguration.Output.WriteLine($"scip version {Version}");
+            return 0;
+        }
+    }
+
 }

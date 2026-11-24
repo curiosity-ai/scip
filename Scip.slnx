@@ -17,5 +17,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Scip.Tests/Scip.Tests.csproj" />
+    <Project Path="tests/Scip.Cli.Tests/Scip.Cli.Tests.csproj" />
   </Folder>
 </Solution>

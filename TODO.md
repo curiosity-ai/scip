@@ -22,21 +22,23 @@ Legend: `[x]` done · `[ ]` open. Upstream paths are relative to `.reference/`.
 - [x] Position encodings (UTF-8/UTF-16/UTF-32) and `SourceFile` helpers (`source_file.go`)
 - [x] Sorting & canonicalization (`sort.go`, `canonicalize.go`)
 - [x] Sanitize (`sanitize.go`), flatten (`flatten.go`), symbol table (`symbol_table.go`)
-- [ ] Port remaining Go tests: `testutil/format.go` done (`SnapshotFormatter`); `test_runner.go`, `snapshot_testing.go` and `memtest` remain (CLI `test`)
+- [x] `testutil`: `SnapshotFormatter`, `Scip.Testing.TestRunner` (`test_runner.go`), `Scip.Testing.SnapshotTesting` (`snapshot_testing.go`); `memtest` (Go memory test) intentionally not ported
 - [ ] Invalid UTF-16 (lone surrogate) rejection in `SymbolParser` to match Go's UTF-8 validation
 - [ ] Benchmarks (BenchmarkDotNet) for symbol parsing vs. Go `parseSymbolV2`
 - [ ] Decide fate of upstream `bindings/{java,kotlin,rust,typescript,haskell,dotnet}` (likely: not ported; protobuf covers them)
 
 ## 2. CLI `src/Scip.Cli` (from `scip/cmd/scip`, `scip/docs/CLI.md`)
 - [x] Skeleton with `print` (JSON only) and `index <lang>`
-- [ ] `print` — text output, `--color`, `--json` flag parity
-- [ ] `lint` (`lint.go`)
-- [ ] `stats` (`stats.go`)
-- [ ] `snapshot` (`snapshot.go`)
-- [ ] `test` (`test.go`) + `reprolang` fixtures
-- [ ] `expt-convert` (`convert.go`, LSIF → SCIP)
-- [ ] `--version` from `version.txt`; global `--from`, `--comment-syntax`, `--project-root`
-- [ ] Port `main_test.go`, `print_test.go`, `lint_test.go`, `convert_test.go`
+- [x] `print` — text output (pp-style, ANSI `--color`), `--json` (proto field names), `-` for stdin
+- [x] `lint` (`lint.go`) — `Scip.Cli.Linting.IndexLinter`
+- [x] `stats` (`stats.go`) — LOC counting is a simple stand-in for `gocloc` (extension-based comment rules)
+- [x] `snapshot` (`snapshot.go`)
+- [x] `test` (`test.go`) — runner in `Scip.Testing.TestRunner` (`src/Scip`); no reprolang dependency (works on any index + test files)
+- [x] `expt-convert` (`convert.go`) — SCIP -> SQLite (Microsoft.Data.Sqlite + zstd), not LSIF; `--cpu-profile` is accepted but ignored
+- [x] `--version` from `version.txt` (embedded); per-command `--from`, `--comment-syntax`, `--project-root` (as in Go; there are no truly global flags)
+- [x] Port `main_test.go` (help/version; the `docs/CLI.md` byte-for-byte sync check is not ported: System.CommandLine help text differs from urfave/cli), `print_test.go`, `lint_test.go`, `convert_test.go`
+- [ ] Regenerate `docs/CLI.md` from the C# help output
+- [ ] Assembly is `Scip.Cli` (not `scip`): assembly names are case-insensitive and would clash with `Scip.dll`; the tool command is still `scip`
 
 ## 3. `reprolang` (test language, `scip/reprolang`)
 - [ ] Port grammar/parser (tree-sitter replacement or hand-written parser)
