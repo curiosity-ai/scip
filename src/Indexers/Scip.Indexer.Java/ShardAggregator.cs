@@ -187,29 +187,31 @@ public sealed class ShardAggregator(AggregatorOptions options)
         return @out;
     }
 
+    private Dictionary<string, List<string>> ComputeInverseReferences(List<string> shards)
+    {
+        if (!options.EmitInverseRelationships) return new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        return InverseReferences(shards.SelectMany(ReadShard));
+    }
+
     /// <summary>
     /// Builds <c>overridden-symbol -&gt; [overriding-symbols]</c> for every method-style implementation relationship.
     /// Class-like symbols are excluded (they would pollute find-references), as is <c>java/lang/Object#</c>.
     /// </summary>
-    private Dictionary<string, List<string>> ComputeInverseReferences(List<string> shards)
+    public static Dictionary<string, List<string>> InverseReferences(IEnumerable<Document> documents)
     {
         var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        if (!options.EmitInverseRelationships) return result;
-        foreach (var shard in shards)
+        foreach (var doc in documents)
         {
-            foreach (var doc in ReadShard(shard))
+            foreach (var info in doc.Symbols)
             {
-                foreach (var info in doc.Symbols)
+                if (!SupportsReferenceRelationship(info)) continue;
+                if (info.Symbol.Length == 0 || JavaSymbols.IsLocal(info.Symbol)) continue;
+                foreach (var rel in info.Relationships)
                 {
-                    if (!SupportsReferenceRelationship(info)) continue;
-                    if (info.Symbol.Length == 0 || JavaSymbols.IsLocal(info.Symbol)) continue;
-                    foreach (var rel in info.Relationships)
-                    {
-                        if (!rel.IsImplementation || JavaSymbols.IsLocal(rel.Symbol)) continue;
-                        if (rel.Symbol.EndsWith("java/lang/Object#", StringComparison.Ordinal)) continue;
-                        if (!result.TryGetValue(rel.Symbol, out var list)) result[rel.Symbol] = list = [];
-                        list.Add(info.Symbol);
-                    }
+                    if (!rel.IsImplementation || JavaSymbols.IsLocal(rel.Symbol)) continue;
+                    if (rel.Symbol.EndsWith("java/lang/Object#", StringComparison.Ordinal)) continue;
+                    if (!result.TryGetValue(rel.Symbol, out var list)) result[rel.Symbol] = list = [];
+                    list.Add(info.Symbol);
                 }
             }
         }

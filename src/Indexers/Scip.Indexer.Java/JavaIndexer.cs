@@ -1,24 +1,25 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Scip.Indexer.Java.Project;
 using Scip.Indexing;
 
 namespace Scip.Indexer.Java;
 
 /// <summary>
-/// Port of <c>scip-java</c>. The semantic analysis is done by the upstream javac plugin (which emits one SCIP shard
-/// per source file); this indexer orchestrates <c>javac</c> and merges the shards natively. See README.md.
+/// Native C# port of <c>scip-java</c>: a Java parser and symbol resolver, class file / jar / JDK image readers and
+/// Maven/Gradle/<c>scip-java.json</c> metadata parsers. Needs no javac, plugin jar or build tool. See README.md.
 /// </summary>
 /// <remarks>
-/// Arguments: <c>[aggregate] [--plugin-jar JAR] [--targetroot DIR] [--config FILE] [--strict]
-/// [--no-inverse-relationships] [--allow-empty-index] [--jdk-version N]</c>.
+/// Arguments: <c>[aggregate | javac-plugin] [--config FILE] [--jdk-home DIR] [--jdk-version N] [--classpath JARS]</c>.
+/// <c>aggregate</c> merges shards produced by the upstream javac plugin; <c>javac-plugin</c> additionally runs javac with it.
 /// </remarks>
-public sealed partial class JavaIndexer() : IIndexer
+public sealed partial class JavaIndexer : IIndexer
 {
     public const string PluginJarEnvironmentVariable = "SCIP_JAVA_PLUGIN_JAR";
 
     public string Name => "java";
 
-    public string Languages => "Java, Scala, Kotlin";
+    public string Languages => "Java (Scala and Kotlin are not supported)";
 
     public string UpstreamProject => "scip-java";
 
@@ -34,33 +35,30 @@ public sealed partial class JavaIndexer() : IIndexer
 
         var sourceRoot = Path.GetFullPath(options.ProjectRoot);
         var output = Path.GetFullPath(options.OutputPath, sourceRoot);
-        var targetRoot = Path.GetFullPath(parsed.TargetRoot ?? Path.Combine("target", "scip"), sourceRoot);
 
-        if (!parsed.AggregateOnly)
+        if (!parsed.AggregateOnly && !parsed.UsePlugin)
         {
-            var configPath = parsed.ConfigPath is { } c ? Path.GetFullPath(c, sourceRoot)
-                : JavaProjectConfig.FileNames.Select(n => Path.Combine(sourceRoot, n)).FirstOrDefault(File.Exists);
-            JavaProjectConfig config;
-            try
-            {
-                config = configPath is null ? JavaProjectConfig.Empty : JavaProjectConfig.Parse(await File.ReadAllTextAsync(configPath, cancellationToken));
-            }
-            catch (Exception e) when (e is IOException or System.Text.Json.JsonException or InvalidDataException)
-            {
-                Console.Error.WriteLine($"cannot read {configPath}: {e.Message}");
-                return 1;
-            }
+            var project = new ProjectDiscovery(new ArtifactLocator()).Discover(sourceRoot, parsed.ConfigPath);
+            project.JavaHome = parsed.JdkHome ?? project.JavaHome;
+            foreach (var jar in parsed.Classpath) ProjectDiscovery.AddJar(project, Path.GetFullPath(jar, sourceRoot));
+            var rc = await NativeProjectIndexer.RunAsync(project, output, parsed.JdkVersion, options.Arguments, reporter, cancellationToken);
+            if (rc == 0 && !reporter.HasErrors) Console.WriteLine(output);
+            return reporter.HasErrors ? 1 : rc;
+        }
 
+        // Optional compatibility mode: consume shards from the upstream javac plugin.
+        var targetRoot = Path.GetFullPath(parsed.TargetRoot ?? Path.Combine("target", "scip"), sourceRoot);
+        if (parsed.UsePlugin)
+        {
             var pluginJar = parsed.PluginJar ?? Environment.GetEnvironmentVariable(PluginJarEnvironmentVariable);
             if (string.IsNullOrEmpty(pluginJar) || !File.Exists(pluginJar))
             {
-                Console.Error.WriteLine(
-                    $"The scip-java javac plugin jar is required. Pass --plugin-jar or set {PluginJarEnvironmentVariable} " +
-                    "(build it from .reference/scip-java, task :scip-javac:shadowJar). Gradle/Maven auto-detection is not ported; " +
-                    "alternatively compile with -Xplugin:scip yourself and run `scip index java aggregate --targetroot DIR`.");
+                Console.Error.WriteLine($"javac-plugin mode needs --plugin-jar or {PluginJarEnvironmentVariable}");
                 return 2;
             }
-
+            var configPath = parsed.ConfigPath is { } c ? Path.GetFullPath(c, sourceRoot)
+                : JavaProjectConfig.FileNames.Select(n => Path.Combine(sourceRoot, n)).FirstOrDefault(File.Exists);
+            var config = configPath is null ? JavaProjectConfig.Empty : JavaProjectConfig.Parse(await File.ReadAllTextAsync(configPath, cancellationToken));
             if (Directory.Exists(targetRoot)) Directory.Delete(targetRoot, recursive: true);
             var rc = await new JavacBuildTool(sourceRoot, targetRoot, Path.GetFullPath(pluginJar), config, parsed.Strict)
                 .RunAsync(reporter, cancellationToken);
@@ -68,7 +66,7 @@ public sealed partial class JavaIndexer() : IIndexer
         }
 
         var packages = ClasspathEntries.FromTargetRoot(targetRoot, sourceRoot).Distinct().ToList();
-        var aggregatorOptions = new AggregatorOptions(
+        ShardAggregator.Run(new AggregatorOptions(
             [targetRoot],
             output,
             sourceRoot,
@@ -77,8 +75,7 @@ public sealed partial class JavaIndexer() : IIndexer
             new JdkPackage(parsed.JdkVersion ?? DetectJdkVersion()),
             reporter,
             EmitInverseRelationships: !parsed.NoInverse,
-            AllowEmptyIndex: parsed.AllowEmpty);
-        ShardAggregator.Run(aggregatorOptions);
+            AllowEmptyIndex: parsed.AllowEmpty));
         if (reporter.HasErrors) return 1;
         Console.WriteLine(output);
         return 0;
@@ -120,10 +117,13 @@ public sealed partial class JavaIndexer() : IIndexer
 public sealed record JavaIndexerArguments
 {
     public bool AggregateOnly { get; init; }
+    public bool UsePlugin { get; init; }
     public string? PluginJar { get; init; }
     public string? TargetRoot { get; init; }
     public string? ConfigPath { get; init; }
     public string? JdkVersion { get; init; }
+    public string? JdkHome { get; init; }
+    public List<string> Classpath { get; init; } = [];
     public bool Strict { get; init; }
     public bool NoInverse { get; init; }
     public bool AllowEmpty { get; init; }
@@ -138,10 +138,13 @@ public sealed record JavaIndexerArguments
             switch (args[i])
             {
                 case "aggregate": r = r with { AggregateOnly = true }; break;
+                case "javac-plugin": r = r with { UsePlugin = true }; break;
                 case "--plugin-jar": r = r with { PluginJar = Next() }; break;
                 case "--targetroot": r = r with { TargetRoot = Next() }; break;
                 case "--config": r = r with { ConfigPath = Next() }; break;
                 case "--jdk-version": r = r with { JdkVersion = Next() }; break;
+                case "--jdk-home": r = r with { JdkHome = Next() }; break;
+                case "--classpath": r.Classpath.AddRange(Next().Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--strict": r = r with { Strict = true }; break;
                 case "--no-inverse-relationships": r = r with { NoInverse = true }; break;
                 case "--allow-empty-index": r = r with { AllowEmpty = true }; break;
