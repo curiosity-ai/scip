@@ -32,9 +32,11 @@ internal sealed partial class DartParser
 
     public static FileModel Parse(string relativePath, string source)
     {
-        var (tokens, docs) = DartLexer.Lex(source);
-        var model = new FileModel(relativePath) { Tokens = tokens };
-        new DartParser(source, tokens, docs, model).ParseFile();
+        var (tokens, docs, docRefs) = DartLexer.LexFull(source);
+        var model = new FileModel(relativePath) { Tokens = tokens, DocRefs = docRefs };
+        var parser = new DartParser(source, tokens, docs, model);
+        parser.ParseFile();
+        parser.ScanLocals();
         DemoteDuplicates(model);
         return model;
     }
@@ -55,7 +57,7 @@ internal sealed partial class DartParser
             }
 
             var key = string.Join('\u0001', d.Path.Select(x => x.Name + (int)x.Suffix));
-            if (!seen.Add(key) || (d.Kind is DeclKind.Parameter or DeclKind.TypeParameter && d.Parent is { IsLocal: true, Kind: DeclKind.Function or DeclKind.Method }))
+            if (!seen.Add(key) || (d.Kind is DeclKind.Parameter or DeclKind.TypeParameter && d.Parent is { IsLocal: true, Kind: DeclKind.Function } && !model.TopLevel.Contains(d.Parent)))
             {
                 d.IsLocal = true;
             }

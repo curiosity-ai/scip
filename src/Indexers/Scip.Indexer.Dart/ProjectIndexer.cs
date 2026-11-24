@@ -263,6 +263,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
 
         ResolveReferences(f, occs);
         ResolveDirectives(f, occs);
+        ResolveDocReferences(f, occs);
 
         var ordered = occs
             .OrderBy(o => o.Start)
@@ -443,6 +444,12 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             if (prev.Is("..") || (next.Is(":") && (prev.Is("(") || prev.Is(","))))
             {
                 continue; // cascade member or named-argument label; both need type information
+            }
+
+            if (!afterDot && f.LookupLocal(tk.Text, tk.Offset) is { } local)
+            {
+                occs.Add(new Occ(tk.Offset, tk.Length, local, null, false));
+                continue;
             }
 
             if (afterDot)
@@ -638,6 +645,109 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
         }
 
         return t.Count;
+    }
+
+    /// <summary>Resolves <c>[Name]</c> / <c>[Type.member]</c> references in doc comments against the documented declaration's scope.</summary>
+    private void ResolveDocReferences(FileModel f, List<Occ> occs)
+    {
+        if (f.DocRefs.Count == 0)
+        {
+            return;
+        }
+
+        var docable = f.AllDecls
+            .Where(d => d.Kind is DeclKind.Class or DeclKind.Mixin or DeclKind.Enum or DeclKind.TypeAlias or DeclKind.Extension or DeclKind.Constructor
+                or DeclKind.Method or DeclKind.Function or DeclKind.Variable or DeclKind.Field or DeclKind.Property
+                && (d.Kind != DeclKind.Function || f.TopLevel.Contains(d)))
+            .OrderBy(d => d.EnclosingStart)
+            .ToList();
+        foreach (var segments in f.DocRefs)
+        {
+            var first = segments[0];
+            int lo = 0, hi = docable.Count;
+            while (lo < hi)
+            {
+                var mid = (lo + hi) / 2;
+                if (docable[mid].EnclosingStart <= first.Offset)
+                {
+                    lo = mid + 1;
+                }
+                else
+                {
+                    hi = mid;
+                }
+            }
+
+            if (lo >= docable.Count)
+            {
+                continue;
+            }
+
+            var target = ResolveDocName(first.Text, docable[lo], f);
+            if (target is null)
+            {
+                continue;
+            }
+
+            occs.Add(new Occ(first.Offset, first.Length, target, null, false));
+            for (var i = 1; i < segments.Count && target is not null; i++)
+            {
+                var name = segments[i].Text;
+                if (target.Kind == DeclKind.ImportPrefix)
+                {
+                    target = LookupTopLevel(name, f);
+                }
+                else if (target.IsTypeLike)
+                {
+                    target = SuperTypes(target).Prepend(target)
+                        .Select(t => t.Members.FirstOrDefault(m => m.Name == name && m.Kind != DeclKind.Parameter))
+                        .FirstOrDefault(m => m is not null);
+                }
+                else
+                {
+                    target = null;
+                }
+
+                if (target is not null)
+                {
+                    occs.Add(new Occ(segments[i].Offset, segments[i].Length, target, null, false));
+                }
+            }
+        }
+    }
+
+    private Decl? ResolveDocName(string name, Decl doc, FileModel f)
+    {
+        if (doc.Parameters.FirstOrDefault(p => p.Name == name) is { } param)
+        {
+            return param;
+        }
+
+        if (doc.TypeParameters.FirstOrDefault(p => p.Name == name) is { } tp)
+        {
+            return tp;
+        }
+
+        var cls = doc.IsTypeLike ? doc : doc.Parent is { IsTypeLike: true } p ? p : null;
+        if (cls is not null)
+        {
+            if (cls.TypeParameters.FirstOrDefault(x => x.Name == name) is { } ctp)
+            {
+                return ctp;
+            }
+
+            if (FindInstanceMember(cls, name) is { } m)
+            {
+                return m;
+            }
+        }
+
+        if (f.PrefixDecls.TryGetValue(name, out var prefix))
+        {
+            return prefix;
+        }
+
+        return LookupTopLevel(name, f);
     }
 
     private void ResolveDirectives(FileModel f, List<Occ> occs)

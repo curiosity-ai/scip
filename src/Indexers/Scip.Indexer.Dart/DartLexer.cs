@@ -24,11 +24,100 @@ internal sealed class DartLexer(string source)
     private readonly List<string> _docs = [];
     private readonly StringBuilder _pendingDoc = new();
 
+    private readonly List<List<Token>> _docRefs = [];
+    private bool _inFence;
+
     public static (List<Token> Tokens, IReadOnlyList<string> Docs) Lex(string source)
+    {
+        var (tokens, docs, _) = LexFull(source);
+        return (tokens, docs);
+    }
+
+    /// <summary>Like <see cref="Lex"/>, also returning the <c>[Name]</c>/<c>[Type.member]</c> references found in doc comments.</summary>
+    public static (List<Token> Tokens, IReadOnlyList<string> Docs, List<List<Token>> DocRefs) LexFull(string source)
     {
         var lexer = new DartLexer(source);
         lexer.LexUntil(stopAtCloseBrace: false);
-        return (lexer._tokens, lexer._docs);
+        return (lexer._tokens, lexer._docs, lexer._docRefs);
+    }
+
+    /// <summary>Finds comment references (<c>[Foo]</c>, <c>[Foo.bar]</c>) in a doc comment line starting at <paramref name="from"/>.</summary>
+    private void ScanDocRefs(int from, int to)
+    {
+        var text = source.AsSpan(from, to - from);
+        var trimmed = text.TrimStart();
+        if (trimmed.StartsWith("```") || trimmed.StartsWith("~~~"))
+        {
+            _inFence = !_inFence;
+            return;
+        }
+
+        if (_inFence)
+        {
+            return;
+        }
+
+        var inCode = false;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c == '`')
+            {
+                inCode = !inCode;
+            }
+            else if (c == '[' && !inCode)
+            {
+                var close = text[(i + 1)..].IndexOf(']');
+                if (close < 0)
+                {
+                    return;
+                }
+
+                var inner = text.Slice(i + 1, close);
+                var after = i + 1 + close + 1 < text.Length ? text[i + 1 + close + 1] : '\0';
+                if (after is not ('(' or ':' or '['))
+                {
+                    ParseDocRef(from + i + 1, inner);
+                }
+
+                i += close + 1;
+            }
+        }
+    }
+
+    private void ParseDocRef(int offset, ReadOnlySpan<char> inner)
+    {
+        var refs = new List<Token>();
+        var p = 0;
+        while (p < inner.Length)
+        {
+            if (!IsIdentStart(inner[p]))
+            {
+                return;
+            }
+
+            var s = p;
+            while (p < inner.Length && IsIdentPart(inner[p]))
+            {
+                p++;
+            }
+
+            refs.Add(new Token(TokenKind.Identifier, inner[s..p].ToString(), offset + s, p - s));
+            if (p < inner.Length)
+            {
+                if (inner[p] != '.')
+                {
+                    return; // `new Foo`, `Foo bar`, ... are not plain references
+                }
+
+                p++;
+            }
+        }
+
+        if (refs.Count > 0)
+        {
+            _docRefs.Add(refs);
+        }
     }
 
     private void Add(TokenKind kind, int start, int end)
@@ -71,6 +160,7 @@ internal sealed class DartLexer(string source)
                 var line = source.AsSpan(start, _pos - start);
                 if (line.StartsWith("///") && !line.StartsWith("////"))
                 {
+                    ScanDocRefs(start + 3, _pos);
                     // upstream strips `^\s*///\s*`
                     _pendingDoc.Append(line[3..].TrimEnd('\r').TrimStart()).Append('\n');
                 }

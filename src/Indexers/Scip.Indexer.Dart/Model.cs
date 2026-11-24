@@ -16,6 +16,7 @@ internal enum DeclKind
     Parameter,
     TypeParameter,
     ImportPrefix,
+    LocalVariable,
 }
 
 /// <summary>One declaration found in a Dart source file.</summary>
@@ -47,6 +48,9 @@ internal sealed class Decl(DeclKind kind, string name, Decl? parent, Token nameT
     public bool IsLocal { get; set; }
 
     public bool IsStatic { get; set; }
+
+    /// <summary>Best-effort simple name of the declared (or obviously inferred) type; null when unknown.</summary>
+    public string? TypeName { get; set; }
 
     /// <summary>Names (best effort, without prefix/type arguments) of extends/with/implements/on types.</summary>
     public List<string> Supers { get; } = [];
@@ -83,6 +87,9 @@ internal sealed class FileModel(string relativePath)
 
     public List<Token> Tokens { get; set; } = [];
 
+    /// <summary>Doc comment references: each entry is the dotted segments of one <c>[A.b]</c>.</summary>
+    public List<List<Token>> DocRefs { get; set; } = [];
+
     public List<Decl> TopLevel { get; } = [];
 
     public List<Decl> AllDecls { get; } = [];
@@ -95,6 +102,43 @@ internal sealed class FileModel(string relativePath)
 
     public Dictionary<string, Decl> PrefixDecls { get; } = [];
 
+    /// <summary>Visible local declarations (variables, parameters) by name.</summary>
+    public Dictionary<string, List<LocalScope>> Scopes { get; } = new(StringComparer.Ordinal);
+
+    public void AddScope(Decl d, int start, int end)
+    {
+        if (!Scopes.TryGetValue(d.Name, out var list))
+        {
+            Scopes[d.Name] = list = [];
+        }
+
+        list.Add(new LocalScope(d, start, end));
+    }
+
+    /// <summary>Innermost local declaration named <paramref name="name"/> visible at <paramref name="offset"/>.</summary>
+    public Decl? LookupLocal(string name, int offset)
+    {
+        if (!Scopes.TryGetValue(name, out var list))
+        {
+            return null;
+        }
+
+        Decl? best = null;
+        var bestStart = -1;
+        foreach (var s in list)
+        {
+            if (s.Start <= offset && offset < s.End && s.Start >= bestStart)
+            {
+                best = s.Decl;
+                bestStart = s.Start;
+            }
+        }
+
+        return best;
+    }
+
     /// <summary>Offsets of identifier tokens that are declarations (never treated as references).</summary>
     public HashSet<int> DeclTokenOffsets { get; } = [];
 }
+
+internal readonly record struct LocalScope(Decl Decl, int Start, int End);
