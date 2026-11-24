@@ -15,8 +15,8 @@ public sealed class Checker(TsProgram program)
 
     private Binder B(Node n) => Program.BinderFor(n.File!);
 
-    private const int MaxDepth = 10;
-    private const int MaxNest = 48;
+    private const int MaxDepth = 14;
+    private const int MaxNest = 72;
     [ThreadStatic] private static int _nest;
     [ThreadStatic] private static HashSet<(Node, int)>? _activeSet;
     private static HashSet<(Node, int)> Active => _activeSet ??= [];
@@ -316,321 +316,239 @@ public sealed class Checker(TsProgram program)
         return result;
     }
 
-    // ------------------------------------------------------------------ built-in (lib) containers
-    private List<Node> Lib(params string[] names)
+    // ------------------------------------------------------------------ the type model
+    //
+    // A "container" (<see cref="Cont"/>) is a declaration that provides members (class, interface, type literal, object
+    // literal, namespace, module, mapped type, function) together with the environment that binds the declaration's type
+    // parameters (and `this`) to the type arguments it was referenced with. That is just enough of the compiler's type
+    // model to resolve member accesses through generics, inheritance, call results, awaited promises, array elements,
+    // contextual typing, ... to the declarations SCIP symbols are built from.
+
+    private static readonly Node Opaque = new(SK.KeywordType, 0) { Text = "any" };
+    private static readonly Node ThisKey = new(SK.ThisType, 0);
+
+    private int _cuts;
+    private int _groups;
+    private readonly Dictionary<Node, List<Cont>> _valueCache = [];
+    private readonly Dictionary<Node, Dictionary<string, List<Node>>> _memberIndex = [];
+
+    /// <summary>Wraps a guarded computation: recursion guard, nesting limit and cut accounting for result caching.</summary>
+    private List<Cont> Guarded(Node key, int tag, int depth, Func<List<Cont>> compute)
     {
-        var libs = Program.Libs;
-        var result = new List<Node>();
-        foreach (var n in names) { result.AddRange(libs.TypeDecls(n)); }
+        if (depth > MaxDepth || _nest >= MaxNest || !Active.Add((key, tag)))
+        {
+            _cuts++;
+            return [];
+        }
+
+        _nest++;
+        try { return compute(); }
+        finally { _nest--; Active.Remove((key, tag)); }
+    }
+
+    private static List<Cont> Real(List<Cont> conts) => conts.Any(c => ReferenceEquals(c.Decl, Opaque)) ? conts.Where(c => !ReferenceEquals(c.Decl, Opaque)).ToList() : conts;
+
+    // ---- lib
+    private List<Cont> LibConts(params string[] names)
+    {
+        var result = new List<Cont>();
+        foreach (var n in names)
+        {
+            foreach (var d in Program.Libs.TypeDecls(n)) { result.Add(new Cont(d, null)); }
+        }
+
         return result;
     }
 
-    private List<Node> KeywordContainers(string keyword) => keyword switch
+    private List<Cont> KeywordConts(string keyword) => keyword switch
     {
-        "string" => Lib("String"),
-        "number" => Lib("Number"),
-        "boolean" => Lib("Boolean"),
-        "symbol" => Lib("Symbol"),
-        "bigint" => Lib("BigInt"),
-        "object" => Lib("Object"),
+        "string" => LibConts("String"),
+        "number" => LibConts("Number"),
+        "boolean" => LibConts("Boolean"),
+        "symbol" => LibConts("Symbol"),
+        "bigint" => LibConts("BigInt"),
+        "object" => LibConts("Object"),
+        "any" or "unknown" => [new Cont(Opaque, null)],
         _ => [],
     };
 
-    private List<Node> FunctionContainers() => Lib("CallableFunction", "Function");
+    private List<Cont> FunctionConts() => LibConts("CallableFunction", "Function");
 
-    // ------------------------------------------------------------------ members
-    private static bool MemberNameMatches(Node member, string name) => Binder.NameText(member.Name) == name;
-
-    private static bool IsParameterProperty(Node p) => (p.Modifiers & (Mods.Public | Mods.Private | Mods.Protected | Mods.Readonly | Mods.Override)) != 0;
-
-    public List<Node>? MemberDecls(List<Node> containers, string name) => MemberDecls(containers, name, [], 0);
-
-    private List<Node>? MemberDecls(List<Node> containers, string name, HashSet<Node> visited, int depth)
+    private List<Cont> ArrayConts(Func<int, List<Cont>> element, bool readOnly = false)
     {
-        if (++_nest > MaxNest) { _nest--; return null; }
-        try { return MemberDeclsCore(containers, name, visited, depth); }
-        finally { _nest--; }
-    }
-
-    private List<Node>? MemberDeclsCore(List<Node> containers, string name, HashSet<Node> visited, int depth)
-    {
-        if (depth > MaxDepth) { return null; }
-        foreach (var c in containers)
+        var result = new List<Cont>();
+        foreach (var d in Program.Libs.TypeDecls(readOnly ? "ReadonlyArray" : "Array"))
         {
-            if (!visited.Add(c)) { continue; }
-            List<Node> found = [];
-            switch (c.Kind)
-            {
-                case SK.TsSourceFile:
-                    var export = LookupExport(c.File!, name, []);
-                    if (export is not null) { found.AddRange(export); }
-                    break;
-                case SK.ModuleDeclaration:
-                {
-                    if (c.Body is { Kind: SK.ModuleDeclaration } inner && inner.Name!.Text == name) { found.Add(inner); }
-                    var table = B(c).ExportTable(c);
-                    if (table is not null && table.TryGetValue(name, out var l)) { found.AddRange(DeAliasAll(l)); }
-                    break;
-                }
-
-                case SK.TypeQuery when c.Expression is { Kind: SK.ClassDeclaration or SK.ClassExpression } cls:
-                {
-                    foreach (var m in cls.Members)
-                    {
-                        if (m.Kind is SK.IndexSignature or SK.CallSignature or SK.ConstructSignature or SK.ClassStaticBlock or SK.Constructor || !m.Has(Mods.Static)) { continue; }
-                        if (MemberNameMatches(m, name)) { found.Add(m); }
-                    }
-
-                    if (found.Count == 0)
-                    {
-                        var inherited = MemberDecls(HeritageContainers(cls, depth + 1, staticSide: true), name, visited, depth + 1);
-                        if (inherited is not null) { found.AddRange(inherited); }
-                    }
-
-                    if (found.Count == 0 && cls.HeritageClauses.Count == 0)
-                    {
-                        var fn = MemberDecls(Lib("NewableFunction", "CallableFunction", "Function"), name, visited, depth + 1);
-                        if (fn is not null) { found.AddRange(fn); }
-                    }
-
-                    break;
-                }
-
-                case SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration or SK.TypeLiteral or SK.EnumDeclaration:
-                    foreach (var m in c.Members)
-                    {
-                        if (m.Kind is SK.IndexSignature or SK.CallSignature or SK.ConstructSignature or SK.ClassStaticBlock or SK.Constructor) { continue; }
-                        if (c.Kind is SK.ClassDeclaration or SK.ClassExpression && m.Has(Mods.Static)) { continue; }
-                        if (MemberNameMatches(m, name)) { found.Add(m); }
-                    }
-
-                    if (c.Kind is SK.ClassDeclaration or SK.ClassExpression)
-                    {
-                        foreach (var ctor in c.Members.Where(m => m.Kind == SK.Constructor))
-                        {
-                            foreach (var p in ctor.Parameters)
-                            {
-                                if (IsParameterProperty(p) && p.Name?.Kind == SK.Identifier && p.Name.Text == name) { found.Add(p); }
-                            }
-                        }
-                    }
-
-                    if (found.Count == 0 && c.Kind != SK.EnumDeclaration)
-                    {
-                        var inherited = MemberDecls(HeritageContainers(c, depth + 1), name, visited, depth + 1);
-                        if (inherited is not null) { found.AddRange(inherited); }
-                    }
-
-                    break;
-                case SK.ObjectLiteralExpression:
-                    foreach (var m in c.Elements)
-                    {
-                        if (m.Kind is SK.PropertyAssignment or SK.ShorthandPropertyAssignment or SK.MethodDeclaration or SK.GetAccessor or SK.SetAccessor && MemberNameMatches(m, name))
-                        {
-                            found.Add(m);
-                        }
-                    }
-
-                    break;
-            }
-
-            if (found.Count > 0)
-            {
-                // Declarations of one merged interface/class (e.g. `interface Array<T>` in several lib files) all belong
-                // to the same symbol: collect the member from each of them.
-                if (c.Kind is SK.InterfaceDeclaration or SK.ClassDeclaration && c.Name is not null)
-                {
-                    foreach (var other in containers)
-                    {
-                        if (ReferenceEquals(other, c) || other.Kind != c.Kind || other.Name?.Text != c.Name.Text || !visited.Add(other)) { continue; }
-                        foreach (var m in other.Members)
-                        {
-                            if (m.Kind is SK.IndexSignature or SK.CallSignature or SK.ConstructSignature or SK.ClassStaticBlock or SK.Constructor) { continue; }
-                            if (c.Kind == SK.ClassDeclaration && m.Has(Mods.Static)) { continue; }
-                            if (MemberNameMatches(m, name) && !found.Contains(m)) { found.Add(m); }
-                        }
-                    }
-                }
-
-                return found;
-            }
-        }
-
-        return null;
-    }
-
-    private List<Node> DeAliasAll(List<Node> l) => DeAlias(l, 0);
-
-    public List<Node> HeritageContainers(Node classOrInterface, int depth, bool staticSide = false)
-    {
-        var result = new List<Node>();
-        foreach (var clause in classOrInterface.HeritageClauses)
-        {
-            var isClassExtends = clause.IsExtends && classOrInterface.Kind is SK.ClassDeclaration or SK.ClassExpression;
-            foreach (var e in clause.Elements)
-            {
-                if (isClassExtends && !staticSide)
-                {
-                    // instance side of the base class
-                    result.AddRange(ContainersOfEntity(e.Expression!, Meaning.Value, depth + 1).Select(c => c.Kind == SK.TypeQuery ? c.Expression! : c));
-                }
-                else
-                {
-                    result.AddRange(ContainersOfEntity(e.Expression!, isClassExtends ? Meaning.Value : Meaning.Type, depth + 1));
-                }
-            }
+            result.Add(new Cont(d, d.TypeParameters.Count > 0 ? new Env(d.TypeParameters[0], element, null) : null));
         }
 
         return result;
     }
 
-    // ------------------------------------------------------------------ containers ("types")
-    private List<Node> ContainersOfDecls(List<Node> decls, int depth, bool asValue = false)
+    // ---- environments
+    private Env? BindArgs(Node decl, List<Node> args, Env? callerEnv)
     {
-        var result = new List<Node>();
-        foreach (var d in decls) { result.AddRange(ContainersOfDecl(d, depth, asValue)); }
+        Env? env = null;
+        for (var i = 0; i < decl.TypeParameters.Count; i++)
+        {
+            var tp = decl.TypeParameters[i];
+            if (i < args.Count)
+            {
+                var arg = args[i];
+                env = new Env(tp, d => TypeConts(arg, callerEnv, d), env);
+            }
+            else if (tp.Initializer is { } def)
+            {
+                var captured = env;
+                env = new Env(tp, d => TypeConts(def, captured, d), env);
+            }
+        }
+
+        return env;
+    }
+
+    // ------------------------------------------------------------------ declared types -> containers
+    private List<Cont> ContainersOfDecls(List<Node> decls, int depth, bool asValue = false)
+    {
+        var result = new List<Cont>();
+        foreach (var d in decls) { result.AddRange(DeclConts(d, null, depth, asValue)); }
         return result;
     }
 
-    public List<Node> ContainersOfEntity(Node entity, Meaning meaning, int depth)
+    public List<Cont> ContainersOfEntity(Node entity, Meaning meaning, int depth)
     {
         if (depth > MaxDepth) { return []; }
-        List<Node>? decls;
-        if (entity.Kind == SK.Identifier)
-        {
-            decls = B(entity).Lookup(entity, entity.Text, meaning);
-            if (decls is not null) { decls = DeAlias(decls, 0); }
-        }
-        else
-        {
-            decls = ResolveEntityExpression(entity, depth + 1);
-        }
-
+        var decls = EntityDecls(entity, meaning, depth);
         return decls is null ? [] : ContainersOfDecls(decls, depth + 1, meaning == Meaning.Value);
     }
 
-    private List<Node> ContainersOfDecl(Node d, int depth, bool asValue = false)
+    private List<Node>? EntityDecls(Node entity, Meaning meaning, int depth)
     {
-        if (_nest >= MaxNest || !Active.Add((d, 2))) { return []; }
-        _nest++;
-        try { return ContainersOfDeclCore(d, depth, asValue); }
-        finally { _nest--; Active.Remove((d, 2)); }
+        if (entity.Kind == SK.Identifier)
+        {
+            var decls = B(entity).Lookup(entity, entity.Text, meaning);
+            return decls is null ? null : DeAlias(decls, 0);
+        }
+
+        return ResolveEntityExpression(entity, depth + 1);
     }
 
-    private List<Node> ContainersOfDeclCore(Node d, int depth, bool asValue = false)
+    private List<Cont> TypeDeclConts(Node d, List<Node> args, Env? env, int depth)
     {
-        if (depth > MaxDepth) { return []; }
         switch (d.Kind)
         {
-            case SK.ClassDeclaration or SK.ClassExpression:
-                return asValue ? [StaticSide(d)] : [d];
-            case SK.InterfaceDeclaration or SK.EnumDeclaration or SK.ModuleDeclaration or SK.TsSourceFile
-                or SK.TypeLiteral or SK.ObjectLiteralExpression:
-                return [d];
-            case SK.TypeAliasDeclaration:
-                return ContainersOfType(d.Type!, depth + 1);
             case SK.TypeParameter:
-                return d.Type is null ? [] : ContainersOfType(d.Type, depth + 1);
-            case SK.VariableDeclaration or SK.Parameter or SK.PropertyDeclaration or SK.PropertySignature or SK.GetAccessor:
-                if (d.Type is not null) { return ContainersOfType(d.Type, depth + 1); }
-                if (d.Initializer is not null) { return ContainersOfExpression(d.Initializer, depth + 1); }
-                if (d.Kind == SK.Parameter && d.Parent is { } fn && fn.Kind != SK.TsSourceFile) { return ContextualParameterContainers(d, depth + 1); }
-                if (d.Kind == SK.GetAccessor && d.Body is not null) { return ReturnedContainers(d, depth + 1); }
-                return [];
-            case SK.PropertyAssignment:
-                return ContainersOfExpression(d.Initializer!, depth + 1);
-            case SK.ShorthandPropertyAssignment:
+                if (env?.Find(d) is { } bound) { return bound(depth + 1); }
+                return d.Type is null ? [new Cont(Opaque, null)] : TypeConts(d.Type, env, depth + 1);
+            case SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration:
+                return [new Cont(d, BindArgs(d, args, env))];
+            case SK.TypeAliasDeclaration:
+                return TypeConts(d.Type!, BindArgs(d, args, env), depth + 1);
+            case SK.ImportSpecifier or SK.ImportClause or SK.NamespaceImport or SK.ImportEqualsDeclaration:
             {
-                var decls = B(d).Lookup(d.Name!, d.Name!.Text, Meaning.Value);
-                return decls is null ? [] : ContainersOfDecls(DeAlias(decls, 0), depth + 1);
+                var target = ResolveAlias(d);
+                var result = new List<Cont>();
+                foreach (var t in target ?? []) { result.AddRange(TypeDeclConts(t, args, env, depth + 1)); }
+                return result;
             }
 
-            case SK.BindingElement:
-                return MemberContainers(ContainersOfBindingParent(d, depth + 1), (d.PropertyName ?? d.Name)!, depth + 1);
-            case SK.ImportSpecifier or SK.ImportClause or SK.NamespaceImport or SK.ImportEqualsDeclaration:
-                var target = ResolveAlias(d);
-                return target is null ? [] : ContainersOfDecls(target, depth + 1, asValue);
-            case SK.ExportAssignment:
-                return d.Expression is null ? [] : ContainersOfExpression(d.Expression, depth + 1);
-            case SK.FunctionDeclaration when asValue:
-                return FunctionContainers();
             default:
-                return [];
+                return DeclConts(d, null, depth + 1, asValue: false);
         }
     }
 
-    private List<Node> MemberContainers(List<Node> containers, Node nameNode, int depth)
-    {
-        var name = Binder.NameText(nameNode);
-        if (name is null) { return []; }
-        var members = MemberDecls(containers, name);
-        return members is null ? [] : ContainersOfDecls(members, depth + 1);
-    }
+    public List<Cont> TypeConts(Node t, Env? env, int depth) => Guarded(t, 3, depth, () => TypeContsCore(t, env, depth));
 
-    private List<Node> ContainersOfBindingParent(Node bindingElement, int depth)
+    private List<Cont> TypeContsCore(Node t, Env? env, int depth)
     {
-        // BindingElement -> pattern -> (BindingElement | VariableDeclaration | Parameter)
-        var pattern = bindingElement.Parent!;
-        var owner = pattern.Parent!;
-        if (owner.Kind == SK.BindingElement)
-        {
-            return MemberContainers(ContainersOfBindingParent(owner, depth + 1), (owner.PropertyName ?? owner.Name)!, depth + 1);
-        }
-
-        if (owner.Type is not null) { return ContainersOfType(owner.Type, depth + 1); }
-        if (owner.Initializer is not null) { return ContainersOfExpression(owner.Initializer, depth + 1); }
-        return [];
-    }
-
-    private List<Node> ContainersOfType(Node t, int depth)
-    {
-        if (_nest >= MaxNest || !Active.Add((t, 3))) { return []; }
-        _nest++;
-        try { return ContainersOfTypeCore(t, depth); }
-        finally { _nest--; Active.Remove((t, 3)); }
-    }
-
-    private List<Node> ContainersOfTypeCore(Node t, int depth)
-    {
-        if (depth > MaxDepth) { return []; }
         switch (t.Kind)
         {
             case SK.TypeReference:
-                return ContainersOfEntity(t.Name!, Meaning.Type, depth + 1);
-            case SK.TypeLiteral:
-                return [t];
-            case SK.ParenthesizedType:
-                return ContainersOfType(t.Type!, depth + 1);
-            case SK.UnionType or SK.IntersectionType:
-                return t.Elements.SelectMany(e => ContainersOfType(e, depth + 1)).ToList();
+            {
+                var decls = EntityDecls(t.Name!, Meaning.Type, depth);
+                var result = new List<Cont>();
+                foreach (var d in decls ?? []) { result.AddRange(TypeDeclConts(d, t.TypeArguments, env, depth)); }
+                return result;
+            }
+
+            case SK.ExpressionWithTypeArguments:
+            {
+                var decls = EntityDecls(t.Expression!, Meaning.Any, depth);
+                var result = new List<Cont>();
+                foreach (var d in decls ?? []) { result.AddRange(TypeDeclConts(d, t.TypeArguments, env, depth)); }
+                return result;
+            }
+
+            case SK.TypeLiteral or SK.MappedType or SK.FunctionType:
+                return [new Cont(t, env)];
+            case SK.ConstructorType:
+                return [new Cont(t, env)];
+            case SK.ParenthesizedType or SK.OptionalType or SK.RestType or SK.NamedTupleMember:
+                return t.Type is null ? [] : TypeConts(t.Type, env, depth + 1);
+            case SK.UnionType:
+                return t.Elements.SelectMany(e => TypeConts(e, env, depth + 1)).ToList();
+            case SK.IntersectionType:
+            {
+                var group = ++_groups;
+                return t.Elements.SelectMany(e => TypeConts(e, env, depth + 1)).Select(c => c with { Group = group }).ToList();
+            }
+
             case SK.TypeQuery:
-                return ContainersOfEntity(t.Expression!, Meaning.Value, depth + 1);
+            {
+                var decls = EntityDecls(t.Expression!, Meaning.Value, depth);
+                return decls is null ? [] : ContainersOfDecls(decls, depth + 1, asValue: true);
+            }
+
             case SK.ThisType:
-                return EnclosingThisContainers(t);
+                return env?.Find(ThisKey) is { } self ? self(depth + 1) : EnclosingThisContainers(t);
             case SK.KeywordType:
-                return KeywordContainers(t.Text);
+                return KeywordConts(t.Text);
             case SK.LiteralType:
                 return t.Expression switch
                 {
-                    { Kind: SK.StringLiteral } => Lib("String"),
-                    { Kind: SK.NumericLiteral } or { Kind: SK.PrefixUnaryExpression } => Lib("Number"),
-                    { Kind: SK.KeywordLiteral, Text: "true" or "false" } => Lib("Boolean"),
+                    { Kind: SK.StringLiteral } => LibConts("String"),
+                    { Kind: SK.NumericLiteral } or { Kind: SK.PrefixUnaryExpression } => LibConts("Number"),
+                    { Kind: SK.KeywordLiteral, Text: "true" or "false" } => LibConts("Boolean"),
                     _ => [],
                 };
             case SK.TemplateLiteralType:
-                return Lib("String");
-            case SK.ArrayType or SK.TupleType:
-                return Lib("Array");
+                return LibConts("String");
+            case SK.ArrayType:
+            {
+                var elem = t.Type!;
+                return ArrayConts(d => TypeConts(elem, env, d));
+            }
+
+            case SK.TupleType:
+            {
+                var elements = t.Elements;
+                return ArrayConts(d => elements.SelectMany(e => TypeConts(e, env, d)).ToList());
+            }
+
             case SK.TypeOperator when t.Text == "readonly":
-                return t.Type is { Kind: SK.ArrayType or SK.TupleType } ? Lib("ReadonlyArray") : ContainersOfType(t.Type!, depth + 1);
-            case SK.FunctionType:
-                return FunctionContainers();
-            case SK.ConstructorType:
-                return Lib("NewableFunction", "Function");
+            {
+                if (t.Type is { Kind: SK.ArrayType } arr) { return ArrayConts(d => TypeConts(arr.Type!, env, d), readOnly: true); }
+                if (t.Type is { Kind: SK.TupleType } tup) { return ArrayConts(d => tup.Elements.SelectMany(e => TypeConts(e, env, d)).ToList(), readOnly: true); }
+                return TypeConts(t.Type!, env, depth + 1);
+            }
+
+            case SK.IndexedAccessType:
+            {
+                var objects = TypeConts(t.Left!, env, depth + 1);
+                if (t.Right is { Kind: SK.LiteralType, Expression: { Kind: SK.StringLiteral or SK.NumericLiteral } lit })
+                {
+                    return HitsToConts(Members(objects, lit.Text, depth + 1), depth + 1);
+                }
+
+                return IndexValue(objects, depth + 1);
+            }
+
+            case SK.ConditionalType:
+                return [.. TypeConts(t.Then!, env, depth + 1), .. TypeConts(t.Else!, env, depth + 1)];
             case SK.ImportType when t.Name is null && t.Extra is { Kind: SK.LiteralType, Expression: { } lit }:
             {
                 var target = Program.ResolveModule(t.File!, lit.Text);
-                return target is null ? [] : [target.Root];
+                return target is null ? [] : [new Cont(target.Root, null)];
             }
 
             default:
@@ -638,16 +556,16 @@ public sealed class Checker(TsProgram program)
         }
     }
 
-    private List<Node> EnclosingThisContainers(Node from)
+    private List<Cont> EnclosingThisContainers(Node from)
     {
         for (var n = from.Parent; n is not null; n = n.Parent)
         {
             switch (n.Kind)
             {
                 case SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration:
-                    return [n];
+                    return [new Cont(n, null)];
                 case SK.ObjectLiteralExpression:
-                    return [n];
+                    return [new Cont(n, null)];
                 case SK.FunctionDeclaration or SK.FunctionExpression:
                     return [];
             }
@@ -656,23 +574,416 @@ public sealed class Checker(TsProgram program)
         return [];
     }
 
-    public List<Node> ContainersOfExpression(Node e, int depth)
+    /// <summary>The type of declaration <paramref name="d"/> as containers (value side when <paramref name="asValue"/>).</summary>
+    public List<Cont> DeclConts(Node d, Env? env, int depth, bool asValue)
     {
-        if (_nest >= MaxNest || !Active.Add((e, 4))) { return []; }
-        _nest++;
-        try { return ContainersOfExpressionCore(e, depth); }
-        finally { _nest--; Active.Remove((e, 4)); }
+        if (env is null && asValue && _declCache.TryGetValue(d, out var cached)) { return cached; }
+        var before = _cuts;
+        var result = Guarded(d, 2, depth, () => DeclContsCore(d, env, depth, asValue));
+        if (env is null && asValue && _cuts == before) { _declCache[d] = result; }
+        return result;
     }
 
-    public List<Node> ContainersOfExpressionCore(Node e, int depth)
+    private readonly Dictionary<Node, List<Cont>> _declCache = [];
+
+    private List<Cont> DeclContsCore(Node d, Env? env, int depth, bool asValue)
     {
-        if (depth > MaxDepth) { return []; }
+        switch (d.Kind)
+        {
+            case SK.ClassDeclaration or SK.ClassExpression:
+                return asValue ? [new Cont(StaticSide(d), null)] : [new Cont(d, env)];
+            case SK.InterfaceDeclaration:
+                return [new Cont(d, env)];
+            case SK.EnumDeclaration or SK.ModuleDeclaration or SK.TsSourceFile or SK.TypeLiteral or SK.ObjectLiteralExpression:
+                return [new Cont(d, env)];
+            case SK.TypeAliasDeclaration or SK.TypeParameter:
+                return TypeDeclConts(d, [], env, depth + 1);
+            case SK.VariableDeclaration or SK.Parameter or SK.PropertyDeclaration or SK.PropertySignature:
+            {
+                if (d.Type is not null) { return TypeConts(d.Type, env, depth + 1); }
+                if (d.File is { IsJavaScript: true } && JsDocType(d) is { } jsType) { return TypeConts(jsType, null, depth + 1); }
+                if (d.Initializer is not null) { return ValueConts(d.Initializer, depth + 1); }
+                if (d.Kind == SK.Parameter && d.Parent is { } fn && fn.Kind != SK.TsSourceFile) { return ContextualParameterConts(d, depth + 1); }
+                if (d.Kind == SK.VariableDeclaration && d.Parent is { Kind: SK.VariableDeclarationList, Parent: { Kind: SK.ForOfStatement or SK.ForInStatement } loop })
+                {
+                    return loop.Kind == SK.ForInStatement ? LibConts("String") : IndexValue(ValueConts(loop.Expression!, depth + 1), depth + 1);
+                }
+
+                return [];
+            }
+
+            case SK.GetAccessor:
+                if (d.Type is not null) { return TypeConts(d.Type, env, depth + 1); }
+                return d.Body is not null ? ReturnedConts(d, depth + 1) : [];
+            case SK.SetAccessor:
+                return d.Parameters.Count > 0 && d.Parameters[0].Type is { } st ? TypeConts(st, env, depth + 1) : [];
+            case SK.PropertyAssignment:
+                return d.Initializer is null ? [] : ValueConts(d.Initializer, depth + 1);
+            case SK.ShorthandPropertyAssignment:
+            {
+                var decls = B(d).Lookup(d.Name!, d.Name!.Text, Meaning.Value);
+                return decls is null ? [] : ContainersOfDecls(DeAlias(decls, 0), depth + 1, asValue: true);
+            }
+
+            case SK.MethodDeclaration or SK.MethodSignature or SK.FunctionDeclaration or SK.FunctionExpression or SK.ArrowFunction
+                or SK.CallSignature or SK.ConstructSignature or SK.Constructor:
+                return [new Cont(d, env)];
+            case SK.BindingElement:
+                return BindingElementConts(d, depth + 1);
+            case SK.ImportSpecifier or SK.ImportClause or SK.NamespaceImport or SK.ImportEqualsDeclaration:
+            {
+                var target = ResolveAlias(d);
+                return target is null ? [] : ContainersOfDecls(target, depth + 1, asValue);
+            }
+
+            case SK.ExportAssignment:
+                return d.Expression is null ? [] : ValueConts(d.Expression, depth + 1);
+            default:
+                return [];
+        }
+    }
+
+    private List<Cont> BindingElementConts(Node element, int depth)
+    {
+        var pattern = element.Parent!;
+        var owner = ContainersOfBindingOwner(pattern, depth);
+        if (pattern.Kind == SK.ArrayBindingPattern) { return IndexValue(owner, depth + 1); }
+        var key = element.PropertyName ?? element.Name;
+        var name = Binder.NameText(key);
+        return name is null ? [] : HitsToConts(Members(owner, name, depth + 1), depth + 1);
+    }
+
+    private List<Cont> ContainersOfBindingOwner(Node pattern, int depth)
+    {
+        var owner = pattern.Parent!;
+        if (owner.Kind == SK.BindingElement) { return BindingElementConts(owner, depth + 1); }
+        if (owner.Type is not null) { return TypeConts(owner.Type, null, depth + 1); }
+        if (owner.Initializer is not null) { return ValueConts(owner.Initializer, depth + 1); }
+        if (owner.Kind == SK.Parameter) { return ContextualParameterConts(owner, depth + 1); }
+        if (owner.Kind == SK.VariableDeclaration && owner.Parent is { Kind: SK.VariableDeclarationList, Parent: { Kind: SK.ForOfStatement } loop }) { return IndexValue(ValueConts(loop.Expression!, depth + 1), depth + 1); }
+        return [];
+    }
+
+    public List<Cont> ContainersOfBindingParent(Node bindingElement, int depth) => ContainersOfBindingOwner(bindingElement.Parent!, depth);
+
+    // ------------------------------------------------------------------ members
+    private static bool MemberNameMatches(Node member, string name) => Binder.NameText(member.Name) == name;
+
+    private static bool IsParameterProperty(Node p) => (p.Modifiers & (Mods.Public | Mods.Private | Mods.Protected | Mods.Readonly | Mods.Override)) != 0;
+
+    /// <summary>A member declaration found on a container, with the environment of that container.</summary>
+    public readonly record struct Hit(Node Decl, Env? Env, Cont Receiver);
+
+    private Dictionary<string, List<Node>> IndexOf(Node decl)
+    {
+        if (_memberIndex.TryGetValue(decl, out var index)) { return index; }
+        index = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
+        void Add(string? name, Node member)
+        {
+            if (name is null) { return; }
+            if (!index.TryGetValue(name, out var l)) { index[name] = l = []; }
+            l.Add(member);
+        }
+
+        foreach (var m in decl.Kind == SK.ObjectLiteralExpression ? decl.Elements : decl.Members)
+        {
+            if (m.Kind is SK.IndexSignature or SK.CallSignature or SK.ConstructSignature or SK.ClassStaticBlock or SK.Constructor) { continue; }
+            if (decl.Kind == SK.ObjectLiteralExpression && m.Kind is not (SK.PropertyAssignment or SK.ShorthandPropertyAssignment or SK.MethodDeclaration or SK.GetAccessor or SK.SetAccessor)) { continue; }
+            Add(Binder.NameText(m.Name), m);
+        }
+
+        if (decl.Kind is SK.ClassDeclaration or SK.ClassExpression)
+        {
+            foreach (var ctor in decl.Members.Where(m => m.Kind == SK.Constructor))
+            {
+                foreach (var p in ctor.Parameters)
+                {
+                    if (IsParameterProperty(p) && p.Name?.Kind == SK.Identifier) { Add(p.Name.Text, p); }
+                }
+            }
+        }
+
+        _memberIndex[decl] = index;
+        return index;
+    }
+
+    public List<Node>? MemberDecls(List<Cont> containers, string name)
+    {
+        var hits = Members(containers, name, 0);
+        return hits.Count == 0 ? null : hits.Select(h => h.Decl).Distinct().ToList();
+    }
+
+    public List<Hit> Members(List<Cont> containers, string name, int depth) => Members(containers, name, [], depth);
+
+    private List<Hit> Members(List<Cont> containers, string name, HashSet<Cont> visited, int depth)
+    {
+        if (depth > MaxDepth || ++_nest > MaxNest) { _nest--; _cuts++; return []; }
+        try { return MembersCore(containers, name, visited, depth); }
+        finally { _nest--; }
+    }
+
+    private List<Hit> MembersCore(List<Cont> containers, string name, HashSet<Cont> visited, int depth)
+    {
+        foreach (var c in containers)
+        {
+            if (ReferenceEquals(c.Decl, Opaque) || !visited.Add(c)) { continue; }
+            var found = new List<Hit>();
+            var decl = c.Decl;
+            switch (decl.Kind)
+            {
+                case SK.TsSourceFile:
+                {
+                    var export = LookupExport(decl.File!, name, []);
+                    foreach (var e in export ?? []) { found.Add(new Hit(e, null, c)); }
+                    break;
+                }
+
+                case SK.ModuleDeclaration:
+                {
+                    if (decl.Body is { Kind: SK.ModuleDeclaration } inner && inner.Name!.Text == name) { found.Add(new Hit(inner, null, c)); }
+                    var table = B(decl).ExportTable(decl);
+                    if (table is not null && table.TryGetValue(name, out var l)) { foreach (var e in DeAlias(l, 0)) { found.Add(new Hit(e, null, c)); } }
+                    break;
+                }
+
+                case SK.TypeQuery when decl.Expression is { Kind: SK.ClassDeclaration or SK.ClassExpression } cls:
+                {
+                    foreach (var m in cls.Members)
+                    {
+                        if (m.Kind is SK.IndexSignature or SK.CallSignature or SK.ConstructSignature or SK.ClassStaticBlock or SK.Constructor || !m.Has(Mods.Static)) { continue; }
+                        if (MemberNameMatches(m, name)) { found.Add(new Hit(m, null, c)); }
+                    }
+
+                    if (found.Count == 0) { found.AddRange(Members(HeritageConts(cls, null, depth + 1, staticSide: true), name, visited, depth + 1)); }
+                    if (found.Count == 0 && cls.HeritageClauses.Count == 0) { found.AddRange(Members(LibConts("NewableFunction", "CallableFunction", "Function"), name, visited, depth + 1)); }
+                    break;
+                }
+
+                case SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration or SK.TypeLiteral or SK.EnumDeclaration or SK.ObjectLiteralExpression:
+                {
+                    if (IndexOf(decl).TryGetValue(name, out var members))
+                    {
+                        foreach (var m in members)
+                        {
+                            if (decl.Kind is SK.ClassDeclaration or SK.ClassExpression && m.Has(Mods.Static)) { continue; }
+                            found.Add(new Hit(m, c.Env, c));
+                        }
+                    }
+
+                    if (found.Count == 0 && decl.Kind is not (SK.EnumDeclaration or SK.ObjectLiteralExpression))
+                    {
+                        found.AddRange(Members(HeritageConts(decl, c.Env, depth + 1), name, visited, depth + 1));
+                    }
+
+                    if (found.Count == 0 && decl.Kind == SK.TypeLiteral && decl.Members.Any(m => m.Kind == SK.CallSignature))
+                    {
+                        found.AddRange(Members(FunctionConts(), name, visited, depth + 1));
+                    }
+
+                    // Declarations of one merged interface/class (e.g. `interface Array<T>` in several lib files) all belong
+                    // to the same symbol: collect the member from each of them.
+                    if (found.Count > 0 && decl.Kind is SK.InterfaceDeclaration or SK.ClassDeclaration && decl.Name is not null)
+                    {
+                        foreach (var other in containers)
+                        {
+                            if (other.Decl.Kind != decl.Kind || other.Decl.Name?.Text != decl.Name.Text || ReferenceEquals(other.Decl, decl) || !visited.Add(other)) { continue; }
+                            if (IndexOf(other.Decl).TryGetValue(name, out var more))
+                            {
+                                foreach (var m in more)
+                                {
+                                    if (decl.Kind == SK.ClassDeclaration && m.Has(Mods.Static)) { continue; }
+                                    found.Add(new Hit(m, other.Env, other));
+                                }
+                            }
+                        }
+                    }
+
+                    break;
+                }
+
+                case SK.MappedType:
+                    // Homomorphic mapped types (`{ [P in keyof T]: ... }`, Partial, Required, Pick, Omit) keep T's declarations.
+                    found.AddRange(Members(MappedSourceConts(decl, c.Env, depth + 1), name, visited, depth + 1));
+                    break;
+                case SK.FunctionType or SK.ConstructorType or SK.FunctionDeclaration or SK.FunctionExpression or SK.ArrowFunction or SK.MethodDeclaration or SK.MethodSignature:
+                    found.AddRange(Members(FunctionConts(), name, visited, depth + 1));
+                    break;
+            }
+
+            if (found.Count > 0) { return found; }
+        }
+
+        return [];
+    }
+
+    private List<Cont> MappedSourceConts(Node mapped, Env? env, int depth)
+    {
+        var constraint = mapped.Clause?.Type;
+        for (var i = 0; i < 4 && constraint is not null; i++)
+        {
+            if (constraint is { Kind: SK.TypeOperator, Text: "keyof" } keyof) { return TypeConts(keyof.Type!, env, depth + 1); }
+            if (constraint is { Kind: SK.TypeReference } reference && reference.Name is { Kind: SK.Identifier } nm)
+            {
+                var decl = B(reference).Lookup(reference, nm.Text, Meaning.Type)?.FirstOrDefault(x => x.Kind == SK.TypeParameter);
+                constraint = decl?.Type;
+                continue;
+            }
+
+            break;
+        }
+
+        return [];
+    }
+
+    public List<Cont> HeritageConts(Node classOrInterface, Env? env, int depth, bool staticSide = false)
+    {
+        var result = new List<Cont>();
+        foreach (var clause in classOrInterface.HeritageClauses)
+        {
+            var isClassExtends = clause.IsExtends && classOrInterface.Kind is SK.ClassDeclaration or SK.ClassExpression;
+            foreach (var e in clause.Elements)
+            {
+                var decls = EntityDecls(e.Expression!, isClassExtends ? Meaning.Value : Meaning.Type, depth + 1);
+                foreach (var d in decls ?? [])
+                {
+                    if (isClassExtends && staticSide)
+                    {
+                        result.AddRange(DeclConts(d, null, depth + 1, asValue: true));
+                    }
+                    else if (d.Kind is SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration)
+                    {
+                        result.Add(new Cont(d, BindArgs(d, e.TypeArguments, env)));
+                    }
+                    else if (d.Kind == SK.TypeAliasDeclaration)
+                    {
+                        result.AddRange(TypeDeclConts(d, e.TypeArguments, env, depth + 1));
+                    }
+                    else if (isClassExtends)
+                    {
+                        // `class X extends mixin(Base)` / `extends core.$constructor<T>`: instance type from construct signatures.
+                        foreach (var c in DeclConts(d, null, depth + 1, asValue: true)) { result.AddRange(ConstructResult(c, e.TypeArguments, env, depth + 1)); }
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private List<Cont> ConstructResult(Cont c, List<Node> typeArguments, Env? callerEnv, int depth)
+    {
+        var result = new List<Cont>();
+        var decl = c.Decl;
+        if (decl.Kind == SK.TypeQuery && decl.Expression is { Kind: SK.ClassDeclaration or SK.ClassExpression } cls)
+        {
+            result.Add(new Cont(cls, BindArgs(cls, typeArguments, callerEnv)));
+            return result;
+        }
+
+        if (decl.Kind is SK.InterfaceDeclaration or SK.TypeLiteral or SK.ClassDeclaration)
+        {
+            foreach (var sig in decl.Members.Where(m => m.Kind == SK.ConstructSignature && m.Type is not null))
+            {
+                var env = sig.TypeParameters.Count > 0 ? BindArgs(sig, typeArguments, callerEnv) : null;
+                var merged = env is null ? c.Env : env;
+                result.AddRange(TypeConts(sig.Type!, MergeEnv(merged, c.Env), depth + 1));
+            }
+
+            if (result.Count == 0 && decl.Kind == SK.InterfaceDeclaration && decl.HeritageClauses.Count > 0)
+            {
+                foreach (var b in HeritageConts(decl, c.Env, depth + 1)) { result.AddRange(ConstructResult(b, typeArguments, callerEnv, depth + 1)); }
+            }
+        }
+
+        return result;
+    }
+
+    private static Env? MergeEnv(Env? primary, Env? secondary)
+    {
+        if (primary is null) { return secondary; }
+        if (secondary is null || ReferenceEquals(primary, secondary)) { return primary; }
+        return new Env(primary.Param, primary.Value, MergeEnv(primary.Next, secondary));
+    }
+
+    private List<Cont> HitsToConts(List<Hit> hits, int depth)
+    {
+        var result = new List<Cont>();
+        foreach (var h in hits)
+        {
+            var receiver = h.Receiver;
+            var env = new Env(ThisKey, _ => [receiver], h.Env);
+            result.AddRange(DeclConts(h.Decl, env, depth + 1, asValue: true));
+        }
+
+        return result;
+    }
+
+    /// <summary>Element/index value type of array-likes, index signatures and mapped types.</summary>
+    private List<Cont> IndexValue(List<Cont> containers, int depth)
+    {
+        var result = new List<Cont>();
+        foreach (var c in containers)
+        {
+            var d = c.Decl;
+            if (d.Kind is SK.InterfaceDeclaration or SK.ClassDeclaration && d.Name?.Text is "Array" or "ReadonlyArray" or "Set" or "ReadonlySet" or "Iterable" or "IterableIterator" or "Iterator" or "AsyncIterable" or "Generator" or "NodeListOf" or "HTMLCollectionOf")
+            {
+                if (d.TypeParameters.Count > 0 && c.Env?.Find(d.TypeParameters[0]) is { } v) { result.AddRange(v(depth + 1)); }
+                continue;
+            }
+
+            if (d.Kind == SK.MappedType) { if (d.Type is not null) { result.AddRange(TypeConts(d.Type, c.Env, depth + 1)); } continue; }
+            if (d.Kind is SK.InterfaceDeclaration or SK.TypeLiteral or SK.ClassDeclaration)
+            {
+                foreach (var sig in d.Members.Where(m => m.Kind == SK.IndexSignature && m.Type is not null)) { result.AddRange(TypeConts(sig.Type!, c.Env, depth + 1)); }
+                if (result.Count == 0 && d.Kind != SK.TypeLiteral)
+                {
+                    result.AddRange(IndexValue(HeritageConts(d, c.Env, depth + 1), depth + 1));
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private List<Cont> UnwrapPromise(List<Cont> containers, int depth)
+    {
+        var result = new List<Cont>();
+        foreach (var c in containers)
+        {
+            var d = c.Decl;
+            if (d.Kind == SK.InterfaceDeclaration && d.Name?.Text is "Promise" or "PromiseLike")
+            {
+                if (d.TypeParameters.Count > 0 && c.Env?.Find(d.TypeParameters[0]) is { } v) { result.AddRange(v(depth + 1)); }
+                continue;
+            }
+
+            result.Add(c);
+        }
+
+        return result;
+    }
+
+    // ------------------------------------------------------------------ expressions -> containers
+    /// <summary>The containers (members providers) of expression <paramref name="e"/>.</summary>
+    public List<Cont> ContainersOfExpression(Node e, int depth) => ValueConts(e, depth);
+
+    public List<Cont> ValueConts(Node e, int depth)
+    {
+        if (_valueCache.TryGetValue(e, out var cached)) { return cached; }
+        var before = _cuts;
+        var result = Guarded(e, 4, depth, () => ValueContsCore(e, depth));
+        if (_cuts == before) { _valueCache[e] = result; }
+        return result;
+    }
+
+    private List<Cont> ValueContsCore(Node e, int depth)
+    {
         switch (e.Kind)
         {
             case SK.ParenthesizedExpression or SK.NonNullExpression or SK.SatisfiesExpression:
-                return ContainersOfExpression(e.Expression!, depth + 1);
+                return ValueConts(e.Expression!, depth + 1);
             case SK.AsExpression or SK.TypeAssertion:
-                return e.Type is { Kind: SK.KeywordType, Text: "const" } ? ContainersOfExpression(e.Expression!, depth + 1) : ContainersOfType(e.Type!, depth + 1);
+                return e.Type is { Kind: SK.KeywordType, Text: "const" } ? ValueConts(e.Expression!, depth + 1) : TypeConts(e.Type!, null, depth + 1);
             case SK.Identifier:
             {
                 var decls = SymbolAtLocation(e);
@@ -684,81 +995,86 @@ public sealed class Checker(TsProgram program)
             case SK.Super:
             {
                 var cls = EnclosingClass(e);
-                return cls is null ? [] : HeritageContainers(cls, depth + 1).Where(c => c.Kind is SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration).ToList();
+                return cls is null ? [] : HeritageConts(cls, null, depth + 1).Where(c => c.Decl.Kind is SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration).ToList();
             }
 
             case SK.PropertyAccessExpression:
             {
-                var members = MemberDecls(ContainersOfExpression(e.Expression!, depth + 1), e.Name!.Text);
-                return members is null ? [] : ContainersOfDecls(members, depth + 1, asValue: true);
+                var receivers = ValueConts(e.Expression!, depth + 1);
+                return HitsToConts(Members(receivers, e.Name!.Text, depth + 1), depth + 1);
             }
 
-            case SK.ElementAccessExpression when e.Right is { Kind: SK.StringLiteral } lit:
+            case SK.ElementAccessExpression:
             {
-                var members = MemberDecls(ContainersOfExpression(e.Expression!, depth + 1), lit.Text);
-                return members is null ? [] : ContainersOfDecls(members, depth + 1, asValue: true);
+                var receivers = ValueConts(e.Expression!, depth + 1);
+                if (e.Right is { Kind: SK.StringLiteral } lit) { return HitsToConts(Members(receivers, lit.Text, depth + 1), depth + 1); }
+                return IndexValue(receivers, depth + 1);
             }
 
             case SK.NewExpression:
             {
-                var result = new List<Node>();
-                foreach (var c in ContainersOfExpression(e.Expression!, depth + 1))
+                var result = new List<Cont>();
+                foreach (var c in ValueConts(e.Expression!, depth + 1))
                 {
-                    var cls = c.Kind == SK.TypeQuery ? c.Expression! : c;
-                    if (cls.Kind is SK.ClassDeclaration or SK.ClassExpression) { result.Add(cls); continue; }
-                    // `new Map()`: the interface of the constructor value (`MapConstructor`) declares construct signatures.
-                    var signatures = cls.Members.Where(m => m.Kind == SK.ConstructSignature && m.Type is not null).ToList();
-                    if (signatures.Count > 0) { foreach (var sig in signatures) { result.AddRange(ContainersOfType(sig.Type!, depth + 1)); } }
-                    else if (cls.Kind == SK.InterfaceDeclaration) { result.Add(cls); }
+                    var found = ConstructResult(c, e.TypeArguments, null, depth + 1);
+                    if (found.Count == 0 && c.Decl.Kind == SK.InterfaceDeclaration) { found = [c]; }
+                    result.AddRange(found);
                 }
 
                 return result;
             }
+
             case SK.CallExpression:
-                return CallResultContainers(e, depth + 1);
+                return CallResultConts(e, depth + 1);
             case SK.ObjectLiteralExpression:
-                return [e];
+                return [new Cont(e, null)];
+            case SK.ClassExpression:
+                return [new Cont(StaticSide(e), null)];
             case SK.ConditionalExpression:
-                return [.. ContainersOfExpression(e.Then!, depth + 1), .. ContainersOfExpression(e.Else!, depth + 1)];
-            case SK.BinaryExpression when e.Text is "||" or "??" or "&&":
-                return [.. ContainersOfExpression(e.Left!, depth + 1), .. ContainersOfExpression(e.Right!, depth + 1)];
+                return [.. ValueConts(e.Then!, depth + 1), .. ValueConts(e.Else!, depth + 1)];
             case SK.AwaitExpression:
-                return [];
+                return UnwrapPromise(ValueConts(e.Expression!, depth + 1), depth + 1);
             case SK.StringLiteral or SK.TemplateExpression:
-                return Lib("String");
+                return LibConts("String");
             case SK.NumericLiteral:
-                return Lib("Number");
+                return LibConts("Number");
             case SK.RegexLiteral:
-                return Lib("RegExp");
+                return LibConts("RegExp");
             case SK.KeywordLiteral when e.Text is "true" or "false":
-                return Lib("Boolean");
+                return LibConts("Boolean");
             case SK.ArrayLiteralExpression:
-                return Lib("Array");
+            {
+                var elements = e.Elements;
+                return ArrayConts(d => elements.Where(x => x.Kind is not (SK.SpreadElement or SK.OmittedExpression)).Take(3).SelectMany(x => ValueConts(x, d)).ToList());
+            }
+
             case SK.FunctionExpression or SK.ArrowFunction:
-                return FunctionContainers();
+                return [new Cont(e, null)];
             case SK.TypeOfExpression:
-                return Lib("String");
+                return LibConts("String");
             case SK.PrefixUnaryExpression:
-                return e.Text switch { "!" => Lib("Boolean"), "++" or "--" or "-" or "+" or "~" => Lib("Number"), _ => [] };
+                return e.Text switch { "!" => LibConts("Boolean"), "++" or "--" or "-" or "+" or "~" => LibConts("Number"), _ => [] };
             case SK.PostfixUnaryExpression:
-                return Lib("Number");
+                return LibConts("Number");
             case SK.BinaryExpression:
                 switch (e.Text)
                 {
+                    case "||" or "??" or "&&":
+                        return [.. ValueConts(e.Left!, depth + 1), .. ValueConts(e.Right!, depth + 1)];
                     case "==" or "===" or "!=" or "!==" or "<" or ">" or "<=" or ">=" or "instanceof" or "in":
-                        return Lib("Boolean");
+                        return LibConts("Boolean");
                     case "-" or "*" or "/" or "%" or "**" or "&" or "|" or "^" or "<<" or ">>" or ">>>":
-                        return Lib("Number");
+                        return LibConts("Number");
                     case "+":
                     {
-                        var l = ContainersOfExpression(e.Left!, depth + 1);
-                        var r = ContainersOfExpression(e.Right!, depth + 1);
-                        if (IsLib(l, "String") || IsLib(r, "String")) { return Lib("String"); }
-                        return IsLib(l, "Number") && IsLib(r, "Number") ? Lib("Number") : [];
+                        var l = ValueConts(e.Left!, depth + 1);
+                        var r = ValueConts(e.Right!, depth + 1);
+                        if (IsLib(l, "String") || IsLib(r, "String")) { return LibConts("String"); }
+                        return IsLib(l, "Number") && IsLib(r, "Number") ? LibConts("Number") : [];
                     }
 
-                    case "=":
-                        return ContainersOfExpression(e.Right!, depth + 1);
+                    case "=" or ",":
+                        return ValueConts(e.Right!, depth + 1);
                     default:
                         return [];
                 }
@@ -768,7 +1084,7 @@ public sealed class Checker(TsProgram program)
         }
     }
 
-    private static bool IsLib(List<Node> containers, string name) => containers.Count > 0 && containers.All(c => c.File!.IsLib && c.Name?.Text == name);
+    private static bool IsLib(List<Cont> containers, string name) => containers.Count > 0 && containers.All(c => c.Decl.File!.IsLib && c.Decl.Name?.Text == name);
 
     private static Node? EnclosingClass(Node n)
     {
@@ -780,67 +1096,111 @@ public sealed class Checker(TsProgram program)
         return null;
     }
 
-    private List<Node> CallResultContainers(Node call, int depth)
+    // ---- calls
+    private List<Cont> CallResultConts(Node call, int depth)
     {
         var callee = call.Expression!;
-        List<Node>? decls = callee.Kind switch
+        if (callee is { Kind: SK.Identifier, Text: "require" } && call.Arguments is [{ Kind: SK.StringLiteral } spec] && call.File!.IsJavaScript)
         {
-            SK.Identifier => SymbolAtLocation(callee),
-            SK.PropertyAccessExpression => MemberDecls(ContainersOfExpression(callee.Expression!, depth + 1), callee.Name!.Text),
-            SK.ParenthesizedExpression or SK.NonNullExpression => null,
-            _ => null,
-        };
-        if (decls is null) { return []; }
-        var result = new List<Node>();
-        foreach (var d in decls)
-        {
-            result.AddRange(ReturnContainersOfCallable(d, depth + 1));
+            var target = Program.ResolveModule(call.File, spec.Text);
+            return target is null ? [] : [new Cont(target.Root, null)];
         }
 
+        var result = new List<Cont>();
+        foreach (var c in ValueConts(callee, depth + 1)) { result.AddRange(CallResult(c, call, depth + 1)); }
         return result;
     }
 
-    private List<Node> ReturnContainersOfCallable(Node d, int depth)
+    private List<Cont> CallResult(Cont c, Node? call, int depth)
     {
-        if (depth > MaxDepth) { return []; }
+        var d = c.Decl;
         switch (d.Kind)
         {
-            case SK.FunctionDeclaration or SK.FunctionExpression or SK.MethodDeclaration or SK.MethodSignature or SK.ArrowFunction or SK.GetAccessor:
-                if (d.Type is not null) { return ContainersOfType(d.Type, depth + 1); }
-                if (d.Body is not null) { return ReturnedContainers(d, depth + 1); }
-                return [];
-            case SK.VariableDeclaration or SK.PropertyDeclaration or SK.PropertySignature or SK.Parameter:
-                if (d.Type is { Kind: SK.FunctionType } ft) { return ContainersOfType(ft.Type!, depth + 1); }
-                if (d.Type is { Kind: SK.TypeReference })
+            case SK.FunctionDeclaration or SK.MethodDeclaration or SK.MethodSignature or SK.ArrowFunction or SK.FunctionExpression or SK.FunctionType
+                or SK.CallSignature or SK.GetAccessor:
+                return ReturnConts(d, c.Env, call, depth + 1);
+            case SK.InterfaceDeclaration or SK.TypeLiteral or SK.ClassDeclaration:
+            {
+                var result = new List<Cont>();
+                foreach (var sig in d.Members.Where(m => m.Kind == SK.CallSignature)) { result.AddRange(ReturnConts(sig, c.Env, call, depth + 1)); }
+                if (result.Count == 0 && d.Kind == SK.InterfaceDeclaration)
                 {
-                    // `declare var String: StringConstructor` with `(value?: any): string` call signatures.
-                    var viaSignature = new List<Node>();
-                    foreach (var c in ContainersOfType(d.Type, depth + 1))
-                    {
-                        foreach (var sig in c.Members.Where(m => m.Kind == SK.CallSignature && m.Type is not null)) { viaSignature.AddRange(ContainersOfType(sig.Type!, depth + 1)); }
-                    }
-
-                    if (viaSignature.Count > 0) { return viaSignature; }
+                    foreach (var b in HeritageConts(d, c.Env, depth + 1)) { result.AddRange(CallResult(b, call, depth + 1)); }
                 }
 
-                if (d.Initializer is { Kind: SK.ArrowFunction or SK.FunctionExpression } fn) { return ReturnContainersOfCallable(fn, depth + 1); }
-                return [];
-            case SK.PropertyAssignment when d.Initializer is { Kind: SK.ArrowFunction or SK.FunctionExpression } fn2:
-                return ReturnContainersOfCallable(fn2, depth + 1);
+                return result;
+            }
+
             default:
                 return [];
         }
     }
 
-    private List<Node> ReturnedContainers(Node fn, int depth)
+    private List<Cont> ReturnConts(Node fn, Env? env, Node? call, int depth)
+    {
+        var bound = env;
+        if (fn.TypeParameters.Count > 0)
+        {
+            if (call is not null && call.TypeArguments.Count > 0) { bound = MergeEnv(BindArgs(fn, call.TypeArguments, null), env); }
+            else if (call is not null) { bound = MergeEnv(InferTypeArguments(fn, call, depth), env); }
+        }
+
+        if (fn.Type is not null)
+        {
+            if (fn.Type.Kind == SK.TypePredicate) { return LibConts("Boolean"); }
+            return TypeConts(fn.Type, bound, depth + 1);
+        }
+
+        if (fn.Body is null) { return []; }
+        var returned = ReturnedConts(fn, depth + 1);
+        if (fn.Has(Mods.Async))
+        {
+            var captured = returned;
+            var promise = new List<Cont>();
+            foreach (var d in Program.Libs.TypeDecls("Promise"))
+            {
+                promise.Add(new Cont(d, d.TypeParameters.Count > 0 ? new Env(d.TypeParameters[0], _ => captured, null) : null));
+            }
+
+            return promise;
+        }
+
+        return returned;
+    }
+
+    /// <summary>Binds type parameters that appear directly as a parameter type to the containers of the matching argument.</summary>
+    private Env? InferTypeArguments(Node fn, Node call, int depth)
+    {
+        Env? env = null;
+        foreach (var tp in fn.TypeParameters)
+        {
+            for (var i = 0; i < fn.Parameters.Count && i < call.Arguments.Count; i++)
+            {
+                var pt = fn.Parameters[i].Type;
+                var isArray = false;
+                if (pt is { Kind: SK.ArrayType }) { pt = pt.Type; isArray = true; }
+                if (pt is { Kind: SK.TypeReference } && pt.Name is { Kind: SK.Identifier } nm && nm.Text == tp.Name!.Text && pt.TypeArguments.Count == 0)
+                {
+                    var arg = call.Arguments[i];
+                    var array = isArray;
+                    env = new Env(tp, d => array ? IndexValue(ValueConts(arg, d), d) : ValueConts(arg, d), env);
+                    break;
+                }
+            }
+        }
+
+        return env;
+    }
+
+    private List<Cont> ReturnedConts(Node fn, int depth)
     {
         if (fn.Body is null) { return []; }
-        if (fn.Body.Kind != SK.Block) { return ContainersOfExpression(fn.Body, depth + 1); }
-        var result = new List<Node>();
+        if (fn.Body.Kind != SK.Block) { return ValueConts(fn.Body, depth + 1); }
+        var result = new List<Cont>();
         void Walk(Node n)
         {
             if (n.Kind is SK.FunctionDeclaration or SK.FunctionExpression or SK.ArrowFunction or SK.MethodDeclaration or SK.ClassDeclaration or SK.ClassExpression) { return; }
-            if (n.Kind == SK.ReturnStatement && n.Expression is not null) { result.AddRange(ContainersOfExpression(n.Expression, depth + 1)); return; }
+            if (n.Kind == SK.ReturnStatement && n.Expression is not null) { result.AddRange(ValueConts(n.Expression, depth + 1)); return; }
             foreach (var c in n.Children) { Walk(c); }
         }
 
@@ -848,101 +1208,290 @@ public sealed class Checker(TsProgram program)
         return result;
     }
 
-    private List<Node> ContextualParameterContainers(Node parameter, int depth)
+    // ------------------------------------------------------------------ JSDoc types (JavaScript files)
+    private List<Cont> JsDocConts(Node declaration, int depth)
     {
-        // `const f: (x: T) => void = (x) => ...` or callbacks: not inferred.
-        _ = parameter;
-        _ = depth;
-        return [];
+        var type = JsDocType(declaration);
+        return type is null ? [] : TypeConts(type, null, depth + 1);
     }
 
-    // ------------------------------------------------------------------ contextual typing of object literals
-    /// <summary>Containers that give object literal <paramref name="literal"/> its contextual type.</summary>
-    public List<Node> ContextualContainers(Node literal, int depth = 0)
+    private readonly Dictionary<Node, Node?> _jsDocTypes = [];
+
+    /// <summary>The type written in a JSDoc <c>@type</c>/<c>@param</c> tag for a declaration in a JavaScript file.</summary>
+    public Node? JsDocType(Node declaration)
     {
-        var type = ContextualTypeNode(literal, depth);
-        return type is null ? [] : ContainersOfType(type, depth + 1);
+        if (declaration.File is not { IsJavaScript: true }) { return null; }
+        if (_jsDocTypes.TryGetValue(declaration, out var cached)) { return cached; }
+        Node? result = null;
+        if (declaration.Kind == SK.Parameter && declaration.Name?.Kind == SK.Identifier && declaration.Parent?.JsDoc is { } fnDoc)
+        {
+            foreach (var (tag, text) in JsDoc.Tags(fnDoc))
+            {
+                if (tag is not ("param" or "arg" or "argument")) { continue; }
+                var (typeText, rest) = JsDoc.SplitTypeExpression(text);
+                if (typeText is null) { continue; }
+                var name = rest.TrimStart().TrimStart('[');
+                var end = name.IndexOfAny([' ', '\t', '\r', '\n', ']', '=']);
+                if ((end < 0 ? name : name[..end]) == declaration.Name.Text) { result = JsDocTypeParser.Parse(typeText, declaration); break; }
+            }
+        }
+        else if (declaration.Kind is SK.VariableDeclaration or SK.PropertyDeclaration or SK.Parameter && JsDocOf(declaration) is { } doc)
+        {
+            foreach (var (tag, text) in JsDoc.Tags(doc))
+            {
+                if (tag is not ("type" or "member" or "var")) { continue; }
+                var (typeText, _) = JsDoc.SplitTypeExpression(text);
+                if (typeText is not null) { result = JsDocTypeParser.Parse(typeText, declaration); break; }
+            }
+        }
+
+        _jsDocTypes[declaration] = result;
+        return result;
     }
 
-    private static Node? ElementTypeOf(Node? type)
+    private static string? JsDocOf(Node declaration)
     {
-        while (type is { Kind: SK.ParenthesizedType }) { type = type.Type; }
-        if (type is null) { return null; }
-        if (type.Kind == SK.ArrayType) { return type.Type; }
-        if (type is { Kind: SK.TypeReference } && type.Name?.Text is "Array" or "ReadonlyArray" && type.TypeArguments.Count == 1) { return type.TypeArguments[0]; }
-        return null;
+        if (declaration.Kind == SK.VariableDeclaration && declaration.Parent?.Parent is { Kind: SK.VariableStatement } st) { return st.JsDoc ?? declaration.JsDoc; }
+        return declaration.JsDoc;
     }
 
-    private Node? ContextualTypeNode(Node e, int depth)
+    // ------------------------------------------------------------------ contextual typing
+    /// <summary>Containers that give <paramref name="e"/> its contextual type (TypeScript's <c>getContextualType</c>).</summary>
+    public List<Cont> ContextualConts(Node e, int depth)
     {
-        if (depth > MaxDepth) { return null; }
+        if (depth > MaxDepth) { _cuts++; return []; }
         var p = e.Parent;
-        if (p is null) { return null; }
+        if (p is null) { return []; }
         switch (p.Kind)
         {
             case SK.VariableDeclaration or SK.PropertyDeclaration or SK.Parameter or SK.BindingElement when ReferenceEquals(p.Initializer, e):
-                return p.Type;
+                return p.Type is not null ? TypeConts(p.Type, null, depth + 1) : JsDocConts(p, depth + 1);
             case SK.AsExpression or SK.TypeAssertion or SK.SatisfiesExpression when p.Type is not null && p.Type.Kind != SK.KeywordType:
-                return p.Type;
+                return TypeConts(p.Type, null, depth + 1);
             case SK.ParenthesizedExpression or SK.NonNullExpression:
-                return ContextualTypeNode(p, depth + 1);
+                return ContextualConts(p, depth + 1);
             case SK.ConditionalExpression when !ReferenceEquals(p.Condition, e):
-                return ContextualTypeNode(p, depth + 1);
-            case SK.BinaryExpression when p.Text is "||" or "??" or "&&" or "=" && ReferenceEquals(p.Right, e):
-                return ContextualTypeNode(p, depth + 1);
+                return ContextualConts(p, depth + 1);
+            case SK.BinaryExpression when p.Text is "||" or "??" or "&&" && ReferenceEquals(p.Right, e):
+                return ContextualConts(p, depth + 1);
+            case SK.BinaryExpression when p.Text == "=" && ReferenceEquals(p.Right, e):
+                return ValueConts(p.Left!, depth + 1);
             case SK.ArrayLiteralExpression:
-                return ElementTypeOf(ContextualTypeNode(p, depth + 1));
+                return IndexValue(ContextualConts(p, depth + 1), depth + 1);
             case SK.SpreadElement when p.Parent?.Kind == SK.ArrayLiteralExpression:
-                return ContextualTypeNode(p.Parent, depth + 1);
+                return ContextualConts(p.Parent, depth + 1);
+            case SK.ExportAssignment:
+                return [];
             case SK.ReturnStatement:
             {
                 for (var f = p.Parent; f is not null; f = f.Parent)
                 {
-                    if (f.Kind is SK.FunctionDeclaration or SK.FunctionExpression or SK.ArrowFunction or SK.MethodDeclaration)
+                    if (f.Kind is SK.FunctionDeclaration or SK.FunctionExpression or SK.ArrowFunction or SK.MethodDeclaration or SK.GetAccessor)
                     {
-                        return UnwrapPromise(f.Type, f.Has(Mods.Async));
+                        return ReturnContextual(f, depth + 1);
                     }
                 }
 
-                return null;
+                return [];
             }
 
             case SK.ArrowFunction when ReferenceEquals(p.Body, e):
-                return UnwrapPromise(p.Type, p.Has(Mods.Async));
+                return ReturnContextual(p, depth + 1);
             case SK.PropertyAssignment when ReferenceEquals(p.Initializer, e) && p.Parent is { Kind: SK.ObjectLiteralExpression } outer:
             {
-                var outerContainers = ContextualContainers(outer, depth + 1);
-                var members = outerContainers.Count == 0 ? null : MemberDecls(outerContainers, Binder.NameText(p.Name) ?? "");
-                return members?.FirstOrDefault(m => m.Type is not null)?.Type;
+                var name = Binder.NameText(p.Name);
+                var outerConts = ContextualConts(outer, depth + 1);
+                if (outerConts.Count == 0) { return []; }
+                if (name is not null)
+                {
+                    var hits = Members(outerConts, name, depth + 1);
+                    if (hits.Count > 0) { return HitsToConts(hits, depth + 1); }
+                }
+
+                return IndexValue(outerConts, depth + 1);
             }
 
             case SK.CallExpression or SK.NewExpression when p.Arguments.Contains(e):
-            {
-                var index = p.Arguments.IndexOf(e);
-                var callee = p.Expression!;
-                List<Node>? decls = callee.Kind switch
-                {
-                    SK.Identifier => SymbolAtLocation(callee),
-                    SK.PropertyAccessExpression => MemberDecls(ContainersOfExpression(callee.Expression!, depth + 1), callee.Name!.Text),
-                    _ => null,
-                };
-                foreach (var d in decls ?? [])
-                {
-                    var fn = d.Kind == SK.ClassDeclaration ? d.Members.FirstOrDefault(m => m.Kind == SK.Constructor) : d;
-                    if (fn is not null && index < fn.Parameters.Count && fn.Parameters[index].Type is { } pt) { return pt; }
-                }
-
-                return null;
-            }
-
+                return ArgumentConts(p, p.Arguments.IndexOf(e), depth + 1);
             default:
-                return null;
+                return [];
         }
     }
 
-    private static Node? UnwrapPromise(Node? type, bool isAsync)
+    private List<Cont> ReturnContextual(Node fn, int depth)
     {
-        if (isAsync && type is { Kind: SK.TypeReference } && type.Name?.Text == "Promise" && type.TypeArguments.Count == 1) { return type.TypeArguments[0]; }
-        return type;
+        if (fn.Type is not null)
+        {
+            var declared = TypeConts(fn.Type, null, depth + 1);
+            return fn.Has(Mods.Async) ? UnwrapPromise(declared, depth + 1) : declared;
+        }
+
+        var result = new List<Cont>();
+        if (fn.Kind is SK.ArrowFunction or SK.FunctionExpression)
+        {
+            foreach (var c in ContextualConts(fn, depth + 1))
+            {
+                foreach (var sig in Signatures(c))
+                {
+                    if (sig.Decl.Type is not null) { result.AddRange(TypeConts(sig.Decl.Type, sig.Env, depth + 1)); }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>The call/function signatures a container offers.</summary>
+    private List<Cont> Signatures(Cont c)
+    {
+        var d = c.Decl;
+        switch (d.Kind)
+        {
+            case SK.FunctionType or SK.FunctionDeclaration or SK.MethodDeclaration or SK.MethodSignature or SK.ArrowFunction or SK.FunctionExpression or SK.CallSignature:
+                return [c];
+            case SK.InterfaceDeclaration or SK.TypeLiteral:
+                return d.Members.Where(m => m.Kind == SK.CallSignature).Select(m => new Cont(m, c.Env)).ToList();
+            default:
+                return [];
+        }
+    }
+
+    private List<Cont> ArgumentConts(Node call, int index, int depth)
+    {
+        var result = new List<Cont>();
+        foreach (var callee in ValueConts(call.Expression!, depth + 1))
+        {
+            List<Cont> sigs;
+            if (call.Kind == SK.NewExpression)
+            {
+                sigs = ConstructorSignatures(callee, depth + 1);
+            }
+            else
+            {
+                sigs = Signatures(callee);
+            }
+
+            foreach (var sig in sigs)
+            {
+                var ps = sig.Decl.Parameters;
+                Node? p = index < ps.Count ? ps[index] : ps.Count > 0 && ps[^1].IsExtends ? ps[^1] : null;
+                if (p is null) { continue; }
+                if (p.Type is null) { result.AddRange(JsDocConts(p, depth + 1)); continue; }
+                var inferred = sig.Decl.TypeParameters.Count > 0 ? MergeEnv(InferTypeArguments(sig.Decl, call, depth), sig.Env) : sig.Env;
+                var conts = TypeConts(p.Type, inferred, depth + 1);
+                if (p.IsExtends && p.Type.Kind == SK.ArrayType && index >= ps.Count - 1) { conts = TypeConts(p.Type.Type!, inferred, depth + 1); }
+                result.AddRange(conts);
+            }
+        }
+
+        return result;
+    }
+
+    private List<Cont> ConstructorSignatures(Cont callee, int depth)
+    {
+        var d = callee.Decl;
+        var result = new List<Cont>();
+        if (d.Kind == SK.TypeQuery && d.Expression is { Kind: SK.ClassDeclaration or SK.ClassExpression } cls)
+        {
+            // Own constructor, otherwise the nearest base class constructor with the heritage type arguments bound.
+            var current = new Cont(cls, null);
+            for (var i = 0; i < 8; i++)
+            {
+                var ctor = current.Decl.Members.FirstOrDefault(m => m.Kind == SK.Constructor);
+                if (ctor is not null) { result.Add(new Cont(ctor, current.Env)); break; }
+                var next = HeritageConts(current.Decl, current.Env, depth + 1).FirstOrDefault(b => b.Decl.Kind is SK.ClassDeclaration or SK.ClassExpression);
+                if (next.Decl is null) { break; }
+                current = next;
+            }
+
+            return result;
+        }
+
+        if (d.Kind is SK.InterfaceDeclaration or SK.TypeLiteral or SK.ClassDeclaration)
+        {
+            result.AddRange(d.Members.Where(m => m.Kind == SK.ConstructSignature).Select(m => new Cont(m, callee.Env)));
+        }
+
+        return result;
+    }
+
+    private List<Cont> ContextualParameterConts(Node parameter, int depth)
+    {
+        var fn = parameter.Parent!;
+        if (fn.Kind is not (SK.ArrowFunction or SK.FunctionExpression or SK.MethodDeclaration)) { return JsDocConts(parameter, depth + 1); }
+        var index = fn.Parameters.IndexOf(parameter);
+        var result = new List<Cont>();
+        var contextual = fn.Kind == SK.MethodDeclaration && fn.Parent?.Kind == SK.ObjectLiteralExpression
+            ? ContextualMemberConts(fn, depth + 1)
+            : ContextualConts(fn, depth + 1);
+        foreach (var c in contextual)
+        {
+            foreach (var sig in Signatures(c))
+            {
+                var ps = sig.Decl.Parameters;
+                if (index < ps.Count && ps[index].Type is { } t) { result.AddRange(TypeConts(t, sig.Env, depth + 1)); }
+            }
+        }
+
+        return result.Count > 0 ? result : JsDocConts(parameter, depth + 1);
+    }
+
+    /// <summary>Contextual type of an object literal method: the type of the same-named member of the contextual literal type.</summary>
+    private List<Cont> ContextualMemberConts(Node method, int depth)
+    {
+        var outer = ContextualConts(method.Parent!, depth + 1);
+        var name = Binder.NameText(method.Name);
+        return name is null ? [] : HitsToConts(Members(outer, name, depth + 1), depth + 1);
+    }
+
+    // ---- API used by FileIndexer
+    /// <summary>Declarations of the property <paramref name="name"/> in the contextual type of <paramref name="literal"/>,
+    /// or null when the contextual type does not declare it (TypeScript's <c>getPropertySymbolFromContextualType</c>).</summary>
+    public List<Node>? ContextualPropertyDecls(Node literal, string name)
+    {
+        var contextual = ContextualConts(literal, 0);
+        if (contextual.Count == 0) { return null; }
+        // `getProperty` on a union needs the property in every constituent; intersections need it in one.
+        var found = new List<Node>();
+        var groups = new Dictionary<int, bool>();
+        foreach (var c in contextual)
+        {
+            var hits = Members([c], name, 0);
+            var has = hits.Count > 0;
+            if (has) { found.AddRange(hits.Select(h => h.Decl)); }
+            if (c.Group == 0) { if (!has) { return null; } }
+            else { groups[c.Group] = groups.GetValueOrDefault(c.Group) || has; }
+        }
+
+        if (groups.Values.Any(v => !v)) { return null; }
+        return found.Count == 0 ? null : found.Distinct().ToList();
+    }
+
+    /// <summary>The declaration nodes of the containers giving <paramref name="literal"/> its contextual type.</summary>
+    public List<Node> ContextualContainers(Node literal, int depth = 0) =>
+        Real(ContextualConts(literal, depth)).Select(c => c.Decl).Where(d => d.Kind is SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration or SK.TypeLiteral or SK.ObjectLiteralExpression).Distinct().ToList();
+
+}
+
+/// <summary>Binds the type parameters of a declaration to the type arguments it was used with.</summary>
+public sealed class Env(Node param, Func<int, List<Cont>> value, Env? next)
+{
+    public Node Param { get; } = param;
+
+    public Func<int, List<Cont>> Value { get; } = value;
+
+    public Env? Next { get; } = next;
+
+    public Func<int, List<Cont>>? Find(Node parameter)
+    {
+        for (var e = this; e is not null; e = e.Next)
+        {
+            if (ReferenceEquals(e.Param, parameter)) { return e.Value; }
+        }
+
+        return null;
     }
 }
+
+/// <summary>A declaration providing members plus the environment its type parameters were instantiated in.</summary>
+public readonly record struct Cont(Node Decl, Env? Env, int Group = 0);

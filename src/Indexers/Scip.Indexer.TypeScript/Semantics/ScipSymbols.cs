@@ -126,6 +126,21 @@ public static class JsDoc
         return lines;
     }
 
+    /// <summary>Splits <c>{type} rest</c>; the type is null when the text does not start with a braced type expression.</summary>
+    public static (string? Type, string Remainder) SplitTypeExpression(string text)
+    {
+        var t = text.TrimStart();
+        if (!t.StartsWith('{')) { return (null, t); }
+        var depth = 0;
+        for (var i = 0; i < t.Length; i++)
+        {
+            if (t[i] == '{') { depth++; }
+            else if (t[i] == '}' && --depth == 0) { return (t[1..i], t[(i + 1)..]); }
+        }
+
+        return (null, t);
+    }
+
     public static string Description(string raw)
     {
         var lines = Lines(raw);
@@ -161,5 +176,39 @@ public static class JsDoc
         }
 
         if (tag is not null) { yield return (tag, NormalizeLinks(string.Join("\n", text).Trim())); }
+    }
+}
+
+/// <summary>Parses the type expression of a JSDoc tag (<c>{string}</c>, <c>{Array.&lt;Foo&gt;}</c>, <c>{?Bar}</c>, ...) as a TypeScript type.</summary>
+public static class JsDocTypeParser
+{
+    public static Node? Parse(string text, Node owner)
+    {
+        var t = text.Trim();
+        if (t.EndsWith('=')) { t = t[..^1]; }
+        if (t.StartsWith("...", StringComparison.Ordinal)) { t = t[3..]; }
+        t = t.Replace("*", "any", StringComparison.Ordinal).Replace(".<", "<", StringComparison.Ordinal);
+        while (t.StartsWith('?') || t.StartsWith('!')) { t = t[1..]; }
+        if (t.StartsWith("function", StringComparison.Ordinal) || t.Length == 0) { return null; }
+        if (t == "Object") { t = "object"; }
+        try
+        {
+            var file = Parser.Parse("jsdoc.ts", "type T = " + t + ";");
+            if (file.Root.Elements is not [{ Kind: SK.TypeAliasDeclaration, Type: { } type }]) { return null; }
+            Reparent(type, owner.File!);
+            type.Parent = owner;
+            return type;
+        }
+        catch (SyntaxException)
+        {
+            return null;
+        }
+    }
+
+    private static void Reparent(Node node, TsSourceFile file)
+    {
+        node.File = file;
+        node.Synthetic = true;
+        foreach (var c in node.Children) { Reparent(c, file); }
     }
 }

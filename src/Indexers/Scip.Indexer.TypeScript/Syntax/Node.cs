@@ -48,6 +48,9 @@ public sealed class Node(SK kind, int pos)
 
     public Node? Parent { get; set; }
 
+    /// <summary>True for nodes parsed out of JSDoc type expressions (not part of the file's syntax tree).</summary>
+    public bool Synthetic { get; set; }
+
     public TsSourceFile? File { get; set; }
 
     /// <summary>Identifier name, literal value, operator text, ...</summary>

@@ -193,18 +193,15 @@ public sealed class FileIndexer(
             return null;
         }
 
-        var containers = checker.ContextualContainers(element.Parent);
-        if (containers.Count == 0) { return null; }
         var name = Binder.NameText(node);
-        var found = name is null ? null : checker.MemberDecls(containers, name);
+        var found = name is null ? null : checker.ContextualPropertyDecls(element.Parent, name);
         return found is null || found.Contains(element) ? null : found;
     }
 
     private void HandleObjectBindingPattern(Node node, (int, int, int, int) range)
     {
         if (!(node.Kind == SK.Identifier && node.Parent!.Kind == SK.BindingElement && node.Parent.Parent!.Kind == SK.ObjectBindingPattern)) { return; }
-        var owner = node.Parent.Parent.Parent!;
-        var containers = owner.Kind == SK.BindingElement ? [] : owner.Type is not null ? checker.ContainersOfExpression(MakeTypeProbe(owner), 0) : owner.Initializer is not null ? checker.ContainersOfExpression(owner.Initializer, 0) : [];
+        var containers = checker.ContainersOfBindingParent(node.Parent, 0);
         var members = containers.Count == 0 ? null : checker.MemberDecls(containers, node.Text);
         foreach (var declaration in members ?? [])
         {
@@ -212,13 +209,6 @@ public sealed class FileIndexer(
             if (scipSymbol.IsEmpty) { continue; }
             PushOccurrence(range, scipSymbol.Value, 0, null, null);
         }
-    }
-
-    private static Node MakeTypeProbe(Node owner)
-    {
-        // `const { a }: T = ...`: wrap the annotation as an `as T` expression so the checker resolves T's members.
-        var probe = new Node(SK.AsExpression, owner.Start) { Type = owner.Type, File = owner.File, Parent = owner };
-        return probe;
     }
 
     private void HandleShorthandPropertyValue(Node declaration, (int, int, int, int) range)
@@ -440,6 +430,7 @@ public sealed class FileIndexer(
             return Cached(node, ScipSymbol.Global(ScipSymbolOf(node.File!.Root), Suffix.Meta, $"{name}{c}"));
         }
 
+        if (node.Synthetic) { return NewLocalSymbol(node); }
         var owner = ScipSymbolOf(node.Parent!);
         if (owner.IsEmpty || owner.IsLocal) { return NewLocalSymbol(node); }
         if (IsAnonymousContainerOfSymbols(node)) { return Cached(node, ScipSymbolOf(node.Parent!)); }
