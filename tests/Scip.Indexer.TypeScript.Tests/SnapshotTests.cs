@@ -160,6 +160,7 @@ public class SnapshotTests
         }
 
         var symbolInformation = index.Documents.SelectMany(d => d.Symbols.Select(s => s.Symbol)).ToHashSet();
+        var documented = symbolInformation.Concat(index.ExternalSymbols.Select(s => s.Symbol)).ToHashSet();
         var indexedPackages = symbolInformation.Where(s => !s.StartsWith("local ", StringComparison.Ordinal)).Select(SymbolPackage).ToHashSet();
         foreach (var document in index.Documents)
         {
@@ -172,6 +173,10 @@ public class SnapshotTests
             var missing = document.Occurrences.Select(o => o.Symbol)
                 .Where(s => s.Length > 0 && indexedPackages.Contains(SymbolPackage(s)) && !symbolInformation.Contains(s)).ToList();
             await Assert.That(missing).IsEmpty().Because($"{document.RelativePath} occurrences in indexed packages should have SymbolInformation");
+            var localInDocument = document.Symbols.Select(x => x.Symbol).ToHashSet();
+            var lintMissing = document.Occurrences.Select(o => o.Symbol)
+                .Where(x => x.Length > 0 && (x.StartsWith("local ", StringComparison.Ordinal) ? !localInDocument.Contains(x) : !documented.Contains(x))).Distinct().ToList();
+            await Assert.That(lintMissing).IsEmpty().Because($"{document.RelativePath}: scip lint requires SymbolInformation for every occurrence symbol");
             if (document.RelativePath == "src/symbol-kinds.ts")
             {
                 var unspecified = document.Symbols.Where(s => s.Kind == SymbolInformation.Types.Kind.UnspecifiedKind).Select(s => s.Symbol).ToList();

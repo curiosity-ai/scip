@@ -221,8 +221,9 @@ public sealed class Checker(TsProgram program)
             return d is null ? null : DeAlias(d, depth);
         }
 
-        var left = entity.Kind == SK.QualifiedName ? entity.Left! : entity.Expression!;
-        var right = entity.Kind == SK.QualifiedName ? entity.Right! : entity.Name!;
+        var left = entity.Kind == SK.QualifiedName ? entity.Left : entity.Expression;
+        var right = entity.Kind == SK.QualifiedName ? entity.Right : entity.Name;
+        if (left is null || right is null) { return null; }
         var leftDecls = ResolveEntityExpression(left, depth + 1);
         return leftDecls is null ? null : MemberDecls(ContainersOfDecls(leftDecls, depth + 1), right.Text);
     }
