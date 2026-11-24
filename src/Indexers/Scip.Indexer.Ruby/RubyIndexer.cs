@@ -92,10 +92,17 @@ public sealed class RubyIndexer : IIndexer
         foreach (var rel in relativePaths)
         {
             ct.ThrowIfCancellationRequested();
-            var text = File.ReadAllText(Path.Combine(root, rel));
-            var model = new DocModel(rel.Replace('\\', '/'), text);
-            RubyWalker.Walk(project, model);
-            models.Add(model);
+            try
+            {
+                var text = File.ReadAllText(Path.Combine(root, rel));
+                var model = new DocModel(rel.Replace('\\', '/'), text);
+                RubyWalker.Walk(project, model);
+                models.Add(model);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Console.Error.WriteLine($"warning: skipping {rel}: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         return Build(project, models, out symbolCount, out externals);
@@ -112,9 +119,16 @@ public sealed class RubyIndexer : IIndexer
         var models = new List<DocModel>();
         foreach (var (path, text) in sources)
         {
-            var model = new DocModel(path, text);
-            RubyWalker.Walk(project, model);
-            models.Add(model);
+            try
+            {
+                var model = new DocModel(path, text);
+                RubyWalker.Walk(project, model);
+                models.Add(model);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Console.Error.WriteLine($"warning: skipping {path}: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         return Build(project, models, out _, out externals);

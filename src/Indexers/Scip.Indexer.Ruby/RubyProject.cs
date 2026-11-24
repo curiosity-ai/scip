@@ -258,27 +258,52 @@ internal sealed class RubyProject(GemMetadata gem)
 
     public MethodTarget? LookupInstance(string[] owner, string name)
     {
-        var t = FindType(owner);
-        if (t is null)
+        // Iterative: alias chains (including cyclic ones such as `alias a b; alias b a`) are followed with a visited set.
+        var visited = new HashSet<(string, string)>();
+        var curOwner = owner;
+        var curName = name;
+        while (visited.Add((string.Join("::", curOwner), curName)))
         {
-            return null;
-        }
-
-        foreach (var a in Ancestors(t))
-        {
-            if (a.Aliases.TryGetValue(name, out var original) && original != name)
+            var t = FindType(curOwner);
+            if (t is null)
             {
-                return LookupInstance(a.Path, original);
+                return null;
             }
 
-            if (HasInstance(a, name, out var core))
+            string[]? nextOwner = null;
+            string? nextName = null;
+            foreach (var a in Ancestors(t))
             {
-                return new MethodTarget(a.Path, false, name, core);
+                if (a.Aliases.TryGetValue(curName, out var original) && original != curName)
+                {
+                    nextOwner = a.Path;
+                    nextName = original;
+                    break;
+                }
+
+                if (HasInstance(a, curName, out var core))
+                {
+                    return new MethodTarget(a.Path, false, curName, core);
+                }
             }
+
+            if (nextName is null)
+            {
+                // Module bodies and methods still see Kernel/Object (they are mixed into some class eventually).
+                if (!t.IsModule || curOwner is ["Object"])
+                {
+                    return null;
+                }
+
+                nextOwner = ["Object"];
+                nextName = curName;
+            }
+
+            curOwner = nextOwner!;
+            curName = nextName;
         }
 
-        // Module bodies and methods still see Kernel/Object (they are mixed into some class eventually).
-        return t.IsModule && owner is not ["Object"] ? LookupInstance(["Object"], name) : null;
+        return null;
     }
 
     /// <summary>Instance method defined by the project (used to resolve <c>Foo.new</c> to <c>initialize</c>).</summary>

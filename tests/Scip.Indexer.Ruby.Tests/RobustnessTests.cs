@@ -36,4 +36,32 @@ public class RobustnessTests
             }
         }
     }
+
+    [Test]
+    public async Task CyclicMixinsSuperclassesAndAliasesTerminate()
+    {
+        const string src = """
+            module A
+              include B
+              alias foo bar
+              alias bar foo
+              def x; foo; bar; baz; end
+            end
+            module B
+              include A
+              extend A
+            end
+            class C < D
+              include A
+              def go; x; foo; self.class.x; end
+            end
+            class D < C
+              extend B
+              def self.make; new.go; x; end
+            end
+            """;
+        var docs = RubyIndexer.IndexSources([("cyc.rb", src)], new GemMetadata("cyc", "1"));
+        await Assert.That(docs.Count).IsEqualTo(1);
+        await Assert.That(docs[0].Occurrences.Count).IsGreaterThan(5);
+    }
 }
