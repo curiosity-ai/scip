@@ -136,7 +136,11 @@ internal sealed partial class RubyWalker
                 }
 
             case "it" or "specify" or "xspecify" or "before" or "after":
-                return ExampleDsl(t);
+                return CallThen(t, ExampleDsl(t));
+            case "describe" or "context" or "shared_examples" or "shared_context":
+                return CallThen(t, DescribeDsl(t));
+            case "let" or "let!" or "subject":
+                return CallThen(t, LetDsl(t));
             case "encrypted_prop":
                 return CallThen(t, EncryptedPropDsl(t));
             case "token_prop" or "created_prop" or "timestamped_token_prop":
@@ -185,6 +189,124 @@ internal sealed partial class RubyWalker
         _i++;
         return true;
     }
+
+    /// <summary>Parses <c>(name)</c> / <c>name</c> where name is a plain string or symbol, followed by a block opener.</summary>
+    private bool NameThenBlock(out Token tok, out string text, out int startCol, out int endCol)
+    {
+        tok = default;
+        text = "";
+        startCol = endCol = 0;
+        var j = _i + 1;
+        Token? open = Tok(j) is { Kind: Tk.Punct, Text: "(", SpaceBefore: false } o ? o : null;
+        if (open is not null)
+        {
+            j++;
+        }
+
+        var arg = Tok(j);
+        if (arg.Line != _t[_i].Line)
+        {
+            return false;
+        }
+
+        if (arg.Kind == Tk.Str)
+        {
+            var raw = RawText(arg);
+            if (raw.Length < 2 || raw[0] is not ('"' or '\'') || raw[^1] != raw[0] || raw.Contains("#{", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            text = Unquote(raw);
+            startCol = arg.Col;
+            endCol = arg.EndCol;
+        }
+        else if (arg.Kind == Tk.Symbol)
+        {
+            text = arg.Text;
+            startCol = arg.Col - 1;
+            endCol = arg.EndCol;
+        }
+        else
+        {
+            return false;
+        }
+
+        tok = arg;
+        j++;
+        if (open is not null)
+        {
+            if (Tok(j) is not { Kind: Tk.Punct, Text: ")" } c)
+            {
+                return false;
+            }
+
+            startCol = arg.Kind == Tk.Str ? open.Value.Col : startCol;
+            endCol = arg.Kind == Tk.Str ? c.EndCol : endCol;
+            j++;
+        }
+
+        return Tok(j) is { Kind: Tk.Keyword, Text: "do" } or { Kind: Tk.Punct, Text: "{" };
+    }
+
+    private bool DescribeDsl(Token t)
+    {
+        if (Top.Kind is not (FrameKind.Class or FrameKind.Module or FrameKind.Other) && _stack.Count > 1 || InMethodBody() || !NameThenBlock(out var tok, out var text, out var start, out var end))
+        {
+            return false;
+        }
+
+        var (parent, singleton) = DefOwner();
+        if (singleton)
+        {
+            return false;
+        }
+
+        var kind = t.Text is "shared_context" ? "shared_examples" : t.Text;
+        string[] path = [.. parent, $"<{kind} '{text}'>"];
+        var info = _project.Type(path);
+        info.Defined = true;
+        info.ProjectDefined = true;
+        info.IsSpec = true;
+        _project.InvalidateAncestors();
+        var sym = _project.TypeSymbol(path);
+        AddOcc(new Occ { Line = tok.Line, Col = start, EndCol = end, Symbol = sym, Roles = (int)SymbolRole.Definition, Kind = SymbolInformation.Types.Kind.Class });
+        if (parent.Length > 0)
+        {
+            AddOcc(new Occ { Line = tok.Line, Col = start, EndCol = end, Symbol = _project.TypeSymbol(parent) });
+        }
+
+        _structBlock = path;
+        _i++;
+        return true;
+    }
+
+    private bool LetDsl(Token t)
+    {
+        if (!InClassBody() || InMethodBody() || !NameThenBlock(out var tok, out var text, out var start, out var end))
+        {
+            return false;
+        }
+
+        var (path, singleton) = DefOwner();
+        if (singleton || FindSpec(path) is false)
+        {
+            return false;
+        }
+
+        _project.Type(path).Methods.Add(text);
+        var occ = new Occ
+        {
+            Line = tok.Line, Col = start, EndCol = end, Symbol = _project.MethodSymbol(path, false, text), Roles = (int)SymbolRole.Definition,
+            Kind = SymbolInformation.Types.Kind.Method,
+        };
+        AddOcc(occ);
+        _exampleBlock = (path, text, occ, t.Line, t.Col);
+        _i++;
+        return true;
+    }
+
+    private bool FindSpec(string[] path) => _project.FindType(path) is { IsSpec: true };
 
     private bool ExampleDsl(Token t)
     {

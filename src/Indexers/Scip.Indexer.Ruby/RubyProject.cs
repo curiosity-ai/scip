@@ -25,6 +25,9 @@ internal sealed class TypeInfo(string[] path)
 
     public bool IsModule { get; set; }
 
+    /// <summary>An RSpec/Minitest <c>describe</c> group synthesized by the DSL rewriter.</summary>
+    public bool IsSpec { get; set; }
+
     public RefSpec? Super { get; set; }
 
     public List<RefSpec> Includes { get; } = [];
@@ -409,7 +412,7 @@ internal sealed class RubyProject(GemMetadata gem)
 
         foreach (var a in Ancestors(t))
         {
-            if (a.SingletonMethods.Contains("it") || a.SingletonMethods.Contains("describe") || a.Super is { Segments: ["Minitest", "Spec"] })
+            if (a.IsSpec || a.SingletonMethods.Contains("it") || a.SingletonMethods.Contains("describe") || a.Super is { Segments: ["Minitest", "Spec"] })
             {
                 return true;
             }

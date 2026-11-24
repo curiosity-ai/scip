@@ -48,6 +48,6 @@ public class UpstreamSnapshotTests
         }
 
         await Assert.That(fixtures).IsGreaterThan(100);
-        await Assert.That((defs - missing) / (double)defs).IsGreaterThan(0.7);
+        await Assert.That((defs - missing) / (double)defs).IsGreaterThan(0.88);
     }
 }
