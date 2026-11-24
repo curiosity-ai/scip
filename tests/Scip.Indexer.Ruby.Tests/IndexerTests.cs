@@ -105,7 +105,7 @@ public class IndexerTests
     public async Task GlobalVariablesUseThePlaceholderGem()
     {
         var occs = Occurrences("$count = 1\nputs $count\n");
-        await Assert.That(occs.Select(o => o.Symbol)).IsEquivalentTo(new[]
+        await Assert.That(occs.Select(o => o.Symbol).Where(s => s.Contains("$count", StringComparison.Ordinal))).IsEquivalentTo(new[]
         {
             "scip-ruby gem _global_ latest `<Class:<root>>`#$count.", "scip-ruby gem _global_ latest `<Class:<root>>`#$count.",
         });

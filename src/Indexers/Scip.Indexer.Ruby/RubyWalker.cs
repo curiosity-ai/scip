@@ -71,6 +71,13 @@ internal sealed class Frame(FrameKind kind, LocalScope locals)
     public string[] OwnerPath { get; init; } = [];
 
     public bool OwnerSingleton { get; init; }
+
+    public string MethodName { get; init; } = "";
+
+    public SigInfo? Sig { get; init; }
+
+    /// <summary>A <c>Struct.new(...) do ... end</c> block, which behaves like a class body.</summary>
+    public bool StructBlock { get; init; }
 }
 
 /// <summary>
@@ -93,6 +100,7 @@ internal sealed partial class RubyWalker
     private int _i;
     private int _nextLocal;
     private int _parenDepth;
+    private string[]? _structBlock;
     private int _lhsEnd = -1;
     private int _lastChainEnd = -1;
     private RefSpec? _lastChain;
@@ -278,6 +286,8 @@ internal sealed partial class RubyWalker
         switch (t.Kind)
         {
             case Tk.Newline:
+                FinishAssign();
+                _cmdTarget = null;
                 _rescueLine = false;
                 _lhsEnd = -1;
                 CloseEndlessDef();
@@ -301,6 +311,22 @@ internal sealed partial class RubyWalker
             case Tk.Punct:
                 Punct(t);
                 break;
+            case Tk.Str:
+                SetExpr(CoreInstance("String"), _i);
+                _i++;
+                break;
+            case Tk.Num:
+                SetExpr(CoreInstance(t.Text.Contains('.') || t.Text.Contains('e') && !t.Text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? "Float" : "Integer"), _i);
+                _i++;
+                break;
+            case Tk.Symbol:
+                SetExpr(CoreInstance("Symbol"), _i);
+                _i++;
+                break;
+            case Tk.Label:
+                CallLabel(t);
+                _i++;
+                break;
             default:
                 _i++;
                 break;
@@ -321,25 +347,37 @@ internal sealed partial class RubyWalker
         switch (t.Text)
         {
             case ";":
+                FinishAssign();
                 _lhsEnd = -1;
                 CloseEndlessDef();
                 _i++;
                 break;
             case "(" or "[":
+                OpenParen(t);
                 _parenDepth++;
                 _i++;
                 break;
             case ")" or "]":
                 _parenDepth = Math.Max(0, _parenDepth - 1);
+                CloseParen();
                 _i++;
                 break;
             case "{":
                 OpenBrace();
                 break;
             case "}":
-                if (Top.Kind is FrameKind.Block or FrameKind.Brace && _stack.Count > 1)
+                if (Top.Kind is FrameKind.Block or FrameKind.Brace || Top is { StructBlock: true })
                 {
-                    Close(t.Line, t.EndCol);
+                    var hash = Top.Kind == FrameKind.Brace;
+                    if (_stack.Count > 1)
+                    {
+                        Close(t.Line, t.EndCol);
+                    }
+
+                    if (hash)
+                    {
+                        SetExpr(CoreInstance("Hash"), _i);
+                    }
                 }
 
                 _i++;
@@ -390,7 +428,10 @@ internal sealed partial class RubyWalker
 
     private void PushBlock()
     {
-        var frame = new Frame(FrameKind.Block, new LocalScope(Scope));
+        var frame = _structBlock is { } sb
+            ? new Frame(FrameKind.Class, new LocalScope(null)) { Path = sb, Cref = [sb, .. CurCref], StructBlock = true }
+            : new Frame(FrameKind.Block, new LocalScope(Scope));
+        _structBlock = null;
         foreach (var (name, id) in _pendingBlockLocals)
         {
             frame.Locals.Declare(name, id);
@@ -467,7 +508,12 @@ internal sealed partial class RubyWalker
 
                 if (t.Kind == Tk.Ident)
                 {
-                    DefineLocal(t.Text, t);
+                    var pid = DefineLocal(t.Text, t);
+                    if (methodParams && Top.Sig is { } sig && sig.Params.TryGetValue(t.Text, out var pfn))
+                    {
+                        _localTypes[pid] = pfn;
+                    }
+
                     _i++;
                     atStart = false;
                     continue;
@@ -475,7 +521,15 @@ internal sealed partial class RubyWalker
 
                 if (t.Kind == Tk.Label)
                 {
-                    DefineLocal(t.Text, t, endCol: t.Col + t.Text.Length);
+                    if (methodParams && Top.Kind == FrameKind.Def)
+                    {
+                        DefineKeywordParam(t);
+                    }
+                    else
+                    {
+                        DefineLocal(t.Text, t, endCol: t.Col + t.Text.Length);
+                    }
+
                     _i++;
                     atStart = false;
                     continue;
@@ -560,6 +614,11 @@ internal sealed partial class RubyWalker
                 ForLoop();
                 break;
             case "end":
+                if (Top is { Kind: FrameKind.Def, Endless: false })
+                {
+                    ReturnedAssignment();
+                }
+
                 CloseTopKeywordFrame(t);
                 _i++;
                 break;
@@ -568,7 +627,20 @@ internal sealed partial class RubyWalker
                 _i++;
                 break;
             case "alias":
+                if (Tok(_i + 1).Kind is Tk.Ident or Tk.Symbol or Tk.Const && Tok(_i + 2).Kind is Tk.Ident or Tk.Symbol or Tk.Const)
+                {
+                    RegisterAlias(Tok(_i + 1).Text, Tok(_i + 2).Text);
+                }
+
                 _i += 3;
+                break;
+            case "self":
+                SetExpr(SelfType(), _i);
+                _i++;
+                break;
+            case "true" or "false" or "nil":
+                SetExpr(CoreInstance(t.Text switch { "true" => "TrueClass", "false" => "FalseClass", _ => "NilClass" }), _i);
+                _i++;
                 break;
             default:
                 _i++;
@@ -672,6 +744,7 @@ internal sealed partial class RubyWalker
 
         var info = _project.Type(fullPath);
         info.Defined = true;
+        info.ProjectDefined = true;
         info.IsModule = isModule;
         _project.InvalidateAncestors();
         var defOcc = Emit(nameTok, _project.TypeSymbol(fullPath), (int)SymbolRole.Definition, null,
@@ -681,6 +754,12 @@ internal sealed partial class RubyWalker
         if (!isModule && Tok(_i) is { Kind: Tk.Punct, Text: "<" } && TryReadChain(_i + 1, out _, out var superSegs, out _, out var superAbs))
         {
             info.Super ??= new RefSpec(outerCref, superSegs, superAbs);
+            if (superSegs is ["T", "Struct"])
+            {
+                // Sorbet's T::Struct rewriter synthesises an `initialize` for the declared props.
+                info.Methods.Add("initialize");
+                Emit(nameTok, _project.MethodSymbol(fullPath, false, "initialize"), (int)SymbolRole.Definition, null, SymbolInformation.Types.Kind.Method);
+            }
         }
 
         string[][] cref = [fullPath, .. outerCref];
@@ -759,6 +838,13 @@ internal sealed partial class RubyWalker
 
         var owner = _project.Type(ownerPath);
         (ownerSingleton ? owner.SingletonMethods : owner.Methods).Add(name);
+        var sigInfo = _pendingSig;
+        _pendingSig = null;
+        if (sigInfo?.Ret is { } retFn)
+        {
+            _project.MethodRets[RubyProject.RetKey(ownerPath, ownerSingleton, name)] = retFn;
+        }
+
         var defOcc = Emit(nameTok, _project.MethodSymbol(ownerPath, ownerSingleton, name), (int)SymbolRole.Definition, null,
             SymbolInformation.Types.Kind.Method, endCol: nameEnd);
         var frame = new Frame(FrameKind.Def, new LocalScope(null))
@@ -768,6 +854,8 @@ internal sealed partial class RubyWalker
             StartCol = kw.Col,
             OwnerPath = ownerPath,
             OwnerSingleton = ownerSingleton,
+            MethodName = name,
+            Sig = sigInfo,
         };
         _stack.Add(frame);
 
@@ -836,6 +924,13 @@ internal sealed partial class RubyWalker
             && !InMethodBody())
         {
             var ns = CurNamespace;
+            if (IsStructNew(lastIdx + 2))
+            {
+                DefineStruct(toks[0], [.. ns, segs[0]], lastIdx + 2);
+                _i = lastIdx + 1;
+                return;
+            }
+
             var owner = _project.Type(ns);
             owner.Constants.Add(segs[0]);
             _project.InvalidateAncestors();
@@ -848,6 +943,7 @@ internal sealed partial class RubyWalker
         EmitConstRefs(start, lastIdx, spec);
         _lastChain = spec;
         _lastChainEnd = lastIdx;
+        SetExpr(ClassOf(spec, segs.Length), lastIdx);
         _i = lastIdx + 1;
     }
 
@@ -953,7 +1049,7 @@ internal sealed partial class RubyWalker
         {
             if (Scope.Lookup(t.Text) is { } existing)
             {
-                Emit(t, $"local {existing}", (int)SymbolRole.WriteAccess);
+                Emit(t, LocalSym(existing), (int)SymbolRole.WriteAccess);
             }
             else
             {
@@ -967,15 +1063,39 @@ internal sealed partial class RubyWalker
         var isCall = next is { Kind: Tk.Punct, Text: "(" } && !next.SpaceBefore;
         if (!isCall && Scope.Lookup(t.Text) is { } id)
         {
-            Emit(t, $"local {id}", IsAssignOp(next) ? (int)SymbolRole.WriteAccess : 0);
+            Emit(t, LocalSym(id), IsAssignOp(next) ? (int)SymbolRole.WriteAccess : 0);
+            if (next is { Kind: Tk.Punct, Text: "=" or "||=" })
+            {
+                BeginAssign(id, null);
+            }
+            else
+            {
+                SetExpr(_localTypes.GetValueOrDefault(id), _i);
+            }
+
             _i++;
             return;
         }
 
         if (!isCall && IsAssignOp(next) && next.Text != "=" || (!isCall && next is { Kind: Tk.Punct, Text: "=" }))
         {
-            DefineLocal(t.Text, t);
+            var newId = DefineLocal(t.Text, t);
+            if (next is { Kind: Tk.Punct, Text: "=" or "||=" })
+            {
+                BeginAssign(newId, null);
+            }
+
             _i++;
+            return;
+        }
+
+        if (t.Text == "sig" && !isCall && next is { Kind: Tk.Punct, Text: "{" } or { Kind: Tk.Keyword, Text: "do" })
+        {
+            CaptureSig(_i + 1);
+        }
+
+        if (!isCall && InClassBody() && StatementStartBefore(_i) && TryDsl(t))
+        {
             return;
         }
 
@@ -993,38 +1113,102 @@ internal sealed partial class RubyWalker
         // Implicit-self method call.
         var (path, singleton) = SelfContext();
         var name = t.Text;
-        Emit(t, null, 0, p => MethodSymbol(p, singleton ? p.LookupSingleton(path, name) : p.LookupInstance(path, name)));
+        var self = new RType(path, singleton);
+        EmitCall(t, name, self, next);
         _i++;
     }
 
     private static string? MethodSymbol(RubyProject p, MethodTarget? m) =>
-        m is { } t ? p.MethodSymbol(t.Owner, t.Singleton, t.Name) : null;
+        m is { } t ? p.MethodSymbol(t.Owner, t.Singleton, t.Name, t.Core) : null;
+
+    /// <summary>Emits a (possibly typed) method reference and records its return type for chaining.</summary>
+    private void EmitCall(Token t, string name, RType? recv, Token next, TypeFn? recvFn = null)
+    {
+        if (recv is null && recvFn is null)
+        {
+            SetExpr(null, _i);
+            _lastCall = null;
+            return;
+        }
+
+        if (next is { Kind: Tk.Punct, Text: "=" } && Tok(_i + 2) is not { Kind: Tk.Punct, Text: "=" })
+        {
+            // `recv.foo = value` calls the setter.
+            name += "=";
+        }
+
+        var captured = name;
+        Func<RubyProject, MethodTarget?> target = p =>
+        {
+            var r = recvFn is null ? recv : recvFn(p);
+            return r is { } rt ? p.LookupMethod(rt, captured) : null;
+        };
+        Emit(t, null, 0, p => MethodSymbol(p, target(p)));
+        SetExpr(p =>
+        {
+            var r = recvFn is null ? recv : recvFn(p);
+            return r is null ? null : p.ReturnOf(target(p), r, captured);
+        }, _i);
+        _lastCall = target;
+        if (Tok(_i + 1) is { Kind: Tk.Label, SpaceBefore: true })
+        {
+            _cmdTarget = target;
+        }
+    }
+
+    private void CallLabel(Token label)
+    {
+        var target = _parens.Count > 0 ? _parens.Peek().Target : null;
+        target ??= _cmdTarget;
+        if (target is null)
+        {
+            return;
+        }
+
+        var name = label.Text;
+        Emit(label, null, 0, p =>
+        {
+            if (target(p) is not { Core: false } m || !p.KwParams.Contains(RubyProject.RetKey(m.Owner, m.Singleton, m.Name) + "(" + name))
+            {
+                return null;
+            }
+
+            return p.ParamSymbol(m.Owner, m.Singleton, m.Name, name);
+        }, endCol: label.Col + label.Text.Length);
+    }
+
+    private void DefineKeywordParam(Token t)
+    {
+        var frame = Top;
+        var sym = _project.ParamSymbol(frame.OwnerPath, frame.OwnerSingleton, frame.MethodName, t.Text);
+        var id = _nextKw--;
+        Scope.Declare(t.Text, id);
+        _kwSymbols[id] = sym;
+        _project.KwParams.Add(RubyProject.RetKey(frame.OwnerPath, frame.OwnerSingleton, frame.MethodName) + "(" + t.Text);
+        if (frame.Sig is { } sig && sig.Params.TryGetValue(t.Text, out var fn))
+        {
+            _localTypes[id] = fn;
+        }
+
+        Emit(t, sym, (int)SymbolRole.Definition, null, SymbolInformation.Types.Kind.Parameter, endCol: t.Col + t.Text.Length);
+    }
 
     private void MethodCallWithReceiver(Token t)
     {
-        var recv = Tok(_i - 2);
         var name = t.Text;
-        if (recv is { Kind: Tk.Keyword, Text: "self" })
+        var recvFn = _exprEnd == _i - 2 ? _exprType : null;
+        if (_i >= 2 && _t[_i - 2] is { Kind: Tk.Const, Text: "T" } && (_i < 3 || _t[_i - 3] is not { Kind: Tk.Punct, Text: "::" }))
         {
-            var (path, singleton) = SelfContext();
-            Emit(t, null, 0, p => MethodSymbol(p, singleton ? p.LookupSingleton(path, name) : p.LookupInstance(path, name)));
+            _pendingTCall = name;
         }
-        else if (recv.Kind == Tk.Const && _lastChain is { } chain && _lastChainEnd == _i - 2)
-        {
-            Emit(t, null, 0, p =>
-            {
-                var type = p.ResolveType(chain);
-                if (type is null)
-                {
-                    return null;
-                }
 
-                // `Foo.new` navigates to the constructor unless `new` itself is overridden.
-                return name == "new"
-                    ? MethodSymbol(p, p.LookupExplicitSingleton(type.Path, name) ?? p.LookupInstance(type.Path, "initialize"))
-                    : MethodSymbol(p, p.LookupSingleton(type.Path, name));
-            });
+        if (recvFn is null)
+        {
+            EmitCall(t, name, null, Tok(_i + 1));
+            return;
         }
+
+        EmitCall(t, name, null, Tok(_i + 1), recvFn);
     }
 
     private void Attrs(Token t)
@@ -1034,6 +1218,8 @@ internal sealed partial class RubyWalker
         var (singletonCtx, _) = (Top.Kind == FrameKind.Singleton, 0);
         var reader = t.Text is "attr_accessor" or "attr_reader" or "attr";
         var writer = t.Text is "attr_accessor" or "attr_writer";
+        var sigInfo = _pendingSig;
+        _pendingSig = null;
         _i++;
         while (Tok(_i).Kind == Tk.Symbol || Tok(_i) is { Kind: Tk.Punct, Text: "," } || Tok(_i).Kind == Tk.Str)
         {
@@ -1050,6 +1236,11 @@ internal sealed partial class RubyWalker
                 {
                     (singletonCtx ? owner.SingletonMethods : owner.Methods).Add(s.Text);
                     Emit(s, _project.MethodSymbol(path, singletonCtx, s.Text), (int)SymbolRole.Definition, null, SymbolInformation.Types.Kind.Getter);
+                    if (sigInfo?.Ret is { } attrRet)
+                    {
+                        _project.MethodRets[RubyProject.RetKey(path, singletonCtx, s.Text)] = attrRet;
+                        _project.FieldTypes.TryAdd(RubyProject.RetKey(path, singletonCtx, "@" + s.Text), attrRet);
+                    }
                 }
             }
 
@@ -1072,6 +1263,16 @@ internal sealed partial class RubyWalker
 
         var symbol = _project.FieldSymbol(path, singleton, t.Text);
         Emit(t, symbol, assign ? (int)SymbolRole.Definition : 0, null, assign ? SymbolInformation.Types.Kind.Field : SymbolInformation.Types.Kind.UnspecifiedKind);
+        var fieldKey = RubyProject.RetKey(path, singleton, t.Text);
+        if (next is { Kind: Tk.Punct, Text: "=" or "||=" })
+        {
+            BeginAssign(0, fieldKey);
+        }
+        else
+        {
+            SetExpr(p => p.FieldTypes.TryGetValue(fieldKey, out var fn) ? p.Guarded(() => fn(p)) : null, _i);
+        }
+
         _i++;
     }
 
