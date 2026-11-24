@@ -972,7 +972,8 @@ public sealed class Checker(TsProgram program)
 
         if (decl.Kind is SK.InterfaceDeclaration or SK.TypeLiteral or SK.ClassDeclaration)
         {
-            foreach (var sig in decl.Members.Where(m => m.Kind == SK.ConstructSignature && m.Type is not null))
+            // With explicit type arguments only signatures taking that many type parameters are candidates.
+            foreach (var sig in decl.Members.Where(m => m.Kind == SK.ConstructSignature && m.Type is not null && (typeArguments.Count == 0 || m.TypeParameters.Count == typeArguments.Count)))
             {
                 var env = sig.TypeParameters.Count > 0 ? BindArgs(sig, typeArguments, callerEnv) : null;
                 var merged = env is null ? c.Env : env;
@@ -1108,14 +1109,16 @@ public sealed class Checker(TsProgram program)
             case SK.NewExpression:
             {
                 var result = new List<Cont>();
+                var fallback = new List<Cont>();
                 foreach (var c in ValueConts(e.Expression!, depth + 1))
                 {
                     var found = ConstructResult(c, e.TypeArguments, null, depth + 1);
-                    if (found.Count == 0 && c.Decl.Kind == SK.InterfaceDeclaration) { found = [c]; }
+                    if (found.Count == 0 && c.Decl.Kind == SK.InterfaceDeclaration) { fallback.Add(c); }
                     result.AddRange(found);
                 }
 
-                return result;
+                // `new Map()` resolves through the construct signature of `MapConstructor`, not the `Map` interface itself.
+                return result.Count > 0 ? result : fallback;
             }
 
             case SK.CallExpression:
@@ -1268,7 +1271,8 @@ public sealed class Checker(TsProgram program)
             case SK.InterfaceDeclaration or SK.TypeLiteral or SK.ClassDeclaration:
             {
                 var result = new List<Cont>();
-                foreach (var sig in d.Members.Where(m => m.Kind == SK.CallSignature)) { result.AddRange(ReturnConts(sig, c.Env, call, depth + 1)); }
+                var explicitArguments = call?.TypeArguments.Count ?? 0;
+                foreach (var sig in d.Members.Where(m => m.Kind == SK.CallSignature && (explicitArguments == 0 || m.TypeParameters.Count == explicitArguments))) { result.AddRange(ReturnConts(sig, c.Env, call, depth + 1)); }
                 if (result.Count == 0 && d.Kind == SK.InterfaceDeclaration)
                 {
                     foreach (var b in HeritageConts(d, c.Env, depth + 1)) { result.AddRange(CallResult(b, call, depth + 1)); }
