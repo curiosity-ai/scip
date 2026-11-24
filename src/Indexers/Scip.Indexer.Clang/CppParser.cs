@@ -303,6 +303,11 @@ public sealed partial class CppParser
         var t = _t[p];
         if (t.Kind == TokKind.Punct)
         {
+            if (t.Text == "~" && IsName(p + 1) && P(p + 2, "("))
+            {
+                return ParseGeneral(scope, p, end, friend: false); // destructor with no decl-specifiers
+            }
+
             return t.Text == ";" ? p + 1 : t.Text is "}" ? p + 1 : SkipStatement(p, end);
         }
 
