@@ -172,7 +172,18 @@ public sealed class TypeScriptIndexer : IIndexer
 
             if (document.Occurrences.Count > 0)
             {
-                foreach (var info in document.Symbols) { definedSymbols.Add(info.Symbol); }
+                foreach (var info in document.Symbols)
+                {
+                    definedSymbols.Add(info.Symbol);
+                    // The same global symbol can be declared in several documents (e.g. duplicated mock packages);
+                    // `scip lint` warns about a (symbol, related symbol) pair repeated across documents. The pair is
+                    // tracked in `definedSymbols` as "symbol\0related" (a NUL never occurs in a real symbol).
+                    for (var i = info.Relationships.Count - 1; i >= 0; i--)
+                    {
+                        if (!definedSymbols.Add(info.Symbol + "\0" + info.Relationships[i].Symbol)) { info.Relationships.RemoveAt(i); }
+                    }
+                }
+
                 foreach (var o in document.Occurrences)
                 {
                     if (!o.Symbol.StartsWith("local ", StringComparison.Ordinal)) { referencedSymbols.Add(o.Symbol); }

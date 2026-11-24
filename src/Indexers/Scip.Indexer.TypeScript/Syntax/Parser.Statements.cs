@@ -25,6 +25,8 @@ public sealed partial class Parser
                     return ParseExport(start, doc, decorators);
                 case "var" or "let" or "const" when !IsConstEnum() && (_s.TokenText != "let" || LetStartsDeclaration()):
                     return ParseVariableStatement(start, doc, Mods.None);
+                case "using" or "await" when UsingStartsDeclaration():
+                    return ParseVariableStatement(start, doc, Mods.None);
                 case "function":
                     return FinishDecl(ParseFunction(start, Mods.None, SK.FunctionDeclaration), doc);
                 case "class":
@@ -102,6 +104,16 @@ public sealed partial class Parser
         return n;
     }
 
+    private bool PeekIsOptionalColon()
+    {
+        var snap = Save();
+        _s.Next();
+        var r = IsP("?");
+        if (r) { _s.Next(); r = IsP(":"); }
+        Restore(snap);
+        return r;
+    }
+
     private bool PeekIsPunct(string p)
     {
         var snap = Save();
@@ -137,6 +149,22 @@ public sealed partial class Parser
         var r = IsK("enum");
         Restore(snap);
         return r;
+    }
+
+    /// <summary>`using x = ...` / `await using x = ...` explicit resource declarations.</summary>
+    private bool UsingStartsDeclaration()
+    {
+        var snap = Save();
+        try
+        {
+            if (IsK("await")) { _s.Next(); if (_s.NewlineBefore || !IsK("using")) { return false; } }
+            _s.Next();
+            return !_s.NewlineBefore && _s.Kind == T.Ident && !Reserved.Contains(_s.TokenText) && _s.TokenText is not ("of" or "in" or "as" or "satisfies" or "instanceof");
+        }
+        finally
+        {
+            Restore(snap);
+        }
     }
 
     private bool LetStartsDeclaration()
@@ -201,7 +229,7 @@ public sealed partial class Parser
     {
         var n = Begin(SK.Block);
         ExpectP("{");
-        while (!IsP("}") && _s.Kind != T.Eof) { n.Elements.Add(ParseStatement()); }
+        while (!IsP("}") && _s.Kind != T.Eof) { ParseStatementRecovering(n.Elements); }
         ExpectP("}");
         return Fin(n);
     }
@@ -226,7 +254,7 @@ public sealed partial class Parser
         ExpectP("(");
         Node? init = null;
         if (IsP(";")) { /* no initializer */ }
-        else if (IsK("var") || IsK("const") || (IsK("let") && LetStartsDeclaration()))
+        else if (IsK("var") || IsK("const") || (IsK("let") && LetStartsDeclaration()) || (IsK("using") || IsK("await")) && UsingStartsDeclaration())
         {
             init = ParseVariableDeclarationList(noIn: true);
         }
@@ -301,7 +329,7 @@ public sealed partial class Parser
             var clause = Begin(IsK("default") ? SK.DefaultClause : SK.CaseClause);
             if (EatK("case")) { clause.Expression = ParseExpression(); } else { ExpectK("default"); }
             ExpectP(":");
-            while (!IsP("}") && !IsK("case") && !IsK("default") && _s.Kind != T.Eof) { clause.Elements.Add(ParseStatement()); }
+            while (!IsP("}") && !IsK("case") && !IsK("default") && _s.Kind != T.Eof) { ParseStatementRecovering(clause.Elements); }
             block.Elements.Add(Fin(clause));
         }
 
@@ -322,7 +350,8 @@ public sealed partial class Parser
     private Node ParseVariableDeclarationList(bool noIn)
     {
         var list = Begin(SK.VariableDeclarationList);
-        list.IsConst = IsK("const");
+        if (IsK("await")) { _s.Next(); }
+        list.IsConst = IsK("const") || IsK("using");
         list.IsLet = IsK("let");
         _s.Next();
         do
@@ -463,8 +492,8 @@ public sealed partial class Parser
             do
             {
                 var e = Begin(SK.ExpressionWithTypeArguments);
-                e.Expression = ParseLeftHandSide(noCalls: true);
-                if (IsP("<")) { ParseTypeArguments(e); }
+                e.Expression = ParseLeftHandSide(noCalls: false);
+                if (IsP("<") || IsP("<<")) { ParseTypeArguments(e); }
                 h.Elements.Add(Fin(e));
             }
             while (EatP(","));
@@ -710,7 +739,7 @@ public sealed partial class Parser
         {
             var block = Begin(SK.ModuleBlock);
             _s.Next();
-            while (!IsP("}") && _s.Kind != T.Eof) { block.Elements.Add(ParseStatement()); }
+            while (!IsP("}") && _s.Kind != T.Eof) { ParseStatementRecovering(block.Elements); }
             ExpectP("}");
             n.Body = Fin(block);
         }
