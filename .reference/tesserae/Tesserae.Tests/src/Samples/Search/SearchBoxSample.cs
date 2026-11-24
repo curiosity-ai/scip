@@ -1,0 +1,161 @@
+﻿using System;
+using System.Threading.Tasks;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+using static Tesserae.Tests.Samples.SamplesHelper;
+
+namespace Tesserae.Tests.Samples
+{
+    [SampleDetails(Group = SampleGroup.Search, Order = 10, Icon = UIcons.Search, Description = "A search input, with clear and debounce")]
+    public class SearchBoxSample : IComponent, ISample
+    {
+        private readonly IComponent _content;
+
+        public SearchBoxSample()
+        {
+            var searchAsYouType = TextBlock("Start typing in the 'Search as you type' box below...");
+
+            //A search that takes a moment says so in the box itself: .Busy() while the query is out, and
+            //.Failed() when it did not answer - which takes itself down again after five seconds. .OnCancel
+            //is what puts the cancel button under the pointer while it is busy; what cancelling does is
+            //decided here, not by the box.
+            var slowSearchStatus = TextBlock("Type to start a search that takes two seconds. A query of 'fail' comes back with an error.");
+            var slowSearch       = SearchBox("Type something slow...").SearchAsYouType();
+            var slowSearchToken  = 0d;
+
+            slowSearch.OnCancel((s, e) =>
+            {
+                window.clearTimeout(slowSearchToken);
+                s.Busy(false);
+                slowSearchStatus.Text = $"Called off the search for: {e}";
+            });
+
+            slowSearch.OnSearch((s, e) =>
+            {
+                window.clearTimeout(slowSearchToken);
+                s.ClearFailure();
+
+                if (string.IsNullOrEmpty(e))
+                {
+                    s.Busy(false);
+                    slowSearchStatus.Text = "Waiting for input...";
+                    return;
+                }
+
+                s.Busy();
+                slowSearchStatus.Text = $"Searching for: {e}";
+
+                slowSearchToken = window.setTimeout(_ =>
+                {
+                    s.Busy(false);
+
+                    if (e == "fail")
+                    {
+                        s.Failed();
+                        slowSearchStatus.Text = $"Could not search for '{e}'. Check your connection and try again.";
+                        return;
+                    }
+
+                    slowSearchStatus.Text = $"Found results for: {e}";
+                }, 2000);
+            });
+
+            //A box searching over data that is still arriving: the bar along its bottom edge says so, and the box
+            //stays editable while it is up. Determinate when the size of the load is known, a sweep when not.
+            var loadingBox      = SearchBox("Search while loading...");
+            var loadingProgress = 0;
+            var loadingToken    = 0d;
+
+            void StartDeterminateLoad()
+            {
+                window.clearInterval(loadingToken);
+                loadingProgress = 0;
+                loadingBox.Progress(0f);
+
+                loadingToken = window.setInterval(_ =>
+                {
+                    loadingProgress += 10;
+                    loadingBox.Progress(loadingProgress, 100);
+
+                    if (loadingProgress >= 100)
+                    {
+                        window.clearInterval(loadingToken);
+                        window.setTimeout(__ => loadingBox.HideProgress(), 300);
+                    }
+                }, 300);
+            }
+
+            _content = SectionStack().Secondary()
+               .SampleTitle(typeof(SearchBoxSample), UIcons.Search, "A control to search")
+               .FlatSection(Stack().Children(
+                    Card(VStack().WS().Children(
+                    TextBlock("SearchBoxes provide an input field for searching through content, allowing users to locate specific items within the website or app."),
+                    TextBlock("They include a search icon and a clear button, and support both 'on search' (e.g., when Enter is pressed) and 'search as you type' behaviors."))).SetTitle("Overview")))
+               .FlatSection(Stack().Children(
+                    Card(VStack().WS().Children(
+                    TextBlock("Always use placeholder text to describe the search scope (e.g., 'Search files'). Use the 'Underlined' style for CommandBars or other minimalist surfaces. Enable 'Search as you type' for small to medium datasets where results can be filtered instantly. Provide a clear visual cue when no results are found. Don't use a SearchBox if you cannot reliably provide accurate results."))).SetTitle("Best Practices")))
+               .FlatSection(Stack().Children(
+                    Card(VStack().WS().Children(
+                    SampleSubTitle("Basic SearchBoxes"),
+                    VStack().Children(
+                        Label("Default Search").SetContent(SearchBox("Search...").OnSearch((s, e) => Toast().Information($"Searched for: {e}"))),
+                        Label("Underlined").SetContent(SearchBox("Search site").Underlined().OnSearch((s, e) => Toast().Information($"Searched for: {e}"))),
+                        Label("Disabled").Disabled().SetContent(SearchBox("Search disabled").Disabled())
+                    ),
+                    SampleSubTitle("Search Behaviors"),
+                    VStack().Children(
+                        Label("Search as you type").SetContent(
+                            SearchBox("Type something...")
+                                .SearchAsYouType()
+                                .OnSearch((s, e) => searchAsYouType.Text = string.IsNullOrEmpty(e) ? "Waiting for input..." : $"Current search: {e}")
+                        ),
+                        searchAsYouType,
+                        Label("Waiting on a slow search (hover it to cancel)").SetContent(slowSearch),
+                        slowSearchStatus
+                    ),
+                    SampleSubTitle("Loading Data"),
+                    VStack().Children(
+                        Label("Progress bar").SetContent(loadingBox.Id("searchbox-loading")),
+                        HStack().Children(
+                            Button("Load (determinate)").Id("searchbox-load-determinate").OnClick(() => StartDeterminateLoad()),
+                            Button("Indeterminate").Id("searchbox-load-indeterminate").OnClick(() =>
+                            {
+                                window.clearInterval(loadingToken);
+                                loadingBox.ProgressIndeterminate();
+                            }),
+                            Button("Indeterminate while a task runs (3s)").Id("searchbox-load-task").OnClick(() =>
+                            {
+                                window.clearInterval(loadingToken);
+                                loadingBox.HideProgress().ShowProgressWhile(Task.Delay(3000));
+                            }),
+                            Button("Hide").Id("searchbox-load-hide").OnClick(() =>
+                            {
+                                window.clearInterval(loadingToken);
+                                loadingBox.HideProgress();
+                            })),
+                        Label("Underlined, indeterminate").SetContent(SearchBox("Search while loading...").Underlined().ProgressIndeterminate())
+                    ),
+                    SampleSubTitle("Customization"),
+                    VStack().Children(
+                        Label("Custom Icon (Filter)").SetContent(SearchBox("Filter items...").SetIcon(UIcons.Filter)),
+                        Label("No Icon").SetContent(SearchBox("Iconless search").NoIcon()),
+                        Label("Fixed Width (250px)").SetContent(SearchBox("Small search").Width(250.px()))
+                    ),
+                    SampleSubTitle("Rounded SearchBoxes"),
+                    VStack().Children(
+                        SearchBox("Small").Rounded(BorderRadius.Small),
+                        SearchBox("Medium").Rounded(BorderRadius.Medium),
+                        SearchBox("Full").Rounded(BorderRadius.Full)
+                    ),
+                    SampleSubTitle("Keyboard Shortcut"),
+                    VStack().Children(
+                        TextBlock("Press Ctrl+K (or ⌘K on macOS) anywhere on the page to focus the SearchBox below."),
+                        SearchBox("Search...").SetKeyboardShortcut("Ctrl", "K")
+                    )
+                )).SetTitle("Usage")))
+               .SeeAlso(typeof(OmniBoxSample), typeof(SearchableListSample), typeof(CommandPaletteSample), typeof(TextBoxSample), typeof(PickerSample));
+        }
+
+        public HTMLElement Render() => _content.Render();
+    }
+}

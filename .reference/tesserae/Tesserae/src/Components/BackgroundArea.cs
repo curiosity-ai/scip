@@ -1,0 +1,43 @@
+﻿using static Tesserae.UI;
+using static Transpose.Core.dom;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A full-bleed background container used to host a centered card or hero section, typically as the application
+    /// shell.
+    /// </summary>
+    [Transpose.Name("tss.BackgroundArea")]
+    public class BackgroundArea : IComponent, IHasBackgroundColor
+    {
+        private readonly Raw         _raw;
+        private readonly HTMLElement _container;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public BackgroundArea(IComponent content)
+        {
+            _raw       = Raw(content.Render());
+            _container = Div(Att("tss-background-area"), _raw.Render());
+        }
+
+        /// <summary>
+        /// Sets the content rendered inside the surface.
+        /// </summary>
+        public BackgroundArea Content(IComponent content)
+        {
+            _raw.Content(content);
+            return this;
+        }
+        /// <summary>
+        /// Gets or sets the CSS background of the component.
+        /// </summary>
+        public string Background { get => _container.style.backgroundColor; set => _container.style.backgroundColor = value; }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public HTMLElement Render() => _container;
+    }
+}

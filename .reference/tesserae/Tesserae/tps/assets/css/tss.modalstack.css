@@ -1,0 +1,213 @@
+/* ModalStack — a deck of modals: the newest sheet in front, the ones it came from peeking behind it. */
+
+/* A .tss-layer hides itself and lets its content opt back in - the deck, its backdrop and its trail all
+   want to be seen. */
+.tss-modalstack {
+    position: fixed;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+}
+
+.tss-modalstack > * {
+    visibility: visible;
+}
+
+.tss-modalstack-scrim {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--tss-overlay-light);
+    backdrop-filter: saturate(0);
+    cursor: pointer;
+}
+
+.tss-dark-mode .tss-modalstack-scrim {
+    background-color: var(--tss-overlay-dark);
+}
+
+/* Every sheet occupies the same cell, so the deck is one centered pile rather than a row. The room at the
+   top is what the strips of the sheets behind and the trail take (ModalStack.Arrange sets it): the sheet
+   in front is centred below it, so lifting the ones behind never carries them off the window. */
+.tss-modalstack-sheets {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    /* One definite track filling the area, not an auto one: an auto track grows to the tallest sheet, and
+       a sheet's percentage max-height would then resolve against itself rather than against the window. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    place-items: center;
+    padding-top: var(--tss-modalstack-deck-room, 0px);
+    pointer-events: none;
+}
+
+.tss-modalstack-sheets > .tss-modalstack-sheet {
+    grid-row: 1;
+    grid-column: 1;
+    pointer-events: auto;
+    transform-origin: top center;
+    transition: transform 180ms ease-in-out, opacity 180ms ease-in-out, width 180ms ease-in-out, height 180ms ease-in-out;
+    will-change: transform;
+}
+
+/* With sheets behind it, the sheet in front is fitted to what is left of the window below their room - a
+   size it asked for is what it gets on its own, but a deck has to fit. The full-screen modal keeps its
+   own, more specific, rule. */
+.tss-modalstack-deep > .tss-modalstack-front {
+    max-width: calc(100% - 32px) !important;
+    max-height: calc(100% - 32px) !important;
+}
+
+/* A sheet behind takes the front sheet's footprint, whatever size it opened at, so the deck is one pile
+   with the same strip of each sheet showing - and gets its own size back when it is in front again. The
+   footprint is measured (ModalStack.MeasureFront) rather than styled, because the front sheet's size is
+   whatever its author set, in whatever unit. */
+.tss-modalstack-sheets > .tss-modalstack-peek {
+    width: var(--tss-modalstack-front-width, auto) !important;
+    height: var(--tss-modalstack-front-height, auto) !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    max-height: none !important;
+}
+
+/* The sheets behind the front one show only the strip of themselves that clears it, so they read as a
+   deck rather than as several things open at once. Colour drains out of them as well, so the sheet in
+   front is the only one that reads as live. */
+.tss-modalstack-sheet.tss-modalstack-peek {
+    overflow: hidden;
+    filter: saturate(.15);
+}
+
+/* Nothing below the strip is ever seen, so it is taken out of the layout rather than drawn and covered:
+   a peeking sheet costs its header and nothing else. */
+.tss-modalstack-peek > .tss-modal-content,
+.tss-modalstack-peek > .tss-modal-footer {
+    display: none;
+}
+
+/* Commands belong to the sheet you are on, not the ones behind it. */
+.tss-modalstack-peek .tss-modal-header-commands,
+.tss-modalstack-peek .tss-modal-left-header-commands {
+    display: none;
+}
+
+/* What is left of the header is squeezed into that strip, so its title sits alone at the top of the
+   sheet rather than being cut through the middle by the one in front. */
+.tss-modalstack-peek > .tss-modal-header {
+    box-sizing: border-box;
+    height: var(--tss-modalstack-peek-strip, 34px);
+    min-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+
+    /* The sheet stays solid - a deck is cards, not glass - so what fades with how far back a sheet is
+       is the one thing it still shows. */
+    opacity: var(--tss-modalstack-peek-fade, 1);
+}
+
+.tss-modalstack-peek > .tss-modal-header > .tss-modal-header-content {
+    padding: 0;
+    align-items: center;
+}
+
+/* The way back to a sheet behind: a button covering it, of which only that strip is ever reachable. */
+.tss-modalstack-tab {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: inherit;
+    background: transparent;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.tss-modalstack-tab:hover {
+    background: color-mix(in srgb, var(--tss-primary-background-color) 8%, transparent);
+}
+
+.tss-modalstack-tab:focus-visible {
+    outline: 2px solid var(--tss-primary-background-color);
+    outline-offset: -2px;
+}
+
+/* What led to what, above the deck. Only this says the chain has been truncated. */
+.tss-modalstack-trail {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex-wrap: nowrap;
+    overflow: hidden;
+    padding: 0 16px;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--tss-secondary-foreground-color);
+    pointer-events: none;
+    z-index: 50;
+}
+
+.tss-modalstack-trail > * {
+    pointer-events: auto;
+}
+
+.tss-modalstack-trail-more,
+.tss-modalstack-trail-separator {
+    flex-grow: 0;
+    flex-shrink: 0;
+    pointer-events: none;
+}
+
+.tss-modalstack-trail-current,
+.tss-modalstack-trail-step {
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tss-modalstack-trail-current {
+    color: var(--tss-default-foreground-color);
+    font-weight: 600;
+}
+
+.tss-modalstack-trail-step {
+    margin: 0;
+    padding: 1px 6px;
+    border: none;
+    border-radius: var(--tss-border-radius-sm);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.tss-modalstack-trail-step:hover {
+    background: var(--tss-default-background-hover-color);
+    color: var(--tss-default-foreground-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tss-modalstack-sheets > .tss-modalstack-sheet {
+        transition: none;
+    }
+}

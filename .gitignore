@@ -1,35 +1,11 @@
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Editor directories
+# Build output of the C# solution (anchored so .reference/ is unaffected)
+/artifacts/
+/src/**/bin/
+/src/**/obj/
+/tests/**/bin/
+/tests/**/obj/
+TestResults/
+*.user
+.vs/
 .idea/
-.vscode/
-
-# Test binary, built with `go test -c`
-*.test
-
-# CLI binary
-/scip
-
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-**/node_modules/
-.bin/
-**/target/
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-dist-newstyle/
-
-# Nix output
-/result
-
-# TypeScript bindings build output
-/bindings/typescript/dist/
-
-vendor/
+/*.scip

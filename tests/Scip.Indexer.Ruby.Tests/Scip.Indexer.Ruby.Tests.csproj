@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA1861</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\Indexers\Scip.Indexer.Ruby\Scip.Indexer.Ruby.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" LinkBase="Fixtures" />
+  </ItemGroup>
+</Project>

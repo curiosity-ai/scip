@@ -1,0 +1,68 @@
+﻿using System;
+using System.Threading.Tasks;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+using static Tesserae.Tests.Samples.SamplesHelper;
+
+namespace Tesserae.Tests.Samples
+{
+    [SampleDetails(Group = SampleGroup.Utilities, Order = 30, Icon = UIcons.HourglassEnd, Description = "Defer, with progress while it loads")]
+    public class DeferWithProgressSample : IComponent, ISample
+    {
+        private readonly IComponent content;
+
+        public DeferWithProgressSample()
+        {
+            var container = VStack();
+            var trigger = new SettableObservable<int>(0);
+
+            content = SectionStack().Secondary()
+               .SampleTitle(typeof(DeferWithProgressSample), UIcons.Clock, "A utility to defer execution with progress")
+               .FlatSection(Stack().Children(
+                    Card(VStack().WS().Children(
+                    TextBlock("DeferWithProgress extends Defer by providing a way to report progress during the async operation. This is useful for long-running tasks where you want to show a progress bar or status updates."))).SetTitle("Overview"),
+                    Card(VStack().WS().Children(
+                    TextBlock("Click the button below to start a simulated long-running task with progress reporting."),
+                    Button("Start Task").Primary().OnClick(() =>
+                    {
+                        container.Clear();
+                        container.Add(
+                            DeferWithProgress(async (reportProgress) =>
+                            {
+                                for (int i = 0; i <= 100; i+=10)
+                                {
+                                    reportProgress(i / 100f, $"Processing step {i/10} of 10...");
+                                    await Task.Delay(500);
+                                }
+                                return TextBlock("Task Completed Successfully!").Success().SemiBold().P(10);
+                            }) // Using default loadMessageGenerator
+                        );
+                    }),
+                    container
+                )).SetTitle("Basic Usage")))
+               .FlatSection(Stack().Children(
+                    Card(VStack().WS().Children(
+                    TextBlock("DeferWithProgress can also observe values and refresh when they change, passing the observed values to the async generator."),
+                    Button("Trigger Refresh").Primary().OnClick(() => trigger.Value++),
+                    DeferWithProgress(trigger, async (val, progress) =>
+                    {
+                        progress(0, "Starting...");
+                        await Task.Delay(500);
+                        progress(0.3f, "Step 1 complete");
+                        await Task.Delay(500);
+                        progress(0.6f, "Step 2 complete");
+                        await Task.Delay(500);
+                        progress(0.9f, "Finalizing...");
+                        await Task.Delay(500);
+                        return TextBlock($"Loaded content for trigger value: {val}").Success();
+                    })
+                )).SetTitle("Usage with Observables")))
+               .SeeAlso(typeof(DeferSample), typeof(ProgressIndicatorSample), typeof(ProgressModalSample), typeof(SkeletonSample));
+        }
+
+        public HTMLElement Render()
+        {
+            return content.Render();
+        }
+    }
+}

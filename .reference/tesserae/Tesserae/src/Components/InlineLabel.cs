@@ -1,0 +1,502 @@
+using System;
+using System.Threading.Tasks;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// One small piece of metadata on a line of them: an optional mark - a glyph, an image, or a rounded
+    /// square of colour - followed by optional text. It is what an <see cref="OmniResult{T}"/> footer is
+    /// made of ("Box · 2.4 MB · Marie Lang · Apr 11, 2024"), and it reads the same wherever else a row of
+    /// small facts is drawn.
+    /// <para>
+    /// Every combination is allowed: text alone, a mark alone, or a mark and text together. Whatever the
+    /// mark is, it is drawn at one size, so a line of them stays on one baseline however they were built.
+    /// </para>
+    /// <para>
+    /// A label can be pressed (<see cref="OnClick(Action{InlineLabel})"/>) or be a real link
+    /// (<see cref="SetHref(string, bool)"/>) - it is an anchor either way, so a link is middle-clickable
+    /// and shows its address in the status bar rather than being a div pretending.
+    /// </para>
+    /// <para>
+    /// A label can also be built from a task (<see cref="InlineLabel(Func{InlineLabel, Task})"/>) for a
+    /// fact that has to be looked up. It draws as a skeleton rectangle while the task runs, and if the
+    /// task ends without giving it anything to say it takes itself out of the document - along with the
+    /// slot it was standing in, so a line of facts doesn't keep a gap for something that turned out not
+    /// to exist.
+    /// </para>
+    /// </summary>
+    [Transpose.Name("tss.InlineLabel")]
+    public class InlineLabel : ComponentBase<InlineLabel, HTMLAnchorElement>
+    {
+        /// <summary>
+        /// The element properties the last tooltip check is remembered under: what it was asked about (the
+        /// label's width and text) and whether the text was all on screen then.
+        /// </summary>
+        private const string TOOLTIP_CHECKED_FOR_PROPERTY = "_tssTooltipCheckedFor";
+        private const string TOOLTIP_TEXT_FITS_PROPERTY   = "_tssTooltipTextFits";
+
+        private readonly HTMLElement _mark;
+        private readonly HTMLElement _text;
+
+        private Action<InlineLabel> _clickHandler;
+
+        /// <summary>
+        /// Initializes a new instance of this class showing the given text, with no mark before it.
+        /// </summary>
+        public InlineLabel(string text = null)
+        {
+            _mark = Span(Att("tss-inlinelabel-mark"));
+            _text = Span(Att("tss-inlinelabel-text"));
+
+            InnerElement = A(Att("tss-inlinelabel"), _mark, _text);
+
+            SetText(text);
+            NoMark();
+
+            AttachClick();
+
+            OverflowTooltip.EnsureListening();
+
+            InnerElement.addEventListener("click", e =>
+            {
+                if (_clickHandler is null) return;
+
+                //A label that is also a link leaves Ctrl/Cmd-click and Shift-click to the browser, so it
+                //opens where it points in a new tab or window instead of running the handler.
+                if (IsModifiedLinkClick(InnerElement, e.As<MouseEvent>())) return;
+
+                StopEvent(e);
+
+                _clickHandler(this);
+            });
+
+            InnerElement.addEventListener("keydown", e =>
+            {
+                if (_clickHandler is null) return;
+
+                var keyboardEvent = e.As<KeyboardEvent>();
+
+                if (keyboardEvent.key != "Enter" && keyboardEvent.key != " ") return;
+
+                StopEvent(keyboardEvent);
+
+                _clickHandler(this);
+            });
+        }
+
+        /// <summary>
+        /// Initializes a new instance of this class that looks up what it says. It draws as a skeleton
+        /// rectangle while <paramref name="load"/> runs, and takes itself - and the slot it stands in -
+        /// out of the document if the task ends without setting any text or mark on it.
+        /// </summary>
+        public InlineLabel(Func<InlineLabel, Task> load) : this(deferred: load is object)
+        {
+            if (load is null) return;
+
+            RunDeferred(load).FireAndForget();
+        }
+
+        /// <summary>
+        /// Initializes a new instance of a derived label that looks up what it says, drawing as a skeleton
+        /// rectangle from the moment it is built but starting nothing: a subclass has fields of its own to
+        /// assign before its lookup can run, so it calls <see cref="RunDeferred"/> once it is ready.
+        /// <para>
+        /// Pass false to build a plain label - the same thing <see cref="InlineLabel(string)"/> gives you.
+        /// </para>
+        /// </summary>
+        protected InlineLabel(bool deferred) : this((string)null)
+        {
+            if (deferred) ShowSkeleton();
+        }
+
+        /// <summary>
+        /// Runs a lookup for what the label says: it shows the skeleton while the task runs and, if the task
+        /// ends without giving it anything to say, takes the label - and the slot it stands in - out of the
+        /// document. Safe to call more than once, which is how a label refreshes itself: every run starts
+        /// from nothing, so one that used to say something and now finds nothing goes away rather than
+        /// keeping what it said last time.
+        /// </summary>
+        protected Task RunDeferred(Func<InlineLabel, Task> load)
+        {
+            if (load is null) return Task.CompletedTask;
+
+            //The skeleton goes on before the reset, so clearing the text doesn't briefly mark the label as
+            //having nothing to say while it is in fact still looking.
+            ShowSkeleton();
+
+            SetText(null);
+            NoMark();
+
+            return LoadAsync(load);
+        }
+
+        private void ShowSkeleton()
+        {
+            InnerElement.classList.add("tss-inlinelabel-loading");
+
+            if (InnerElement.querySelector(".tss-inlinelabel-skeleton") is null)
+            {
+                InnerElement.appendChild(Span(Att("tss-inlinelabel-skeleton tss-skeleton tss-skeleton-animated")));
+            }
+        }
+
+        /// <summary>Gets the text the label shows, or null when it is a mark on its own.</summary>
+        public string Text { get; private set; }
+
+        /// <summary>Whether the label has nothing to show - no text, and no mark.</summary>
+        public bool IsEmpty => string.IsNullOrEmpty(Text) && _mark.style.display == "none";
+
+        /// <summary>
+        /// Says on the element itself whether there is anything in it, so a container can leave out what
+        /// stands for an empty label - the dot an <see cref="OmniResult{T}"/> footer puts before every
+        /// entry - without having to look inside it. A label that is still loading is not empty: it is
+        /// showing a skeleton in place of what it is about to say.
+        /// </summary>
+        private void UpdateEmptyClass()
+        {
+            InnerElement.UpdateClassIf(IsEmpty && !InnerElement.classList.contains("tss-inlinelabel-loading"), "tss-inlinelabel-empty");
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public override HTMLElement Render() => InnerElement;
+
+        /// <summary>
+        /// Sets the text the label shows. A null or empty value leaves the label as its mark alone.
+        /// <para>
+        /// Text holding a <c>:</c> or a <c>&gt;</c> is read as a path - "Projects: Brake sensors", "Box &gt;
+        /// sample-files" - and drawn as two parts with an angle glyph between them, in place of the first
+        /// such character. A label short of room ellipsizes from the end, so the part after the angle goes
+        /// first and the part before it only once even that is gone: it still says where the thing is
+        /// before it says less of what it is. Pass
+        /// false to <paramref name="splitAtSeparator"/> to draw the text exactly as given - a time, a ratio.
+        /// </para>
+        /// </summary>
+        public InlineLabel SetText(string text, bool splitAtSeparator = true)
+        {
+            Text = text;
+
+            //A path draws its separator as a glyph, so the element's own text would read "BoxFiles" in the tooltip
+            //that the label gets when it is cut short
+            InnerElement[OverflowTooltip.TextProperty] = text;
+
+            var isEmpty = string.IsNullOrEmpty(text);
+
+            ClearChildren(_text);
+            _text.classList.remove("tss-inlinelabel-text-split");
+
+            if (!isEmpty)
+            {
+                if (splitAtSeparator && TrySplitAtSeparator(text, out var head, out var tail))
+                {
+                    _text.classList.add("tss-inlinelabel-text-split");
+
+                    _text.appendChild(Span(Att("tss-inlinelabel-text-head", text: head)));
+                    _text.appendChild(I(UIcons.AngleSmallRight, UIconsWeight.Regular, "tss-inlinelabel-text-separator"));
+                    _text.appendChild(Span(Att("tss-inlinelabel-text-tail", text: tail)));
+                }
+                else
+                {
+                    _text.textContent = text;
+                }
+            }
+
+            _text.style.display = isEmpty ? "none" : "";
+
+            UpdateEmptyClass();
+
+            return this;
+        }
+
+        /// <summary>
+        /// Splits the text at the first <c>&gt;</c>, dropping the separator and the spaces around
+        /// it. Text with nothing on one side of the separator ("Note:", "&gt; quoted") is not a path, and is
+        /// left whole.
+        /// </summary>
+        private static bool TrySplitAtSeparator(string text, out string head, out string tail)
+        {
+            head = null;
+            tail = null;
+
+            var backAngle = text.IndexOf('<');
+            var angle = text.IndexOf('>');
+
+            if (angle < 0) return false;
+
+            if (angle > backAngle && backAngle >=0) return false;
+
+            head = text.Substring(0, angle).Trim();
+            tail = text.Substring(angle + 1).Trim();
+
+            return head.Length > 0 && tail.Length > 0;
+        }
+
+        /// <summary>
+        /// A tooltip that only repeats the label's own text adds nothing while all of that text is on
+        /// screen, so it is skipped until a narrower layout cuts the text short. A tooltip saying anything
+        /// else - the date behind "2 days ago", what a code stands for, the words a mark on its own stands
+        /// for - is never redundant, however much room the label has.
+        /// </summary>
+        internal bool IsTooltipRedundant(string tooltipText)
+        {
+            if (string.IsNullOrWhiteSpace(Text)) return false;
+
+            if (CollapseWhitespace(tooltipText) != CollapseWhitespace(Text)) return false;
+
+            //Asked on every hover, so measure only when the label's width or text changed since last time:
+            //a layout that cuts the text short, or stops cutting it, changes the width of the label too.
+            var checkedFor = InnerElement.getBoundingClientRect().As<DOMRect>().width + "|" + Text;
+
+            if (InnerElement[TOOLTIP_CHECKED_FOR_PROPERTY].As<string>() != checkedFor)
+            {
+                InnerElement[TOOLTIP_CHECKED_FOR_PROPERTY] = checkedFor;
+                InnerElement[TOOLTIP_TEXT_FITS_PROPERTY]   = IsTextFullyShown();
+            }
+
+            return InnerElement[TOOLTIP_TEXT_FITS_PROPERTY].As<bool>();
+        }
+
+        /// <summary>
+        /// Whether none of the text is cut off: the text span ellipsizes (a path's two parts and the angle
+        /// between them are one run of text in it, so its end - the tail, then the head - is what goes),
+        /// and the label itself can spill past its own box when even that isn't enough.
+        /// </summary>
+        private bool IsTextFullyShown()
+        {
+            return !IsClipped(InnerElement) && !IsClipped(_text);
+        }
+
+        private static bool IsClipped(HTMLElement element) => OverflowTooltip.IsWiderThanItsBox(element);
+
+        private static string CollapseWhitespace(string text)
+        {
+            return string.Join(" ", (text ?? string.Empty).Split(new[] { ' ', '\t', '\r', '\n', ' ' }, StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        /// <summary>
+        /// Puts a glyph before the text, in a colour of its own when one is given - the accent a node type,
+        /// a source or a status is known by - and in the label's own colour otherwise.
+        /// </summary>
+        public InlineLabel SetIcon(UIcons icon, UIconsWeight weight = UIconsWeight.Regular, string color = null)
+        {
+            var glyph = I(icon, weight, "tss-inlinelabel-glyph");
+
+            if (!string.IsNullOrEmpty(color)) glyph.style.color = color;
+
+            return SetMark(glyph, "tss-inlinelabel-mark-icon");
+        }
+
+        /// <summary>
+        /// Puts a component of the host's own before the text - an <see cref="Avatar"/>, an emoji, a
+        /// <see cref="Spinner"/>. It is drawn at the same size as any other mark.
+        /// </summary>
+        public InlineLabel SetIcon(IComponent iconOrImage)
+        {
+            return iconOrImage is null ? NoMark() : SetMark(iconOrImage.Render(), "tss-inlinelabel-mark-image");
+        }
+
+        /// <summary>
+        /// Puts an image before the text - a source's logo, a favicon, a thumbnail - fitted into the mark
+        /// rather than cropped.
+        /// </summary>
+        public InlineLabel SetImage(string url)
+        {
+            return string.IsNullOrEmpty(url) ? NoMark() : SetMark(Image(Att("tss-inlinelabel-image", src: url)), "tss-inlinelabel-mark-image");
+        }
+
+        /// <summary>
+        /// Puts a small rounded square of the given colour before the text - the quiet way a source, a
+        /// status or a category is named.
+        /// </summary>
+        public InlineLabel SetColor(string color)
+        {
+            if (string.IsNullOrEmpty(color)) return NoMark();
+
+            SetMark(null, "tss-inlinelabel-mark-color");
+
+            _mark.style.background = color;
+
+            return this;
+        }
+
+        /// <summary>
+        /// Marks the label as something a model supplied - a suggested tag, a confidence, "summarised by
+        /// AI". It takes the AI tint, border and accent, and unless it already has a mark it gets the
+        /// Sparkles glyph; pass false to leave it as text alone.
+        /// <para>
+        /// In an <see cref="OmniResult{T}"/> footer the pill's chrome comes off as it does for every label,
+        /// so an AI label there is a fact in the accent colour rather than a chip among plain type.
+        /// </para>
+        /// </summary>
+        /// <param name="strongEffect">Asks for the louder form of the AI styling. A custom theme that tones the AI
+        /// look down (e.g. Tesserae.Themes.Curiosity) brings more of it back for this element; the default theme
+        /// draws both forms the same today. Sets the <c>tss-ai-strong</c> class.</param>
+        public InlineLabel AI(bool withSparklesIcon = true, bool strongEffect = false)
+        {
+            InnerElement.classList.add("tss-ai");
+            InnerElement.UpdateClassIf(strongEffect, "tss-ai-strong");
+
+            //A mark of its own wins: a label that already shows an avatar or a source logo says where it
+            //came from more precisely than Sparkles would.
+            if (withSparklesIcon && _mark.style.display == "none") SetIcon(UIcons.Sparkles);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Takes the mark away, leaving the text alone.
+        /// </summary>
+        public InlineLabel NoMark()
+        {
+            ClearChildren(_mark);
+
+            _mark.className        = "tss-inlinelabel-mark";
+            _mark.style.background = string.Empty;
+            _mark.style.display    = "none";
+
+            UpdateEmptyClass();
+
+            return this;
+        }
+
+        /// <summary>
+        /// Makes the label a real link to the given address, opened in a new tab when asked. Pass null to
+        /// make it plain text again.
+        /// </summary>
+        public InlineLabel SetHref(string href, bool openInNewTab = false)
+        {
+            if (string.IsNullOrEmpty(href))
+            {
+                InnerElement.removeAttribute("href");
+                InnerElement.removeAttribute("target");
+                InnerElement.removeAttribute("rel");
+            }
+            else
+            {
+                InnerElement.setAttribute("href", href);
+
+                if (openInNewTab)
+                {
+                    InnerElement.setAttribute("target", "_blank");
+                    InnerElement.setAttribute("rel",    "noopener noreferrer");
+                }
+            }
+
+            return UpdateInteractive();
+        }
+
+        /// <summary>
+        /// Registers what pressing the label does. It takes a tab stop of its own and answers Enter and
+        /// Space; the click stops at the label, so pressing it never also counts as a click on the row it
+        /// sits in. Pass null to make it plain text again.
+        /// </summary>
+        public InlineLabel OnClick(Action<InlineLabel> onClick)
+        {
+            _clickHandler = onClick;
+
+            return UpdateInteractive();
+        }
+
+        /// <summary>
+        /// Registers a click handler in the shape every other component takes. The label becomes pressable
+        /// the same way <see cref="OnClick(Action{InlineLabel})"/> makes it.
+        /// </summary>
+        public override InlineLabel OnClick(ComponentEventHandler<InlineLabel, MouseEvent> onClick, bool clearPrevious = true)
+        {
+            base.OnClick(onClick, clearPrevious);
+
+            return UpdateInteractive(force: onClick is object);
+        }
+
+        private InlineLabel SetMark(HTMLElement content, string markClass)
+        {
+            ClearChildren(_mark);
+
+            _mark.className        = "tss-inlinelabel-mark " + markClass;
+            _mark.style.background = string.Empty;
+            _mark.style.display    = "";
+
+            if (content is object) _mark.appendChild(content);
+
+            UpdateEmptyClass();
+
+            return this;
+        }
+
+        private async Task LoadAsync(Func<InlineLabel, Task> load)
+        {
+            try
+            {
+                await load(this);
+            }
+            finally
+            {
+                InnerElement.classList.remove("tss-inlinelabel-loading");
+
+                foreach (var skeleton in InnerElement.querySelectorAll(".tss-inlinelabel-skeleton"))
+                {
+                    skeleton.As<HTMLElement>().remove();
+                }
+
+                UpdateEmptyClass();
+
+                //Nothing to say: the label takes its slot with it rather than leaving a gap in the line.
+                if (IsEmpty) this.WhenMounted(RemoveWithItsSlot);
+            }
+        }
+
+        /// <summary>
+        /// Takes the label out of the document along with whatever is standing in for it in its container:
+        /// a footer's entry, or - when the label is all a details row has to show - the whole row, label
+        /// cell included. Anywhere else, just the label goes.
+        /// </summary>
+        private void RemoveWithItsSlot()
+        {
+            var parent = InnerElement.parentElement;
+
+            if (parent is object)
+            {
+                //A details row whose value is this label alone has nothing left to say either
+                if (parent.classList.contains("tss-detailsgrid-value")
+                 && parent.childElementCount <= 1
+                 && parent.parentElement is object
+                 && parent.parentElement.classList.contains("tss-detailsgrid-row"))
+                {
+                    parent.parentElement.remove();
+                    return;
+                }
+
+                if (parent.classList.contains("tss-omniresult-footer-entry"))
+                {
+                    parent.remove();
+                    return;
+                }
+            }
+
+            //In a stack the label is its own item, so taking the label out takes the slot with it. There is
+            //no wrapper left to climb to - and climbing to the stack itself would take the siblings along.
+            InnerElement.remove();
+        }
+
+        private InlineLabel UpdateInteractive(bool force = false)
+        {
+            var isInteractive = force || _clickHandler is object || InnerElement.hasAttribute("href");
+
+            InnerElement.UpdateClassIf(isInteractive, "tss-inlinelabel-interactive");
+
+            if (isInteractive)
+            {
+                InnerElement.setAttribute("tabindex", "0");
+            }
+            else
+            {
+                InnerElement.removeAttribute("tabindex");
+            }
+
+            return this;
+        }
+    }
+}

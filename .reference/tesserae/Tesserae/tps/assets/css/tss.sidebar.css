@@ -1,0 +1,1867 @@
+/* Sidebar */
+
+
+.tss-sidebar {
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    width: 250px;
+    -webkit-user-select: none;
+    user-select: none;
+    background: var(--tss-sidebar-background-color);
+    transition: 0.3s width ease-out;
+}
+
+    .tss-sidebar .tss-default-component-margin {
+        margin: 0px !important;
+    }
+
+    .tss-sidebar.tss-sidebar-closed {
+        max-width: unset;
+        width: 54px !important;
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+
+        .tss-sidebar.tss-sidebar-closed .tss-sidebar-commands,
+        .tss-sidebar.tss-sidebar-closed .tss-sidebar-badges {
+            display: none !important;
+        }
+
+    .tss-sidebar > .tss-stack-item:nth-child(2) {
+        margin: 0px 0px 0px -12px !important;
+        width: calc(100% + 20px) !important;
+        padding-left: 12px !important;
+    }
+
+
+.tss-sidebar-header {
+}
+
+.tss-sidebar-middle {
+}
+
+.tss-sidebar-footer {
+}
+
+.tss-sidebar-btn-open {
+    isolation: isolate;
+    position: relative;
+    margin-bottom: 2px;
+}
+
+.tss-sidebar-btn {
+    margin-bottom: 2px;
+}
+
+/* Rounded (pill) variant for SidebarButton/SidebarSearchBox, enabled via .Rounded().
+   These are rendered 1.5x the normal 28px sidebar button height (= 42px). */
+.tss-sidebar-searchbox.tss-sidebar-searchbox-rounded .tss-searchbox-container {
+    height: 42px;
+    padding-left: 12px;
+    padding-right: 6px;
+}
+
+/* The search box on the collapsed rail is its icon in a tile the size of the rail's buttons, which is what
+   the open box turns back into when the rail opens. */
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-closed-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: calc(54px - 8px);
+    height: 28px;
+    margin-bottom: 2px;
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-closed-icon:hover {
+    background: var(--tss-default-background-hover-color);
+    color: var(--tss-default-foreground-hover-color);
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-closed-icon.tss-sidebar-searchbox-rounded {
+    border-radius: var(--tss-border-radius-full);
+    height: 42px;
+}
+
+.tss-sidebar-btn-open.tss-sidebar-btn-rounded > .tss-btn,
+.tss-sidebar-btn-open.tss-sidebar-btn-rounded > a > .tss-btn {
+    height: 42px !important;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-rounded.tss-sidebar-btn.tss-btn {
+    height: 42px !important;
+}
+
+.tss-sidebar-btn-open .tss-sidebar-btn {
+    width: 100%;
+    z-index: 1;
+}
+
+.tss-sortable-ghost > .tss-sidebar-btn-open > .tss-btn,
+.tss-sortable-ghost > .tss-sidebar-btn-open > a > .tss-btn
+ {
+    color: var(--tss-primary-foreground-active-color-root);
+    background-color: rgba(var(--tss-primary-background-active-color-root), 0.5);
+    /*color: var(--tss-default-foreground-hover-color);*/
+}
+
+/* Where you are: outlined in the primary colour and filled with a wash of it, rather than with the same
+   grey a hover uses - so the selection still reads while the pointer is somewhere else in the list. Only
+   the border *colour* is set: every sidebar button already carries a 1px transparent border, so turning
+   it on shifts nothing. :not(.tss-disabled) is what carries this past .tss-btn-default's own colours. */
+.tss-sidebar-btn.tss-sidebar-selected:not(.tss-disabled),
+.tss-sidebar-btn-open.tss-sidebar-selected > .tss-sidebar-btn:not(.tss-disabled),
+.tss-sidebar-btn-open.tss-sidebar-selected > a > .tss-sidebar-btn:not(.tss-disabled) {
+    color: var(--tss-primary-background-color);
+    border-color: var(--tss-primary-background-color);
+    background: rgba(var(--tss-primary-background-color-root), 0.1);
+}
+
+/* Hovering the selected item deepens its own wash instead of handing it the plain grey hover, which
+   would drop the outline and make the current item look like any other while the pointer is on it. */
+.tss-sidebar-btn.tss-sidebar-selected:not(.tss-disabled):hover,
+.tss-sidebar-btn-open.tss-sidebar-selected > .tss-sidebar-btn:not(.tss-disabled):hover,
+.tss-sidebar-btn-open.tss-sidebar-selected > a > .tss-sidebar-btn:not(.tss-disabled):hover,
+.tss-sidebar-btn-open.tss-sidebar-selected:hover > .tss-sidebar-btn:not(.tss-disabled),
+.tss-sidebar-btn-open.tss-sidebar-selected:hover > a > .tss-sidebar-btn:not(.tss-disabled) {
+    color: var(--tss-primary-background-color);
+    border-color: var(--tss-primary-background-color);
+    background: rgba(var(--tss-primary-background-color-root), 0.18);
+}
+
+/* A row with commands stays hovered for as long as its commands are on screen. The strip is a sibling of
+   the label's button rather than part of it - it has to be, so that clicking a command is not clicking
+   the row - so the button's own :hover ends the moment the pointer reaches a command, and the row fell
+   back to its resting colour under the very icons the pointer was aiming at. That took the scrim further
+   down with it, which is the button's own background colour: the label reappeared from under the
+   commands as you reached for them. Both come back here, in the two states where the strip is drawn and
+   the pointer is not on the label: anywhere else on the row, and a command's menu left open with the
+   pointer gone.
+
+   These are the plain hover colours, so this is scoped to rows drawn as default buttons; the selected
+   row is excluded because the rule above already covers it - it lists the same wrapper-hover shape for
+   the same reason - and a Primary or Danger row keeps its own variant's hover. Rows without commands are
+   not in this: nothing can come between the pointer and their button. */
+.tss-sidebar-has-commands:not(.tss-sidebar-selected):hover > .tss-btn-default.tss-sidebar-btn:not(.tss-disabled),
+.tss-sidebar-has-commands:not(.tss-sidebar-selected):hover > a > .tss-btn-default.tss-sidebar-btn:not(.tss-disabled),
+.tss-sidebar-has-commands:not(.tss-sidebar-selected):has(> .tss-sidebar-commands.tss-sidebar-command-menu-is-open) > .tss-btn-default.tss-sidebar-btn:not(.tss-disabled),
+.tss-sidebar-has-commands:not(.tss-sidebar-selected):has(> .tss-sidebar-commands.tss-sidebar-command-menu-is-open) > a > .tss-btn-default.tss-sidebar-btn:not(.tss-disabled) {
+    color: var(--tss-default-foreground-hover-color);
+    background-color: var(--tss-default-background-hover-color);
+    border-color: var(--tss-default-background-hover-color);
+}
+
+/* The wash sits on a dark surface here, so the same alpha would barely register - it takes about twice
+   as much of the primary to read as a tint rather than as noise. The text is lifted towards white for
+   the same reason: a fill colour chosen to sit behind white text is, by definition, too dark to be text
+   on a dark surface itself. The border stays the primary - it is a line on the background, not type. */
+.tss-dark-mode .tss-sidebar-btn.tss-sidebar-selected:not(.tss-disabled),
+.tss-dark-mode .tss-sidebar-btn-open.tss-sidebar-selected > .tss-sidebar-btn:not(.tss-disabled),
+.tss-dark-mode .tss-sidebar-btn-open.tss-sidebar-selected > a > .tss-sidebar-btn:not(.tss-disabled) {
+    color: color-mix(in srgb, var(--tss-primary-background-color) 55%, white);
+    background: rgba(var(--tss-primary-background-color-root), 0.22);
+}
+
+.tss-dark-mode .tss-sidebar-btn.tss-sidebar-selected:not(.tss-disabled):hover,
+.tss-dark-mode .tss-sidebar-btn-open.tss-sidebar-selected > .tss-sidebar-btn:not(.tss-disabled):hover,
+.tss-dark-mode .tss-sidebar-btn-open.tss-sidebar-selected > a > .tss-sidebar-btn:not(.tss-disabled):hover,
+.tss-dark-mode .tss-sidebar-btn-open.tss-sidebar-selected:hover > .tss-sidebar-btn:not(.tss-disabled),
+.tss-dark-mode .tss-sidebar-btn-open.tss-sidebar-selected:hover > a > .tss-sidebar-btn:not(.tss-disabled) {
+    color: color-mix(in srgb, var(--tss-primary-background-color) 55%, white);
+    background: rgba(var(--tss-primary-background-color-root), 0.32);
+}
+
+/* A nav is a group, not a destination - it reads as selected while something inside it is open - so it
+   gets the plain hover the rest of the rail uses rather than the primary wash a selected button gets.
+   The wash also recoloured everything inside the header, which on a dark surface left the glyph the same
+   colour as the fill it sat on; the hover colours are the ones the buttons are drawn for. */
+.tss-sidebar-nav.tss-sidebar-selected > .tss-sidebar-nav-header.tss-sidebar-btn-open > .tss-btn:not(.tss-disabled),
+.tss-sidebar-nav.tss-sidebar-selected > .tss-sidebar-nav-header.tss-sidebar-btn-open > a > .tss-btn:not(.tss-disabled),
+.tss-sidebar-nav.tss-sidebar-selected > .tss-btn:not(.tss-disabled),
+.tss-sidebar-nav.tss-sidebar-selected > a > .tss-btn:not(.tss-disabled) {
+    color: var(--tss-default-foreground-hover-color);
+    border-color: var(--tss-default-background-hover-color);
+    background: var(--tss-default-background-hover-color);
+}
+
+
+.tss-sidebar-btn-open > .tss-btn,
+.tss-sidebar-btn-open > a > .tss-btn {
+    /* Positioned so that the scrim that fades the label out under the commands (further down) is placed
+       against the row's own right edge, and so that the z-index this button is given a few rules above
+       finally means something. */
+    position: relative;
+    text-align: left !important;
+    padding: 0px;
+    margin: 0px;
+    border-radius: 6px;
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    flex-direction: row;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    padding-left: 8px;
+    padding-right: 8px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    height: 28px !important;
+    min-height: unset !important;
+}
+
+.tss-sidebar-btn-open > .tss-sidebar-commands > .tss-btn > i {
+    width: 24px;
+    display: inline-block;
+    text-align: center;
+    min-width: 24px !important;
+    margin-top: 2px;
+}
+
+/* A flex item's automatic minimum size is its own content, so without min-width the row that holds the
+   image and the name refuses to shrink and paints straight through whatever padding the row reserved -
+   which is why a long name ran under the commands rather than stopping before them. */
+.tss-sidebar-btn.tss-btn > .tss-btn-with-image {
+    display: inline-flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+}
+
+    .tss-sidebar-btn.tss-btn > .tss-btn-with-image > .tss-image {
+        width: 24px !important;
+        height: 24px !important;
+        object-fit: contain;
+        min-width: 24px !important;
+        padding:2px;
+    }
+
+/* The ellipsis the plain button gets from `.tss-sidebar-btn.tss-btn > span` never reached this one: with
+   an image icon the name is a grandchild, not a direct child. */
+.tss-sidebar-btn.tss-btn .tss-btn-with-image > .tss-image + span:not(:empty) {
+    margin-left: 10px;
+    min-width: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn.tss-btn,
+.tss-sidebar .tss-sidebar-commands-line .tss-btn,
+.tss-sidebar-commands-line-extra .tss-btn {
+    text-align: center !important;
+    padding: 0px;
+    margin: 0px;
+    border-radius: 6px;
+    width: calc(54px - 8px);
+    display: inline-flex;
+    align-items: center;
+    flex-direction: row;
+    justify-content: center;
+    flex-wrap: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    height: 28px !important;
+    min-height: unset !important;
+    margin-bottom: 2px !important;
+    /* The middle section scrolls; a tile that could shrink was squashed to a few pixels on a rail with
+       more tiles than the screen has room for. */
+    flex-shrink: 0;
+}
+
+.tss-sidebar-btn.tss-btn > i,
+.tss-sidebar .tss-sidebar-commands-line .tss-sidebar-command.tss-btn > i,
+.tss-sidebar .tss-sidebar-commands-line a > .tss-sidebar-command.tss-btn > i,
+.tss-sidebar-commands-line-extra .tss-sidebar-command.tss-btn > i,
+.tss-sidebar-commands-line-extra a > .tss-sidebar-command.tss-btn > i {
+    width: 24px;
+    display: inline-block;
+    text-align: center;
+    min-width: 24px !important;
+    margin-top: 2px;
+}
+
+.tss-sidebar-btn.tss-btn > span {
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+
+.tss-sidebar-btn.tss-btn > .tss-image,
+.tss-sidebar .tss-sidebar-commands-line .tss-sidebar-command.tss-btn > .tss-image,
+.tss-sidebar .tss-sidebar-commands-line a > .tss-sidebar-command.tss-btn > .tss-image,
+.tss-sidebar-commands-line-extra .tss-sidebar-command.tss-btn > .tss-image,
+.tss-sidebar-commands-line-extra a > .tss-sidebar-command.tss-btn > .tss-image {
+    width: 24px !important;
+    height: 24px !important;
+    object-fit: contain;
+    min-width: 24px !important;
+}
+
+/* Commands sit over the row rather than in it, and a row gives up room for them for exactly as long as
+   they are *permanently* drawn - always-open, or selected. Those two are chrome: the strip is part of
+   what the row looks like, so the label is laid out beside it and truncates before it, and nothing moves
+   while the pointer travels the list.
+
+   Hover is not in this list on purpose. There the strip comes and goes under the pointer, and taking the
+   room away from the label as it appears would re-lay out and ellipsis the name of every row the pointer
+   crosses. The label keeps the full width of the rail and fades out where the strip begins instead - see
+   the scrim below.
+
+   The row carries how wide its own strip is (--tss-sidebar-commands-width, written from the command
+   count when the row is built) and reads the same inset the strip is positioned by, so the room is
+   exact for two commands and for five and a skin that moves the strip in from the edge only has to say
+   so once. tss-sidebar-has-commands is what keeps a row without any out of this: it has no width to
+   read. The label runs right up to the strip rather than stopping short of it - each command is a 22px
+   box around a 16px glyph, so the gap is already drawn, and every pixel spent here is a word the name
+   loses.
+
+   The room is a box, not padding. The button is the flex line the icon and the name sit on, and its
+   ::after is free in these two states (the scrim below only ever draws under the pointer), so it becomes
+   the last item on that line, as wide as the strip and unable to shrink; the name, which can, stops
+   before it. It used to be the button's padding-right, and a row's padding is the first thing a skin
+   restates - a theme that wants its rows inset writes `padding: 0 10px` on the row's button with its
+   body class in front, which outranks any rule here - so the room silently collapsed to the skin's
+   padding and the name ran under the commands again, in that theme only. A box in the line cannot be
+   lost that way: a skin's padding-right now sits outside it and can only make the name shorter. The
+   button's own right padding is zeroed here because the strip is the gutter; a skin that keeps some
+   gives up that many pixels of name and nothing else. */
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands.tss-sidebar-commands-always-open > .tss-btn,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands.tss-sidebar-commands-always-open > a > .tss-btn,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands.tss-sidebar-selected > .tss-btn,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands.tss-sidebar-selected > a > .tss-btn {
+    padding-right: 0;
+}
+
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands.tss-sidebar-commands-always-open > .tss-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands.tss-sidebar-commands-always-open > a > .tss-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands.tss-sidebar-selected > .tss-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands.tss-sidebar-selected > a > .tss-btn::after {
+    content: "";
+    display: block;
+    flex: 0 0 calc(var(--tss-sidebar-commands-width, 0px) + var(--tss-sidebar-commands-inset, 4px));
+    align-self: stretch;
+    pointer-events: none;
+}
+
+.tss-sidebar-commands {
+    position: absolute;
+    right: var(--tss-sidebar-commands-inset, 4px);
+    display: none;
+    z-index: 2;
+    top: 3px;
+    flex-wrap: nowrap;
+}
+
+/* What pays for hover not reserving room above: the label runs the full width of the rail and fades out
+   into the row where the commands begin, so a long name reads to its last legible letter and gives the
+   glyphs a clean field to sit on. It is a fade to the row's own colour rather than a blur of what is
+   behind it: a blur leaves the ink it smears, which reads as a grey stain a shade darker than the row,
+   and it stops at an edge of its own where the icons - opaque, in the row's colour - then cut a hard
+   line out of it. The scrim below has nothing to leave behind and no edge to see: it is exactly the
+   colour it covers, arriving from nothing. The blur also cost more than the row it was drawn on: a
+   backdrop-filter behind a mask took the whole rail off subpixel antialiasing, so every label in the
+   sidebar - not just the one being hovered - was rendered a little softer for it.
+
+   background-color: inherit is what makes that true in every theme and every state without naming a
+   colour: the pseudo-element takes the button's own computed background, so it is the hover grey while
+   the row is hovered and the dark equivalent in dark mode. The corollary is that a row with no
+   background of its own has nothing to fade into, which is why this is drawn in exactly the states the
+   rule further up keeps a row hovered for - the pointer anywhere on the row, and a command's menu left
+   open - and not in the two where the row reserves room for its commands instead.
+
+   It sits inside the button rather than over the row so that the button's overflow: hidden clips it to
+   the row's rounded corners, and so that right: 0 is the row's own right edge whatever the row's width -
+   which is what keeps a short name, whose text ends long before any of this, untouched.
+
+   It is matched on tss-sidebar-btn rather than on tss-btn so that it cannot reach a nav header's chevron,
+   which is a button of its own next to the label and draws itself with an ::after.
+
+   Two numbers: the width reaches from the row's right edge past the strip (--tss-sidebar-commands-width,
+   written from the command count when the row is built, plus the inset the strip is positioned by) and
+   on for --tss-sidebar-label-fade further, and the mask spends exactly that fade going from nothing to
+   opaque - so the scrim is at full strength at the first pixel of the strip and invisible where the name
+   is still worth reading. Rows that keep room for their commands are excluded rather than relying on the
+   scrim landing on empty space: their background can be a wash rather than a solid, and painting it
+   twice would show. */
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands:not(.tss-sidebar-commands-always-open):not(.tss-sidebar-selected):hover > .tss-sidebar-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands:not(.tss-sidebar-commands-always-open):not(.tss-sidebar-selected):hover > a > .tss-sidebar-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands:not(.tss-sidebar-commands-always-open):not(.tss-sidebar-selected):has(> .tss-sidebar-commands.tss-sidebar-command-menu-is-open) > .tss-sidebar-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-commands:not(.tss-sidebar-commands-always-open):not(.tss-sidebar-selected):has(> .tss-sidebar-commands.tss-sidebar-command-menu-is-open) > a > .tss-sidebar-btn::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: calc(var(--tss-sidebar-commands-width, 0px) + var(--tss-sidebar-commands-inset, 4px) + var(--tss-sidebar-label-fade, 28px));
+    background-color: inherit;
+    pointer-events: none;
+    -webkit-mask-image: linear-gradient(to right, transparent, black var(--tss-sidebar-label-fade, 28px));
+    mask-image: linear-gradient(to right, transparent, black var(--tss-sidebar-label-fade, 28px));
+}
+
+/* A badge is drawn over the row's right edge the way the commands are, but it is chrome the row shows at
+   rest rather than something the pointer brings in - so the name has to give way to it at rest too, or a
+   long one runs underneath the glyph and the two read as one smudge: a shared-space icon sitting on the
+   last letters of the space's name. It gives way by fading out, not by stopping short - see the scrim
+   below.
+
+   Where the commands' width is a count this stylesheet can multiply out, a badge's is not: it is an icon,
+   or "+3", or "+1,204". It is measured off the badge instead and written to --tss-sidebar-badge-width
+   when the row is built (TrackBadgeWidth in SidebarButton.cs), re-measured whenever its text changes.
+   Rows keep their own value, so a count and an icon in the same sidebar each get exactly what they need.
+   Both the room kept at rest and the scrim drawn under the pointer are sized from it. */
+.tss-sidebar-badges {
+    position: absolute;
+    right: var(--tss-sidebar-badge-inset, 4px);
+    display: flex;
+    align-items: center;
+    z-index: 2;
+    top: 0;
+    bottom: 0;
+    flex-wrap: nowrap;
+}
+
+/* At rest the row keeps room for its badge and the name ellipsises before it - a fade drawn permanently
+   reads as a name that has been smudged rather than as one that carries on, and every row in the rail
+   wears it at once. Under the pointer the room is given back and the scrim takes over: the name runs the
+   full width, fades out where the badge (or the commands that replace it) begins, and a few more letters
+   of it are legible for as long as you are looking at that row. It is the same scrim the commands
+   already get - the row's own background, masked from nothing to opaque over --tss-sidebar-label-fade,
+   so it is at full strength at the badge's first pixel and invisible where the name is still worth
+   reading; the ellipsis falls inside the opaque part and is never seen.
+
+   background-color: inherit is what makes the colour right in every theme and state without naming one,
+   and drawing this only under the pointer is what makes it safe: a row being hovered always has a
+   background of its own to fade into, where a row at rest has none. The selected row is left out for the
+   other half of that - its fill is a wash of the primary rather than a solid, and a scrim taking the same
+   wash would paint it twice and show - so it keeps its room and its ellipsis whether the pointer is on it
+   or not. Rows whose commands are permanently drawn keep the room those reserve instead. */
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-selected):not(.tss-sidebar-commands-always-open):not(:hover) > .tss-btn,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-selected):not(.tss-sidebar-commands-always-open):not(:hover) > a > .tss-btn,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-has-commands).tss-sidebar-selected > .tss-btn,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-has-commands).tss-sidebar-selected > a > .tss-btn {
+    padding-right: 0;
+}
+
+/* The same box the commands' reservation is (see there for why it is a box and not padding), as wide as
+   the badge plus its inset and the gap the name keeps from it. */
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-selected):not(.tss-sidebar-commands-always-open):not(:hover) > .tss-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-selected):not(.tss-sidebar-commands-always-open):not(:hover) > a > .tss-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-has-commands).tss-sidebar-selected > .tss-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-has-commands).tss-sidebar-selected > a > .tss-btn::after {
+    content: "";
+    display: block;
+    flex: 0 0 calc(var(--tss-sidebar-badge-width, 0px) + var(--tss-sidebar-badge-inset, 4px) + var(--tss-sidebar-badge-gap, 6px));
+    align-self: stretch;
+    pointer-events: none;
+}
+
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-selected):not(.tss-sidebar-commands-always-open):hover > .tss-sidebar-btn::after,
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-has-badge:not(.tss-sidebar-selected):not(.tss-sidebar-commands-always-open):hover > a > .tss-sidebar-btn::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: calc(var(--tss-sidebar-badge-width, 0px) + var(--tss-sidebar-badge-inset, 4px) + var(--tss-sidebar-label-fade, 28px));
+    background-color: inherit;
+    pointer-events: none;
+    -webkit-mask-image: linear-gradient(to right, transparent, black var(--tss-sidebar-label-fade, 28px));
+    mask-image: linear-gradient(to right, transparent, black var(--tss-sidebar-label-fade, 28px));
+}
+
+.tss-sidebar-btn-open:hover > .tss-sidebar-commands,
+.tss-sidebar-btn-open.tss-sidebar-commands-always-open > .tss-sidebar-commands,
+.tss-sidebar-command-menu-is-open.tss-sidebar-commands,
+.tss-sidebar-btn-open.tss-sidebar-selected > .tss-sidebar-commands {
+    display: flex;
+}
+
+/* The commands take the badge's place while they are drawn, so the badge steps aside for them - with
+   visibility rather than display, so that the room the row reserved for it above stays reserved and the
+   name does not re-lay out and re-ellipsis as the pointer crosses the list. A row with no commands has
+   nothing to step aside for and keeps its badge under the pointer. */
+.tss-sidebar-btn-open.tss-sidebar-has-commands:hover > .tss-sidebar-badges,
+.tss-sidebar-btn-open.tss-sidebar-has-commands.tss-sidebar-commands-always-open > .tss-sidebar-badges,
+.tss-sidebar-btn-open.tss-sidebar-has-commands:has(> .tss-sidebar-commands.tss-sidebar-command-menu-is-open) > .tss-sidebar-badges,
+.tss-sidebar-btn-open.tss-sidebar-has-commands.tss-sidebar-selected > .tss-sidebar-badges {
+    visibility: hidden;
+}
+
+
+.tss-sidebar-badges > .tss-btn {
+    min-height: unset;
+    min-width: 20px;
+    height: 16px;
+    border-radius: 6px;
+    font-size: 10px;
+    padding: 0px 4px;
+    line-height: 16px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.tss-sidebar-commands > .tss-sidebar-command.tss-btn,
+.tss-sidebar-commands > a > .tss-sidebar-command.tss-btn {
+    padding: 0px;
+    margin: 0px;
+    min-height: unset !important;
+    height: 22px !important;
+    width: 22px !important;
+    border-radius: 5px;
+}
+
+    .tss-sidebar-commands > .tss-sidebar-command.tss-btn:not(:last-child),
+    .tss-sidebar-commands > a:not(:last-child) > .tss-sidebar-command.tss-btn {
+        margin-right: 4px !important;
+    }
+
+/* A command's glyph is centred by the button's own flexbox, so it takes neither the 24px box nor the 2px
+   nudge the rail's rows give an icon that has a label beside it to line up with - inside a 22px square
+   those two put the glyph a pixel low and a pixel wider than the button it sits in, which is visible as
+   soon as two commands with different glyphs sit side by side. */
+    .tss-sidebar-commands > .tss-sidebar-command.tss-btn > i,
+    .tss-sidebar-commands > a > .tss-sidebar-command.tss-btn > i {
+        width: auto;
+        min-width: 0 !important;
+        margin-top: 0;
+        line-height: 1;
+    }
+
+/* A command is a control *on* a row, so its own hover has to read as one step deeper than the row's -
+   otherwise the two are the same grey and the button the pointer is on disappears into the row under it,
+   which is what a gear beside a hovered account row was.
+
+   The step is toward the text colour rather than to a named token, so it darkens in a light theme and
+   lightens in a dark one, and it is mixed into whatever the row is painted with (`inherit` would take the
+   command's own background, so the row's colour is named through the same variables the row uses). The
+   two default tokens are not a pair that can do this: the "active" default is *lighter* than the "hover"
+   default in both themes. */
+    .tss-sidebar-commands > .tss-sidebar-command.tss-btn.tss-btn-default:not(.tss-disabled):hover,
+    .tss-sidebar-commands > a > .tss-sidebar-command.tss-btn.tss-btn-default:not(.tss-disabled):hover {
+        background-color: color-mix(in srgb, var(--tss-default-foreground-color) 16%, var(--tss-default-background-hover-color));
+        border-color: transparent;
+    }
+
+    .tss-sidebar-commands > .tss-sidebar-command.tss-btn.tss-btn-default:not(.tss-disabled):active,
+    .tss-sidebar-commands > a > .tss-sidebar-command.tss-btn.tss-btn-default:not(.tss-disabled):active {
+        background-color: color-mix(in srgb, var(--tss-default-foreground-color) 26%, var(--tss-default-background-hover-color));
+        border-color: transparent;
+    }
+
+/* The same for a command whose menu is open, which is a command still "on" even with the pointer gone. */
+    .tss-sidebar-commands.tss-sidebar-command-menu-is-open > .tss-sidebar-command.tss-btn.tss-btn-default:not(.tss-disabled),
+    .tss-sidebar-commands.tss-sidebar-command-menu-is-open > a > .tss-sidebar-command.tss-btn.tss-btn-default:not(.tss-disabled) {
+        background-color: color-mix(in srgb, var(--tss-default-foreground-color) 16%, var(--tss-default-background-hover-color));
+        border-color: transparent;
+    }
+
+    .tss-sidebar-commands > .tss-sidebar-command.tss-btn > .tss-image,
+    .tss-sidebar-commands > a > .tss-sidebar-command.tss-btn > .tss-image {
+        padding: 0px;
+        margin: 0px;
+        height: 16px !important;
+        width: 16px !important;
+        margin:calc(22px - 16px);
+        object-fit: contain;
+    }
+    
+.tss-sidebar-badge-transparent-icon{
+    opacity: 0.3;
+}
+    
+.tss-sidebar-nav-header {
+    position: relative;
+    isolation: isolate;
+}
+
+
+    .tss-sidebar-nav-header > .tss-sidebar-nav-arrow.tss-btn {
+        position: absolute;
+        padding: 0px;
+        margin: 0px;
+        min-height: unset !important;
+        height: 18px !important;
+        width: 18px !important;
+        border-radius: 4px;
+        top: 5px;
+        left: 11px;
+    }
+
+.tss-sidebar-nav-arrow.tss-btn:after {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 4px;
+    width: 8px;
+    height: 8px;
+    border: solid rgba(var(--tss-secondary-foreground-color-root), 0.4);
+    border-width: 0 1px 1px 0;
+    transform: rotate(-45deg);
+    transition: transform 0.15s linear;
+    z-index:2;
+}
+
+.tss-sidebar-nav:hover .tss-sidebar-nav-arrow.tss-btn:after {
+    border: solid rgba(var(--tss-secondary-foreground-color-root), 0.8);
+    border-width: 0 1px 1px 0;
+}
+
+.tss-sidebar-nav-header.tss-sidebar-btn-open > .tss-btn i,
+.tss-sidebar-nav-header.tss-sidebar-btn-open > a > .tss-btn i {
+    width: 24px !important;
+    min-width: 24px;
+    text-align: center;
+    margin-top:1px;
+}
+
+
+.tss-sidebar-nav-header.tss-sidebar-btn-open > .tss-btn > .tss-btn-with-image > .tss-image,
+.tss-sidebar-nav-header.tss-sidebar-btn-open > a > .tss-btn > .tss-btn-with-image > .tss-image {
+    width: 24px !important;
+    height: 24px !important;
+    min-width: 24px;
+}
+
+.tss-sidebar-nav-header.tss-sidebar-btn-open.tss-sidebar-nav-header-empty > .tss-sidebar-nav-arrow {
+    display: none;
+}
+
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty) > .tss-sidebar-nav-arrow {
+    visibility: hidden;
+}
+
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):hover > .tss-sidebar-nav-arrow,
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):focus-within > .tss-sidebar-nav-arrow {
+    visibility: visible;
+}
+
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):hover > .tss-btn > i,
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):hover > a > .tss-btn > i,
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):hover > .tss-btn > .tss-btn-with-image > .tss-image,
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):hover > a > .tss-btn > .tss-btn-with-image > .tss-image,
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):focus-within > .tss-btn > i,
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):focus-within > a > .tss-btn > i,
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):focus-within > .tss-btn > .tss-btn-with-image > .tss-image,
+.tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):focus-within > a > .tss-btn > .tss-btn-with-image > .tss-image {
+    visibility: hidden;
+}
+
+
+.tss-sidebar-btn-has-icon-click.tss-btn > i,
+.tss-sidebar-btn-has-icon-click.tss-btn > .tss-btn-with-image > .tss-image {
+    height: 24px;
+    line-height: 24px;
+}
+
+    .tss-sidebar-btn-has-icon-click.tss-btn > i:hover,
+    .tss-sidebar-btn-has-icon-click.tss-btn > .tss-btn-with-image > .tss-image:hover {
+        background-color: rgba(0,0,0,0.3);
+        border-radius: 6px;
+        height: 24px;
+        line-height: 24px;
+    }
+
+
+
+.tss-sidebar-nav.tss-sidebar-nav-open > .tss-sidebar-nav-header.tss-sidebar-btn-open > .tss-sidebar-nav-arrow.tss-btn:after {
+    transform: translateY(-2px) translateX(2px) rotate(45deg);
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-nav-header:not(.tss-sidebar-nav-header-empty):after {
+    content: "";
+    position: absolute;
+    left: 19px;
+    bottom: -2px;
+    width: 6px;
+    height: 6px;
+    border: solid rgba(var(--tss-secondary-foreground-color-root), 0.4);
+    border-width: 0 1px 1px 0;
+    transform: rotate(-135deg);
+    transition: transform 0.15s linear;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-nav.tss-sidebar-nav-open > .tss-sidebar-nav-header:after {
+    transform: translateY(-3px) rotate(45deg);
+}
+
+.tss-sidebar-command {
+}
+
+
+.tss-sidebar-nav-header {
+}
+
+    .tss-sidebar-nav-header.tss-sidebar-btn-open {
+
+    }
+
+.tss-sidebar-nav-arrow {
+}
+
+
+.tss-sidebar-nav {
+    margin-bottom: 2px;
+}
+
+/* A collapsed group's items are also visibility: hidden - not for the picture, which height and opacity
+   already take care of, but because a zero-height, transparent item is still in the accessibility tree:
+   a screen reader reads it and browser automation finds it, clicks it, and hits whatever is drawn there.
+   The switch waits out the fade on the way closed and is immediate on the way open. */
+.tss-sidebar-nav-children {
+    height: 0px;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: 0.3s opacity ease-in-out, 0.2s transform ease-in-out, 0s visibility linear 0.3s;
+}
+
+.tss-sidebar-nav.tss-sidebar-nav-open > .tss-sidebar-nav-children {
+    height: auto;
+    transform: translateY(0);
+    opacity: 1;
+    visibility: visible;
+    transition: 0.3s opacity ease-in-out, 0.2s transform ease-in-out, 0s visibility;
+}
+
+/* The footer does not shrink, so a nav opened there kept all of its height and took it from the middle:
+   fifteen entries left a few rows of the list on a laptop screen, and on a short window none, with the
+   footer running off the bottom and the sidebar's own commands with it. Opened in the footer, the list
+   scrolls past a share of the window instead (it already clips, so this costs no focus ring). */
+.tss-sidebar-footer .tss-sidebar-nav.tss-sidebar-nav-open > .tss-sidebar-nav-children {
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+.tss-sidebar-nav > .tss-sidebar-nav-children > :first-child {
+        margin-top: 4px;
+    }
+
+
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-nav-children > .tss-stack-item {
+    margin-left: 28px;
+    margin-bottom: 2px;
+}
+
+
+.tss-sidebar-commands-line {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+}
+
+    .tss-sidebar-commands-line.tss-sidebar-commands-line-closed {
+    }
+
+.tss-sidebar-commands-line-extra {
+    display: inline-flex;
+    flex-wrap: nowrap;
+}
+
+    .tss-sidebar-commands-line-extra .tss-btn:not(:last-child) {
+        margin-right: 8px;
+    }
+
+
+.tss-sidebar-btn-light {
+    background: var(--tss-default-background-active-color);
+    border-radius:6px;
+}
+
+/* A command on a hovered row takes the row's hover *foreground* and no fill of its own: the row is
+   already painted with the hover grey, so painting each command with the same grey turned the strip into
+   one indistinct blob on it - two commands side by side read as a single rounded rectangle, and the one
+   under the pointer was indistinguishable from the one beside it. At rest a command is a glyph on the
+   row; its own hover is the step deeper, further up in this file. */
+.tss-sidebar-btn-open:hover > .tss-sidebar-commands > .tss-btn.tss-btn-default {
+    color: var(--tss-default-foreground-hover-color);
+    background-color: transparent;
+}
+
+.tss-sidebar-commands-spacer {
+    width:1px;
+    flex-grow:1;
+}
+
+.tss-sidebar-menu > .tss-sidebar-btn-open > .tss-btn,
+.tss-sidebar-menu > .tss-sidebar-btn-open > a > .tss-btn,
+.tss-sidebar-menu > .tss-sidebar-commands-line > .tss-sidebar-command.tss-btn,
+.tss-sidebar-menu > .tss-sidebar-commands-line > a > .tss-sidebar-command.tss-btn {
+    border: 1px solid transparent;
+    height: 36px !important;
+    min-height: unset;
+    border-radius: 0px;
+    margin: 0px;
+    padding: 0px 12px;
+    min-width: 52px !important;
+}
+
+    .tss-sidebar-menu > .tss-sidebar-btn-open > .tss-btn:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success),
+    .tss-sidebar-menu > .tss-sidebar-btn-open > a > .tss-btn:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success),
+    .tss-sidebar-menu > .tss-sidebar-commands-line > .tss-sidebar-command.tss-btn:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success),
+    .tss-sidebar-menu > .tss-sidebar-commands-line > a > .tss-sidebar-command.tss-btn:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success) {
+        background: var(--tss-tooltip-background-color);
+        color: var(--tss-tooltip-foreground-color);
+        border-color: var(--tss-tooltip-background-color);
+    }
+
+    .tss-sidebar-menu > .tss-sidebar-btn-open > .tss-btn.tss-btn-default:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success):hover,
+    .tss-sidebar-menu > .tss-sidebar-btn-open > a > .tss-btn.tss-btn-default:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success):hover,
+    .tss-sidebar-menu > .tss-sidebar-commands-line > .tss-sidebar-command:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success):hover,
+    .tss-sidebar-menu > .tss-sidebar-commands-line > a > .tss-sidebar-command:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success):hover {
+        color: var(--tss-default-background-hover-color);
+        background: var(--tss-default-foreground-hover-color);
+        border-color: var(--tss-default-foreground-color);
+    }
+
+
+.tss-sidebar-menu > .tss-sidebar-commands-line {
+    padding-bottom: 2px;
+}
+
+.tss-sidebar-menu > *:last-child {
+    padding-bottom: 0px;
+    margin-bottom: 0px !important;
+}
+
+.tippy-box[data-theme~='tss-sidebar-tippy'] {
+    padding: 0px;
+    margin: 0px;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+    .tippy-box[data-theme~='tss-sidebar-tippy'] .tippy-content {
+        padding: 0px;
+        margin: 0px;
+    }
+.tss-sidebar-badge{
+    min-width:20px;
+    padding: 0px;
+}
+
+
+
+@media screen and (min-height: 1000px) {
+    .tss-sidebar-btn-open > .tss-btn,
+    .tss-sidebar-btn-open > a > .tss-btn {
+        height: 36px !important;
+    }
+
+    .tss-sidebar-commands {
+        top: 6px;
+    }
+
+    .tss-sidebar-nav-header > .tss-sidebar-nav-arrow.tss-btn {
+        top: 8px;
+    }
+
+    .tss-sidebar.tss-sidebar-closed .tss-sidebar-btn.tss-btn, .tss-sidebar .tss-sidebar-commands-line .tss-btn, .tss-sidebar-commands-line-extra .tss-btn {
+        height: 36px !important;
+    }
+
+    .tss-sidebar-btn-has-icon-click.tss-btn > i,
+    .tss-sidebar-btn-has-icon-click.tss-btn > .tss-btn-with-image > .tss-image {
+        height: 36px !important;
+        line-height: 36px !important;
+    }
+
+        .tss-sidebar-btn-has-icon-click.tss-btn > i:hover,
+        .tss-sidebar-btn-has-icon-click.tss-btn > .tss-btn-with-image > .tss-image:hover {
+            height: 36px !important;
+            line-height: 36px !important;
+        }
+}
+
+.tss-sidebar-separator {
+    margin-top: 8px;
+    margin-bottom: 4px;
+    margin-left: 4px;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-separator {
+    display: none;
+}
+
+/* SidebarDivider: a rule across the rail, run out past the sidebar's padding to its own edges like the divider
+   .Separated() draws on an identity row - the negative margins are that padding, which differs between the two
+   states. Zero height, so the line is the border and nothing else. */
+.tss-sidebar-divider {
+    height: 0;
+    flex: 0 0 auto;
+    border-top: 1px solid var(--tss-default-border-color);
+    margin: 8px -12px;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-divider {
+    margin-left: -4px;
+    margin-right: -4px;
+}
+
+/* A sidebar row leaves 2px under itself for the next row; above a divider that 2px would add to the divider's own
+   8px and sit the group off centre between two lines, so the divider owns the spacing on both of its sides. */
+.tss-sidebar :has(+ .tss-sidebar-divider) {
+    margin-bottom: 0;
+}
+
+/* The middle is a scroller that already reaches past the rail's left padding but stops short of its right edge, so
+   a line overhanging it on the right would give it a horizontal scrollbar: there it stops at the scroller's edge. */
+.tss-sidebar .tss-sidebar-middle .tss-sidebar-divider {
+    margin-right: 0;
+}
+
+/* Navbar Mode Extensions */
+.tss-navbar {
+    width: 100% !important;
+    height: 52px !important;
+    padding: 8px 16px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    align-items: center;
+    position: relative;
+}
+
+.tss-navbar .tss-sidebar-header {
+    flex-direction: row !important;
+    align-items: center;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.tss-navbar .tss-sidebar-header > * {
+    margin-bottom: 0px !important;
+    margin-right: 8px;
+}
+
+.tss-navbar-burger {
+    background: transparent;
+}
+
+.tss-navbar-burger:hover {
+    background-color: var(--tss-default-background-hover-color);
+    border-radius: 4px;
+}
+
+.tss-navbar-drawer {
+    position: absolute;
+    top: 52px;
+    right: 0;
+    width: 300px;
+    background: var(--tss-sidebar-background-color);
+    box-shadow: -2px 5px 10px rgba(0,0,0,0.2);
+    z-index: 10000;
+    border-bottom-left-radius: 8px;
+    padding: 16px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.tss-navbar-drawer.tss-collapse {
+    display: none !important;
+}
+
+.tss-navbar-drawer .tss-sidebar-middle {
+    margin-bottom: 16px;
+}
+
+/* Page mode (Sidebar.AsPage) - the phone layout where the sidebar and the content next to it take turns
+   filling the screen. The sidebar fills its container and hides everything after it; once a row is picked
+   it hides itself instead, and SidebarPageBar's back button brings it back.
+
+   The width is taken with !important because an app that lets the rail be resized writes it inline, and a
+   page has no rail to resize. */
+.tss-sidebar.tss-sidebar-page {
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0;
+    flex: 1 1 0% !important;
+    transition: none;
+}
+
+    .tss-sidebar.tss-sidebar-page.tss-sidebar-page-hidden {
+        display: none !important;
+    }
+
+    /* Not while the app has taken the sidebar off the page (Collapse), which leaves the content on its own */
+    .tss-sidebar.tss-sidebar-page:not(.tss-sidebar-page-hidden):not(.tss-collapse) ~ * {
+        display: none !important;
+    }
+
+    /* A page is always open, so the brand's command that closes the rail has nothing to do */
+    .tss-sidebar.tss-sidebar-page .tss-sidebar-close-command {
+        display: none !important;
+    }
+
+/* A page is the positioning context of the group panels below - which means nothing between a group and
+   the page may be one: a group is drawn through a Defer, whose wrapper is positioned for its loading message */
+.tss-sidebar.tss-sidebar-page {
+    position: relative;
+}
+
+    .tss-sidebar.tss-sidebar-page .tss-defer-with-loading-msg:has(> .tss-sidebar-nav) {
+        position: static;
+    }
+
+/* A group on a page opens its children as a panel over the sidebar rather than expanding in place
+   (Sidebar.OpenNavOverlay). Closed, a group shows no children at all, and its arrow points the way the
+   panel comes from. While the sidebar is filtered by a search (tss-sidebar-searching) the groups expand in
+   place instead, so every hit is in sight at once. */
+.tss-sidebar-page:not(.tss-sidebar-searching) .tss-sidebar-nav:not(.tss-sidebar-nav-overlay-open) > .tss-sidebar-nav-children {
+    display: none;
+}
+
+.tss-sidebar-page:not(.tss-sidebar-searching) .tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty) > .tss-sidebar-nav-arrow {
+    visibility: visible;
+    left: auto;
+    right: 10px;
+    top: 50%;
+    margin-top: -9px;
+    pointer-events: none;
+}
+
+.tss-sidebar-page:not(.tss-sidebar-searching) .tss-sidebar-nav > .tss-sidebar-nav-header.tss-sidebar-btn-open > .tss-sidebar-nav-arrow.tss-btn:after,
+.tss-sidebar-page:not(.tss-sidebar-searching) .tss-sidebar-nav.tss-sidebar-nav-open > .tss-sidebar-nav-header.tss-sidebar-btn-open > .tss-sidebar-nav-arrow.tss-btn:after {
+    transform: rotate(-45deg);
+}
+
+/* The icon stays where the arrow used to cover it on hover */
+.tss-sidebar-page:not(.tss-sidebar-searching) .tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):hover > .tss-btn > i,
+.tss-sidebar-page:not(.tss-sidebar-searching) .tss-sidebar-nav-header.tss-sidebar-btn-open:not(.tss-sidebar-nav-header-empty):hover > a > .tss-btn > i {
+    visibility: visible;
+    opacity: 1;
+}
+
+.tss-sidebar-nav-overlay-backdrop {
+    position: absolute;
+    inset: 0;
+    background-color: var(--tss-overlay-dark);
+    cursor: pointer;
+    animation: tss-sidebar-nav-overlay-fade 0.2s ease-out;
+}
+
+/* An open panel is lifted out of its group into the sidebar itself (Sidebar.OpenNavOverlay), so however
+   deep it is it has the sidebar's geometry: the full height, and all but the 48px strip on the left. The
+   selectors carry .tss-sidebar-nav-children to outweigh that element's own collapsed styles. */
+.tss-sidebar.tss-sidebar-page > .tss-sidebar-nav-children.tss-sidebar-nav-overlay-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: calc(100% - 48px);
+    height: auto;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: 8px;
+    background: var(--tss-sidebar-background-color);
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), filter 0.2s linear;
+    animation: tss-sidebar-nav-overlay-in 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+    .tss-sidebar.tss-sidebar-page > .tss-sidebar-nav-children.tss-sidebar-nav-overlay-panel > .tss-stack-item {
+        margin-left: 0px;
+    }
+
+    /* A panel behind the front one is a card in the deck: only its step to the left shows, and it drains
+       of colour so the front panel is the one that reads as live - the look of ModalStack's peeking sheets */
+    .tss-sidebar.tss-sidebar-page > .tss-sidebar-nav-children.tss-sidebar-nav-overlay-panel.tss-sidebar-nav-overlay-behind {
+        filter: saturate(.15);
+        overflow-y: hidden;
+    }
+
+.tss-sidebar-nav-overlay-title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--tss-default-border-color);
+}
+
+    .tss-sidebar-nav-overlay-title > .tss-btn.tss-sidebar-nav-overlay-back {
+        width: 40px;
+        min-width: 40px;
+        padding: 0;
+        margin: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+
+.tss-sidebar-nav-overlay-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: var(--tss-font-weight-semibold);
+    font-size: var(--tss-font-size-smallplus);
+    color: var(--tss-default-foreground-color);
+}
+
+    .tss-sidebar-nav-overlay-label.tss-sidebar-nav-overlay-label-action {
+        cursor: pointer;
+    }
+
+@keyframes tss-sidebar-nav-overlay-in {
+    from { transform: translateX(100%); }
+    to   { transform: translateX(0); }
+}
+
+@keyframes tss-sidebar-nav-overlay-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tss-sidebar-nav-overlay-backdrop,
+    .tss-sidebar.tss-sidebar-page > .tss-sidebar-nav-children.tss-sidebar-nav-overlay-panel {
+        animation: none;
+        transition: none;
+    }
+}
+
+/* The bar the content carries while a sidebar is a page: back, brand, title, commands. SidebarPageBar
+   collapses itself while its sidebar is not a page, so it can stay mounted on a desktop layout. */
+.tss-sidebar-page-bar {
+    height: 48px;
+    min-height: 48px;
+    padding: 0px 8px 0px 4px;
+    gap: 4px;
+    background: var(--tss-default-background-color);
+    border-bottom: 1px solid var(--tss-default-border-color);
+    box-sizing: border-box;
+}
+
+    .tss-sidebar-page-bar .tss-btn.tss-sidebar-page-bar-back {
+        min-width: 40px;
+        width: 40px;
+        height: 40px;
+        min-height: 40px !important;
+        padding: 0px;
+        background: transparent;
+        box-shadow: none;
+    }
+
+        .tss-sidebar-page-bar .tss-btn.tss-sidebar-page-bar-back > i {
+            font-size: 18px;
+        }
+
+    .tss-sidebar-page-bar-brand {
+        max-height: 32px;
+        overflow: hidden;
+    }
+
+    .tss-sidebar-page-bar-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: var(--tss-font-size-smallplus);
+    }
+
+/* Sidebar shift (sliding into a child sidebar)
+
+   When a child sidebar is mounted, the sidebar sections move into a track that holds the main
+   panel and the child panel side by side. The track slides horizontally by one full width, and
+   the panel that ends up out of view is hidden once the transition is over.
+
+   The horizontal padding moves from the sidebar to the panels so that the off-screen panel is
+   fully clipped instead of peeking into the padding area. The child panel doesn't need it: the
+   nested .tss-sidebar brings its own. */
+.tss-sidebar.tss-sidebar-has-shift {
+    overflow: hidden;
+    padding-left: 0px;
+    padding-right: 0px;
+}
+
+    .tss-sidebar.tss-sidebar-has-shift > .tss-stack-item {
+        display: flex;
+        min-height: 0;
+    }
+
+.tss-sidebar-shift-track {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    transform: translateX(0);
+    /* Half the sidebar's own open/close time: shifting into an interface and back is a move between two
+       places that are already there, so it wants to feel immediate rather than animated. Kept in step with
+       Sidebar.SIDEBAR_SHIFT_TRANSITION_TIME, which times the hiding of whichever panel left. */
+    transition: 0.15s transform ease-out;
+}
+
+    .tss-sidebar-shift-track.tss-sidebar-shifted {
+        transform: translateX(-100%);
+    }
+
+/* Panels are absolutely positioned so that hiding one doesn't move the other */
+.tss-sidebar-shift-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+    .tss-sidebar-shift-panel.tss-sidebar-shift-panel-child {
+        left: 100%;
+    }
+
+    .tss-sidebar-shift-panel.tss-sidebar-shift-panel-hidden {
+        display: none;
+    }
+
+.tss-sidebar-shift-panel-main {
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-shift-panel-main {
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+/* Same full-bleed middle section as .tss-sidebar > .tss-stack-item:nth-child(2) */
+.tss-sidebar-shift-panel-main > .tss-stack-item:nth-child(2) {
+    margin: 0px -12px !important;
+    width: calc(100% + 24px) !important;
+    padding-left: 12px !important;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-shift-panel-main > .tss-stack-item:nth-child(2) {
+    margin: 0px -4px !important;
+    width: calc(100% + 8px) !important;
+    padding-left: 4px !important;
+}
+
+/* The nested child sidebar fills its panel and lets the hosting sidebar own width and background */
+.tss-sidebar-shift-panel-child > .tss-sidebar {
+    width: 100% !important;
+    max-width: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-top: 0px;
+    padding-bottom: 0px;
+    background: transparent;
+    transition: none;
+}
+
+/* SidebarSegmentedPivot styles */
+.tss-sidebar-segmentedpivot-wrapper-open {
+    margin-left: 8px;
+    margin-right: 8px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.tss-sidebar-segmentedpivot-wrapper-open .tss-segmentedpivot-titlebar {
+    width: 100%;
+}
+
+.tss-sidebar-segmentedpivot-wrapper-open .tss-segmentedpivot-tab {
+    flex-grow: 1;
+    text-align: center;
+    display: inline-flex;
+    justify-content: center;
+}
+
+.tss-sidebar-segmentedpivot-wrapper-closed {
+    margin-left: 4px;
+    margin-right: 4px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    overflow: hidden;
+}
+
+
+.tss-sidebar-segmentedpivot-wrapper-closed .tss-segmentedpivot-titlebar {
+    flex-direction: column !important;
+    padding: 2px;
+}
+
+
+.tss-sidebar-segmentedpivot-wrapper-closed .tss-segmentedpivot-tab {
+    padding: 4px 4px;
+    margin-bottom: 2px;
+    flex-grow: 1;
+    text-align: center;
+    min-width: 20px;
+}
+
+.tss-sidebar-segmentedpivot-wrapper-closed .tss-segmentedpivot-tab:last-child {
+    margin-bottom: 0px;
+}
+
+.tss-sidebar-segmentedpivot-wrapper-closed .tss-segmentedpivot-tab {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tss-sidebar-segmentedpivot-wrapper-open .tss-segmentedpivot-tab {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tss-sidebar-segmentedpivot-wrapper-closed .tss-segmentedpivot-tab {
+    padding: 4px 4px;
+    margin-bottom: 2px;
+    flex-grow: 1;
+    text-align: center;
+    min-width: 20px;
+    overflow: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+    word-break: keep-all;
+}
+
+.tss-sidebar-segmentedpivot-wrapper-closed .tss-segmentedpivot-tab:last-child {
+    margin-bottom: 0px;
+}
+
+/* A tab whose title had an icon is that icon alone on the rail (SidebarPivot.Add), in a tile the size of the
+   rail's other tiles, with the title's words in its tooltip. */
+.tss-sidebar-segmentedpivot-wrapper-closed .tss-segmentedpivot-tab.tss-segmentedpivot-tab-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 28px;
+    padding: 0;
+    flex-grow: 0;
+}
+
+/* A button drawn with a field's outline -------------------------------------------------------------- */
+
+/* See SidebarButton.Outlined. The rail's own action borrows the field's border and surface so that it and
+   the search box it stands next to read as a pair of controls, not as a button beside a form field. */
+.tss-sidebar-btn-open > .tss-btn.tss-sidebar-btn-outlined,
+.tss-sidebar-btn-open > a > .tss-btn.tss-sidebar-btn-outlined {
+    border-color: var(--tss-default-border-color);
+    background: var(--tss-secondary-background-color);
+}
+
+.tss-sidebar-btn-open > .tss-btn.tss-sidebar-btn-outlined:hover,
+.tss-sidebar-btn-open > a > .tss-btn.tss-sidebar-btn-outlined:hover {
+    border-color: var(--tss-dark-border-color);
+    background: var(--tss-default-background-hover-color);
+}
+
+/* Around a single glyph on the closed rail an outline is just a box. */
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-open > .tss-btn.tss-sidebar-btn-outlined,
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-open > a > .tss-btn.tss-sidebar-btn-outlined {
+    border-color: transparent;
+    background: none;
+}
+
+/* A button dressed as a search field ---------------------------------------------------------------- */
+
+/* What is on the rail is a way in, not an input - see SidebarButton.AsSearchBox. On top of the outline
+   above it takes the field's muted label, so it reads as where a search starts rather than as an action,
+   and it keeps the button's behaviour. */
+.tss-sidebar-btn-searchbox > .tss-btn.tss-sidebar-btn-searchbox-button,
+.tss-sidebar-btn-searchbox > a > .tss-btn.tss-sidebar-btn-searchbox-button {
+    height: 40px !important;
+    color: var(--tss-secondary-foreground-color);
+    font-weight: var(--tss-font-weight-regular);
+}
+
+/* The shortcut that presses a button ---------------------------------------------------------------- */
+
+/* See SidebarButton.SetKeyboardShortcut, and AsSearchBox, which shows the chip without binding the key.
+   Room at the end for the chip, and the positioning context the chip below is placed against. */
+.tss-sidebar-btn-open > .tss-btn.tss-sidebar-btn-has-shortcut,
+.tss-sidebar-btn-open > a > .tss-btn.tss-sidebar-btn-has-shortcut {
+    position: relative;
+    padding-right: 44px;
+}
+
+/* The chip is placed rather than laid out, so it is always at the end and always whole - a label longer
+   than the room reserved for it above ends up running under it, which is the better of the two failures.
+   The offset is the rounded search box's own, so a button and a box stacked on a rail line up. */
+.tss-sidebar-btn-shortcut {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+
+/* The keys keep their own grey plate on a filled button - see tss.kbd.css - but the separator between them
+   is text on the fill, not a key, so it takes the label's colour rather than staying grey on blue. */
+.tss-sidebar-btn-open .tss-btn-primary .tss-sidebar-btn-shortcut .tss-kbd-separator,
+.tss-sidebar-btn-open .tss-btn-danger .tss-sidebar-btn-shortcut .tss-kbd-separator,
+.tss-sidebar-btn-open .tss-btn-success .tss-sidebar-btn-shortcut .tss-kbd-separator {
+    color: inherit;
+}
+
+
+.tss-sidebar-btn-open .tss-btn-warning .tss-sidebar-btn-shortcut .tss-kbd-separator{
+    color: inherit;
+}
+
+/* On the closed rail there is only the glyph, and nowhere for the chip to sit beside it. */
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-shortcut {
+    display: none;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-open > .tss-btn.tss-sidebar-btn-has-shortcut,
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-btn-open > a > .tss-btn.tss-sidebar-btn-has-shortcut {
+    padding-right: 0;
+}
+
+/* Hide the + between keys for shortcuts shown in the sidebar so they're more compact*/
+.tss-sidebar .tss-kbd-separator {
+    display:none;
+}
+/* ...and the same chip only while the row is pointed at ---------------------------------------------- */
+
+/* See SidebarButton.ShortcutOnlyOnHover and SidebarSearchBox.ShortcutOnlyOnHover. On a rail where most rows
+   carry a key, every chip at once is a column of noise beside the labels, while one chip on the row under the
+   pointer is still how the key gets found. Faded rather than removed: the room it takes stays reserved, so no
+   label re-flows as it comes back. Focus counts as a hover, so a row reached by tabbing - or a box holding the
+   caret - shows its key too. The class sits on the open row, which both items share. */
+.tss-sidebar-btn-open.tss-sidebar-shortcut-on-hover .tss-sidebar-btn-shortcut,
+.tss-sidebar-btn-open.tss-sidebar-shortcut-on-hover .tss-searchbox-shortcut {
+    opacity: 0;
+    transition: opacity 0.167s ease 0s;
+}
+
+.tss-sidebar-btn-open.tss-sidebar-shortcut-on-hover:hover .tss-sidebar-btn-shortcut,
+.tss-sidebar-btn-open.tss-sidebar-shortcut-on-hover:focus-within .tss-sidebar-btn-shortcut,
+.tss-sidebar-btn-open.tss-sidebar-shortcut-on-hover:hover .tss-searchbox-shortcut,
+.tss-sidebar-btn-open.tss-sidebar-shortcut-on-hover:focus-within .tss-searchbox-shortcut {
+    opacity: 1;
+}
+
+/* Identity rows - SidebarBrand at the top of the rail, SidebarProfile at the bottom.
+
+   Both are the same shape: a picture, a name, an optional second line under it, and the commands that
+   belong to whatever the row names, drawn at rest rather than under the pointer. They are twice the height
+   of an ordinary row because they carry two lines of text, and they are the reason those two components
+   exist: every application that composed this out of a button and a stack ended up with a stylesheet of
+   its own overriding the rail's heights, paddings and icon sizes. The heights are stated once, here.
+
+   Everything else the row does - the selected wash, the strip of commands and the room the name gives up
+   for it, the fade under the pointer - is the sidebar's own machinery, reached by carrying the same
+   classes an ordinary row carries (tss-sidebar-btn-open, tss-sidebar-has-commands, the
+   --tss-sidebar-commands-width the row writes from how many commands it has). */
+
+/* One height for the row, read by both of its renderings: the open row and the picture the collapsed rail
+   shows in its place. A rail whose brand is 48px at the top and 28px once it is collapsed is two different
+   pieces of chrome, and the row's own commands - which the collapsed brand turns into - would move under
+   the pointer. Declared on the wrapper so a skin can change it per row and both states follow. */
+.tss-sidebar-identity-row {
+    --tss-sidebar-identity-height: 48px;
+}
+
+/* The width the open rail needs to draw the brand's name whole, measured by the row and written on the
+   sidebar (SidebarIdentityRow.FitRailToText). A floor under the rail's own width, never a width of its own,
+   and only while it is a rail: the closed rail's 54px would lose to it, and a page or a navbar is as wide
+   as the screen gives it. Keyed on the class the row adds beside the variable, so a sidebar no row is
+   fitting keeps whatever min-width an application's own stylesheet gives it. */
+.tss-sidebar.tss-sidebar-fits-identity:not(.tss-sidebar-closed):not(.tss-sidebar-page):not(.tss-navbar) {
+    min-width: var(--tss-sidebar-identity-min-width);
+}
+
+.tss-sidebar-identity > .tss-sidebar-identity-button.tss-btn {
+    height: var(--tss-sidebar-identity-height) !important;
+}
+
+.tss-sidebar-identity-content {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--tss-sidebar-identity-gap, 10px);
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* The picture keeps its size while the text gives way: a flex item's automatic minimum size is its own
+   content, so without the min-width the lines refuse to shrink and the name runs under the commands. */
+.tss-sidebar-identity-content > .tss-avatar,
+.tss-sidebar-identity-content > .tss-sidebar-brand-logo {
+    flex: 0 0 auto;
+}
+
+.tss-sidebar-identity-lines {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    line-height: 1.25;
+}
+
+.tss-sidebar-identity-title,
+.tss-sidebar-identity-subtitle {
+    display: block;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tss-sidebar-identity-title {
+    font-size: var(--tss-font-size-small);
+    font-weight: var(--tss-font-weight-semibold);
+}
+
+/* The application's name is the one thing on the rail that names the product, so it is set like a title
+   rather than like the rows under it. */
+.tss-sidebar-brand .tss-sidebar-identity-title,
+.tss-sidebar-section-header .tss-sidebar-identity-title {
+    font-size: var(--tss-font-size-smallplus);
+    font-weight: var(--tss-font-weight-bold);
+}
+
+/* A badge after the name (SidebarBrand.SetBadge): the name and the badge share a line of their own, which
+   only exists while there is a badge. The name gives way first - it ellipsizes and the badge stays whole -
+   since a label like "DEV" cut to "D…" says nothing. The badge is set a step smaller than a free-standing
+   one so it sits inside the name's line rather than pushing the row's two lines apart. */
+.tss-sidebar-identity-title-line {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.tss-sidebar-identity-title-line > .tss-sidebar-identity-title {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.tss-sidebar-identity-title-line > .tss-sidebar-identity-title-badge {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    font-size: var(--tss-font-size-tiny);
+    line-height: 1.3;
+    letter-spacing: 0.02em;
+}
+
+.tss-sidebar-identity-subtitle {
+    font-size: var(--tss-font-size-xsmall);
+    font-weight: var(--tss-font-weight-regular);
+    color: var(--tss-secondary-foreground-color);
+}
+
+/* Where a brand's name would be cut to something like "C..", the logo says more than what is left of it, so
+   the text goes and the row is the logo and its commands - what the collapsed rail draws. No script is
+   involved, and no selector can ask "is less than half of it showing", so it is asked of the lengths: the
+   text's flex-basis is its own max-content width (calc-size) times 1 or 0 - 1 while half of that width fits
+   in what is left of the row beside the logo and the gap, 0 once it does not. The lines cannot grow and are
+   overflow: hidden, so a basis of 0 is a box with nothing drawn in it, and it comes back by itself as the
+   rail gets wider. The words stay in the document, so assistive technology still reads the name.
+
+   Shown, the basis is the max-content width the box already had, so the row lays out exactly as it did.
+   Half is taken of the whole text block, name and second line, because that is the box whose width this can
+   read; a brand's second line is rarely the longer of the two. Only an open rail, which is where a brand is
+   squeezed (the rule that fits the rail to the name, further up, is scoped the same way): a page or a navbar
+   is as wide as the screen gives it. A browser without calc-size() keeps ellipsizing as it did. */
+@supports (flex-basis: calc-size(max-content, size)) {
+    .tss-sidebar:not(.tss-sidebar-closed):not(.tss-sidebar-page):not(.tss-navbar) .tss-sidebar-brand .tss-sidebar-identity-lines {
+        flex-basis: calc-size(max-content, size * max(0, sign(100% - var(--tss-sidebar-brand-logo-size, 32px) - var(--tss-sidebar-identity-gap, 10px) - size / 2)));
+    }
+}
+
+/* A selected row is filled with a wash of the primary and its text takes that colour; the second line
+   would otherwise stay the neutral grey and read as disabled inside it. */
+.tss-sidebar-identity.tss-sidebar-selected .tss-sidebar-identity-subtitle {
+    color: inherit;
+    opacity: 0.8;
+}
+
+/* The strip is centred on the row rather than pinned near its top, which is where an ordinary 28px row
+   puts it. It is exact because .tss-sidebar-identity is the row and nothing else: what .Separated() draws
+   - the divider, the margins, the padding that restores the rail's gutter - is on the wrapper around it
+   (.tss-sidebar-identity-row), so there is no padding here for the strip to be centred against instead. */
+.tss-sidebar-identity > .tss-sidebar-commands {
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* A command on one of these rows is a square of the row's own height, not the 22px chip an ordinary row
+   gets: the row is twice as tall, and a small chip floating in the middle of it reads as something that
+   landed there rather than as part of the row. Full height also gives each command a target the size of
+   the row it belongs to.
+
+   It reaches the row's right edge, which is what the inset is zeroed for: a chip floating on a row is
+   inset from it, but a tile the height of the row that stops 4px short reads as a misalignment - the
+   sliver of row left beside it is the row's own colour, so the tile looks nudged rather than placed. The
+   4px between two of them stays; that is a gap between controls, not a margin against the edge. The
+   variable is declared on the row rather than on the strip because the label's own reservation reads it
+   too (see the padding-right rule further up). */
+.tss-sidebar-identity {
+    --tss-sidebar-commands-inset: 0px;
+}
+
+.tss-sidebar-identity > .tss-sidebar-commands > .tss-sidebar-command.tss-btn,
+.tss-sidebar-identity > .tss-sidebar-commands > a > .tss-sidebar-command.tss-btn {
+    width: var(--tss-sidebar-identity-height) !important;
+    height: var(--tss-sidebar-identity-height) !important;
+    border-radius: 6px;
+}
+
+/* How much room the name gives up for the strip. An ordinary row computes it in C# from how many commands
+   it has, because there the size of one is fixed; here it is whatever --tss-sidebar-identity-height says,
+   so the count is what the row writes (SidebarIdentityRow.UpdateCommands) and the width is computed from
+   the two. Scoped to a row that has commands, so the -4px of a count of zero is never reached. */
+.tss-sidebar-identity.tss-sidebar-has-commands {
+    --tss-sidebar-commands-width: calc(var(--tss-sidebar-identity-command-count, 0) * (var(--tss-sidebar-identity-height) + 4px) - 4px);
+}
+
+/* A logo is an image, a glyph or an emoji, and all three take the same square beside the name - the box
+   is sized here rather than each of the three. */
+.tss-sidebar-brand-logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.tss-sidebar-identity-content > .tss-sidebar-brand-logo {
+    width: var(--tss-sidebar-brand-logo-size, 32px);
+    height: var(--tss-sidebar-brand-logo-size, 32px);
+}
+
+.tss-sidebar-identity-closed .tss-sidebar-brand-logo {
+    width: var(--tss-sidebar-brand-logo-size, 32px);
+    height: var(--tss-sidebar-brand-logo-size, 32px);
+}
+
+.tss-sidebar-brand-logo > .tss-image,
+.tss-sidebar-brand-logo > img {
+    width: 100% !important;
+    height: 100% !important;
+    min-width: unset !important;
+    object-fit: contain;
+    padding: 0 !important;
+}
+
+.tss-sidebar-identity-content > .tss-sidebar-brand-logo > .tss-icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+.tss-sidebar-identity-closed .tss-sidebar-brand-logo > .tss-icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+/* The collapsed rail is the picture alone, in a box the same height as the open row - see
+   --tss-sidebar-identity-height above. Everything else about it is the rail's own closed-button sizing
+   (the 46px width, the centring), which is why only the height is restated. The wrapper is what a control
+   can be laid over (see below) and what the divider is drawn on. */
+.tss-sidebar-identity-closed {
+    position: relative;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-identity-closed > .tss-sidebar-identity-button-closed.tss-btn,
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-identity-closed > .tss-sidebar-identity-closed-control.tss-btn {
+    height: var(--tss-sidebar-identity-height) !important;
+}
+
+/* The rail's open/close control, where the brand is it (SidebarBrand.WithSidebarControl). There is no room
+   for a command beside the logo on a 46px rail, so the logo *is* the control: the brand at rest, the open
+   button under the pointer. Both take the same box - the rail's closed-button sizing plus the row's own
+   height - so swapping which one is displayed moves nothing. */
+.tss-sidebar-identity-closed-control {
+    display: none !important;
+}
+
+.tss-sidebar-identity-has-closed-control:hover > .tss-sidebar-identity-button-closed {
+    display: none !important;
+}
+
+.tss-sidebar-identity-has-closed-control:hover > .tss-sidebar-identity-closed-control {
+    display: inline-flex !important;
+}
+
+/* A divider on the row's outer edge, run out to the sidebar's own edges rather than stopping at its
+   padding - what separates the account from the navigation above it, or the brand from the rows below.
+   Which edge it goes on is read from the section the row is in, so the same call does the right thing at
+   either end of the rail; the negative margins are the sidebar's own padding, which differs between its
+   two states. */
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-footer .tss-sidebar-identity-separated {
+    border-top: 1px solid var(--tss-default-border-color);
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: 12px;
+    padding-right: 12px;
+    margin-top: 8px;
+    padding-top: 8px;
+}
+
+.tss-sidebar:not(.tss-sidebar-closed) .tss-sidebar-header .tss-sidebar-identity-separated {
+    border-bottom: 1px solid var(--tss-default-border-color);
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: 12px;
+    padding-right: 12px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-footer .tss-sidebar-identity-separated {
+    border-top: 1px solid var(--tss-default-border-color);
+    margin-left: -4px;
+    margin-right: -4px;
+    padding-left: 4px;
+    padding-right: 4px;
+    margin-top: 8px;
+    padding-top: 8px;
+}
+
+.tss-sidebar.tss-sidebar-closed .tss-sidebar-header .tss-sidebar-identity-separated {
+    border-bottom: 1px solid var(--tss-default-border-color);
+    margin-left: -4px;
+    margin-right: -4px;
+    padding-left: 4px;
+    padding-right: 4px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+}
+
+/* SidebarSectionHeader: the brand row's shape without its button. The 48px is the row's own height and the
+   9px is what the brand's button puts before its logo (8px of padding and a 1px border), so the glyph lines
+   up with the icons of the rows below and switching a sidebar between the two moves nothing. It is plain
+   text, so it keeps the default cursor and answers no hover. */
+.tss-sidebar-section-header {
+    display: flex;
+    align-items: center;
+    height: 48px;
+    padding: 0 9px;
+    cursor: default;
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-sidebar-section-header-closed {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(54px - 8px);
+    height: 48px;
+    cursor: default;
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-sidebar-section-header-closed > .tss-sidebar-brand-logo {
+    width: 32px;
+    height: 32px;
+}
+
+.tss-sidebar-section-header-closed > .tss-sidebar-brand-logo > .tss-icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+/* SidebarStatusCard: what the section heading the sidebar is doing right now. A card rather than a row, so it
+   sits inset by the same 12px the rows use and draws its own edge, and its text is two sizes smaller than
+   its name so the status reads as a qualifier rather than a second title. */
+.tss-sidebar-status-card {
+    padding: 12px;
+    margin-bottom: 8px;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-md);
+    gap: 10px;
+}
+
+.tss-sidebar-status-head {
+    gap: 10px;
+    min-width: 0;
+}
+
+.tss-sidebar-status-icon {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tss-sidebar-status-lines {
+    min-width: 0;
+    overflow: hidden;
+    line-height: 1.25;
+}
+
+.tss-sidebar-status-title {
+    font-size: var(--tss-font-size-smallplus);
+    font-weight: var(--tss-font-weight-semibold);
+}
+
+.tss-sidebar-status-line {
+    gap: 6px;
+    min-width: 0;
+}
+
+.tss-sidebar-status-text,
+.tss-sidebar-status-caption {
+    font-size: var(--tss-font-size-xsmall);
+    color: var(--tss-secondary-foreground-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tss-sidebar-status-caption {
+    padding-top: 4px;
+}
+
+.tss-sidebar-status-dot {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--tss-secondary-foreground-color);
+}
+
+.tss-sidebar-status-success .tss-sidebar-status-dot { background: var(--tss-success-background-color); }
+.tss-sidebar-status-warning .tss-sidebar-status-dot { background: var(--tss-warning-background-color); }
+.tss-sidebar-status-danger  .tss-sidebar-status-dot { background: var(--tss-danger-background-color); }
+
+.tss-sidebar-status-progress > .tss-progressindicator {
+    height: 4px;
+}
+
+/* The collapsed rail: the glyph, and the progress as a short bar under it */
+.tss-sidebar-status-card-closed {
+    padding: 8px 0;
+    margin-bottom: 8px;
+    gap: 6px;
+}
+
+    .tss-sidebar-status-card-closed > .tss-progressindicator {
+        height: 3px;
+        width: 24px !important;
+    }
+
+.tss-sidebar-status-clickable {
+    cursor: pointer;
+}
+
+    .tss-sidebar-status-card.tss-sidebar-status-clickable:hover {
+        background: var(--tss-default-background-hover-color);
+    }

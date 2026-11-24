@@ -1,0 +1,298 @@
+﻿using System;
+using System.Collections.Generic;
+using Transpose.Core;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A component for grouping multiple SidebarCommand items into a single line within a Sidebar.
+    /// </summary>
+    public class SidebarCommands : ISidebarItem
+    {
+        private readonly SidebarCommand[] _commands;
+        private          bool             _isEndAligned;
+        private          bool             _isHidden;
+        private          bool             _notSortable;
+        private          string           _extraClass;
+
+
+        public SidebarCommands(string identifier, params SidebarCommand[] commands)
+        {
+            Identifier = identifier;
+            _commands  = commands;
+        }
+
+        /// <summary>Gets or sets whether the group is currently selected.</summary>
+        public bool IsSelected { get; set; }
+
+        /// <summary>Gets the component that is currently rendered.</summary>
+        public IComponent CurrentRendered { get; private set; }
+
+        private void WhenSizeIsStable(HTMLElement element, Action<int> action, int previousWidth = -1)
+        {
+            int delay = previousWidth < 0 ? Sidebar.SIDEBAR_TRANSITION_TIME : 100; //Needs to happen after the animation finishes, which takes 300ms (see .tss-sidebar)
+
+            if (element.IsMounted())
+            {
+                var currentWidth = (int)(element.getBoundingClientRect().As<DOMRect>().width);
+
+                if (currentWidth > 0 && currentWidth == previousWidth)
+                {
+                    action(currentWidth);
+                }
+                else
+                {
+                    window.setTimeout((_) => WhenSizeIsStable(element, action, currentWidth), delay);
+                }
+            }
+            else
+            {
+                DomObserver.WhenMounted(element, () => WhenSizeIsStable(element, action));
+            }
+        }
+
+        /// <summary>Renders the commands for the open state of the sidebar.</summary>
+        public IComponent RenderOpen()
+        {
+            var div        = Div(Att("tss-sidebar-commands-line"));
+            var divWrapped = Raw(div);
+
+            if (_isEndAligned)
+            {
+                div.classList.add("tss-sidebar-commands-end-aligned");
+            }
+
+            DomObserver.WhenMounted(div, () =>
+            {
+                ClearChildren(div); //Make sure we don't hit here twice
+
+                _commands[0].RefreshTooltip();
+                div.appendChild(_commands[0].Render());
+
+                WhenSizeIsStable(div, (stableWidth) =>
+                {
+                    HTMLDivElement otherCommands = null;
+                    int            max           = (int)Math.Floor(stableWidth / 48f);
+
+                    if (_isEndAligned && _commands.Length > 1)
+                    {
+                        div.appendChild(Div(Att("tss-sidebar-commands-spacer")));
+                    }
+
+                    for (int i = 1; i < _commands.Length; i++)
+                    {
+                        var command = _commands[i];
+                        command.RefreshTooltip();
+
+                        if (i < max)
+                        {
+                            div.appendChild(command.Render());
+                        }
+                        else
+                        {
+                            if (otherCommands is null) otherCommands = Div(Att("tss-sidebar-commands-line-extra"));
+                            otherCommands.appendChild(command.Render());
+                        }
+                    }
+
+                    if (otherCommands is object)
+                    {
+                        divWrapped.Tooltip(Raw(otherCommands), true, placement: TooltipPlacement.Right, delayHide: 500, maxWidth: 1000);
+
+                        DomObserver.WhenMounted(otherCommands, () =>
+                        {
+                            DomObserver.WhenRemoved(otherCommands, () =>
+                            {
+                                if (divWrapped.IsMounted())
+                                {
+                                    for (int i = 0; i < _commands.Length; i++)
+                                    {
+                                        _commands[i].RefreshTooltip();
+                                    }
+                                }
+                            });
+                        });
+                    }
+                });
+            });
+
+            CurrentRendered = divWrapped.Class(_extraClass);
+
+            if (_isHidden)
+            {
+                divWrapped.Collapse();
+            }
+
+            if (_notSortable)
+            {
+                divWrapped.Class("tss-sortable-disable");
+            }
+
+            return divWrapped;
+        }
+
+        /// <summary>Shows the commands.</summary>
+        public void Show()
+        {
+            CurrentRendered?.Show();
+            _isHidden = false;
+        }
+
+        /// <summary>Collapses the commands.</summary>
+        public void Collapse()
+        {
+            CurrentRendered?.Collapse();
+            _isHidden = true;
+        }
+
+        public SidebarCommands Class(string className)
+        {
+            CurrentRendered?.Class(className);
+            _extraClass = className;
+            return this;
+        }
+
+        /// <summary>Renders all commands for the open state without truncation.</summary>
+        public IComponent RenderOpenFull()
+        {
+            var div        = Div(Att("tss-sidebar-commands-line"));
+            var divWrapped = Raw(div);
+
+            if (_isEndAligned)
+            {
+                div.classList.add("tss-sidebar-commands-end-aligned");
+            }
+
+            DomObserver.WhenMounted(div, () =>
+            {
+                ClearChildren(div); //Make sure we don't hit here twice
+
+                for (int i = 0; i < _commands.Length; i++)
+                {
+                    var command = _commands[i];
+                    command.RefreshTooltip();
+                    div.appendChild(command.Render());
+
+                    if (_isEndAligned && i == 0 && _commands.Length > 1)
+                    {
+                        div.appendChild(Div(Att("tss-sidebar-commands-spacer")));
+                    }
+                }
+            });
+
+            CurrentRendered = divWrapped.Class(_extraClass);
+
+            if (_isHidden)
+            {
+                divWrapped.Collapse();
+            }
+            
+            if (_notSortable)
+            {
+                divWrapped.Class("tss-sortable-disable");
+            }
+
+            return divWrapped;
+        }
+
+        /// <summary>Renders the commands for the closed state of the sidebar.</summary>
+        public IComponent RenderClosed()
+        {
+            var div        = Div(Att("tss-sidebar-commands-line tss-sidebar-commands-line-closed"));
+            var divWrapped = Raw(div);
+
+            DomObserver.WhenMounted(div, () =>
+            {
+                ClearChildren(div); //Make sure we don't hit here twice
+
+                HTMLDivElement otherCommands = null;
+                int            max           = 1;
+
+
+                for (int i = 0; i < _commands.Length; i++)
+                {
+                    var command = _commands[i];
+                    command.RefreshTooltip();
+
+                    if (i < max)
+                    {
+                        div.appendChild(command.Render());
+                    }
+                    else
+                    {
+                        if (otherCommands is null) otherCommands = Div(Att("tss-sidebar-commands-line-extra"));
+                        otherCommands.appendChild(command.Render());
+                    }
+                }
+
+                window.setTimeout(__ =>
+                {
+
+                    if (otherCommands is object)
+                    {
+                        divWrapped.Tooltip(Raw(otherCommands), true, placement: TooltipPlacement.Right, delayHide: 500, maxWidth: 1000);
+
+                        DomObserver.WhenMounted(otherCommands, () =>
+                        {
+                            DomObserver.WhenRemoved(otherCommands, () =>
+                            {
+                                if (divWrapped.IsMounted())
+                                {
+                                    for (int i = 0; i < _commands.Length; i++)
+                                    {
+                                        _commands[i].RefreshTooltip();
+                                    }
+                                }
+                            });
+                        });
+                    }
+
+                }, Sidebar.SIDEBAR_TRANSITION_TIME);
+            });
+
+            CurrentRendered = divWrapped.Class(_extraClass);
+
+            if (_isHidden)
+            {
+                divWrapped.Collapse();
+            }
+
+            return divWrapped;
+        }
+
+        /// <summary>
+        /// Aligns the commands to the end of the line.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarCommands AlignEnd()
+        {
+            _isEndAligned = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Marks the commands as not sortable.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarCommands NotSortable()
+        {
+            CurrentRendered?.Class("tss-sortable-disable");
+            _notSortable = true;
+            return this;
+        }
+
+        /// <summary>Gets the full identifier of the command group.</summary>
+        public string Identifier { get; private set; }
+        
+        /// <summary>Gets the own identifier of the command group.</summary>
+        public string OwnIdentifier => Sidebar.GetOwnIdentifier(Identifier);
+
+        /// <summary>Adds a group identifier prefix to the command group's identifier.</summary>
+        public void AddGroupIdentifier(string groupIdentifier)
+        {
+            Identifier = Sidebar.WithGroupIdentifier(Identifier, groupIdentifier);
+        }
+    }
+}

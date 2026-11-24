@@ -1,0 +1,62 @@
+---
+name: text-box
+description: A single-line text input. Use when collecting string input in forms or any field in a Tesserae (C#/Transpose) app.
+---
+
+# TextBox
+
+A single-line text input with placeholder, read-only, password, and validation support. Extends `Input`, so it inherits `.Text`, `.Disabled()`, `.Error()`, `.IsInvalid()`, `.Validation(...)`, and change events.
+
+## Create
+
+`UI.TextBox(text = "")` — returns a `TextBox`. `using static Tesserae.UI;` brings it into scope.
+
+## Key configuration
+
+- `.SetPlaceholder(string)` — placeholder text (or set the `Placeholder` property).
+- `.InitialValue(string html)` — a formatted initial value drawn over the field until the user first edits it (typing, paste, or `Text = …` from code). The field's own glyphs are invisible while it shows; if the field also holds text, the overlay steps aside on focus and returns on blur. Supports `<b>`/`<strong>`, `<i>`/`<em>`, `<br>` and colour (`<span style="color:crimson">`, `<font color="#0a7">`); other markup is reduced to its text. It is not the field's `Text`.
+- `.ReadOnly()` — make the field read-only.
+- `.Password()` — switch to password (masked) mode.
+- `.Disabled()` — disable the input (from `Input`).
+- `.NoBorder()` — remove the border, in every state (no hover edge, no focus edge); for an input set inside a box that draws its own edge.
+- `.NoMinWidth()` — drop the default minimum width.
+- `.UnlockHeight()` — allow the input to fill its container's height.
+- `MaxLength` — property capping the character count.
+- `.AI(bool value = true, bool strongEffect = false)` / `.IsAI` — mark the field as holding what a model wrote (a generated title, a suggested value): AI tint and accent edge. Turn it off (`AI(false)`) once the user types over the value. See `ai-variants.md`.
+- `.AI(badge: true, editedText: null)` — also shows an `AI` badge inside the field (beside the microphone button and spinner). The text in the field when it is called, and after every `Text = …` / `SetText`, is taken as what the model wrote; once the user edits it the badge stays and says `editedText` (default `Edited`, translated), and says `AI` again if they put the text back. The field keeps its AI look; the badge hides while the field is empty. `AI(false)` removes both.
+- `await tb.SpinWhileAsync(async () => …)` / `SpinWhileAsync<T>(…)` — a spinner inside the field, at its end, while the call runs; gone when it finishes or throws (the exception propagates). The text box's version of `Button.OnClickSpinWhile`. Overlapping calls share one spinner; the field stays editable; the spinner takes the AI arc while the field is `AI()`. `.IsSpinning` reads it.
+- `.WithDictation(DictationProvider provider = null)` — adds a microphone button at the end of the field, the same as the OmniBox's (`Config.DictationButton`): press to dictate after the text already in the field, press again to stop, the words stay. Words come from `provider`, else `Dictation.Provider`, else the browser's speech recognition; the button is hidden when none exists. Stops when the field leaves the page. `.StartDictation()` / `.StopDictation()` / `.IsDictating` drive it from code. See `omni-box.md` ("Dictation") for writing a provider. Every TextBox is also an `IDictationTarget`, found by `DictationTargets` and dictated into with `BeginDictation()` with or without the button (`.DictationSource(provider)` sets its source without adding one): see `dictation-targets.md`.
+
+Validation / errors (inherited from `Input`):
+
+- `.Error("message")` then `.IsInvalid()` — show an error state. The message line only takes space while it shows; a box with `.Validation(...)` reserves it from the start, so validating never moves the fields below.
+- `.Validation(tb => tb.Text.Length == 0 ? "Empty" : null)` — live validator.
+
+## Example
+
+```csharp
+using static Tesserae.UI;
+
+var stack = Stack().Children(
+    TextBlock("Name:"),
+    TextBox().SetPlaceholder("Enter your name"),
+    TextBlock("Password:"),
+    TextBox().Password(),
+    TextBox().Validation(tb => tb.Text.Length == 0 ? "Required" : null)
+);
+
+// A value a model suggests: spin inside the field while it is fetched, mark it AI, and drop the mark once the user types.
+var title = TextBox().SetPlaceholder("Suggested from the description");
+
+var suggestion = await title.SpinWhileAsync(() => SuggestTitleAsync(description.Text));
+title.Text = suggestion;
+title.AI();
+
+title.OnInput((s, e) => { if (e is object) s.AI(false); });   // Text = … raises OnInput with no event
+```
+
+## Related
+
+- Label — `label.md`
+- AutoCompleteBox (suggestions + async check) — `auto-complete-box.md`
+- Full docs & API: `/tesserae/inputs/text-box`

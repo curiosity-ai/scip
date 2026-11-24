@@ -1,0 +1,632 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Transpose;
+using Transpose.Core;
+using Tesserae;
+using static Transpose.Core.dom;
+
+namespace Tesserae
+{
+    [Transpose.Name("tss.Router")]
+    public static class Router
+    {
+        public delegate void   NavigatedHandler(State               toState, State fromState);
+        public delegate bool   CanNavigateHandler(State             toState, State fromState, bool isBack);
+        public delegate bool   WillNavigate(string                  url);
+        public delegate string TransformRoute(string                url);
+        public delegate void   NoMatchHandler(ReadOnlyArray<string> routeParts);
+
+        private static event NavigatedHandler Navigated;
+        private static event NoMatchHandler   NotMatched;
+
+        private static State              _lastState    { get; set; }
+        private static State              _currentState { get; set; }
+        private static CanNavigateHandler _beforeNavigate; // 2020-06-16 DWR: We previously used an event for this but only allowed a single delegate to bind to it, so there is no need for it to be multi-dispatch and so now it's just a field instead of an event
+        private static WillNavigate       _onWillNavigate; // same here
+        private static TransformRoute     _transformRoute = (s) => s;
+
+        public static void OnBeforeNavigate(CanNavigateHandler onBeforeNavigate) => _beforeNavigate = onBeforeNavigate;
+        public static void OnTransformRoutes(TransformRoute    transformRoute)   => _transformRoute = transformRoute;
+
+        public static void OnWíllNavigate(WillNavigate  onWillNavigate) => _onWillNavigate = onWillNavigate;
+        public static void OnNavigated(NavigatedHandler onNavigated)    => Navigated += onNavigated;
+        public static void OnNotMatched(NoMatchHandler  notMatched)     => NotMatched += notMatched;
+
+        public static void Initialize()
+        {
+            if (!_initialized)
+            {
+                //We overload 'pushState' because on some browsers 'locationchange' is not properly triggered.
+                //However, not on 'replaceState' because we do not want to reload the page.
+                Script.Write(
+                    @"
+    window.history.pushState = ( f => function pushState(){
+        var ret = f.apply(this, arguments);
+        window.dispatchEvent(new Event('pushstate'));
+        let e = new Event('locationchange');
+        e.trigger = 'pushstate';
+        window.dispatchEvent(e);
+        return ret;
+    })(window.history.pushState);
+
+    window.history.replaceState = ( f => function replaceState(){
+        var ret = f.apply(this, arguments);
+        window.dispatchEvent(new Event('replacestate'));
+        return ret;
+    })(window.history.replaceState);
+
+    window.addEventListener('popstate',()=>{
+        let e = new Event('locationchange');
+        e.trigger = 'popstate';
+        window.dispatchEvent(e);
+    });
+");
+                window.addEventListener("locationchange", (Action<Event>)(e => LocationChanged(allowCallbackEvenIfLocationUnchanged: false, trigger: e["trigger"].As<string>()))); // By default we'll ignore any events where the hash value hasn't actually changed
+            }
+            _initialized = true;
+        }
+
+        private static          bool                                       _initialized                          = false;
+        private static readonly Dictionary<string, Func<Parameters, bool>> _registedRoutesMappedToActions        = new Dictionary<string, Func<Parameters, bool>>();
+        private static readonly Dictionary<string, string>                 _paths                                = new Dictionary<string, string>();
+        private static          List<Route>                                _routesToTryMatchingOnLocationChanged = new List<Route>();
+
+        /// <summary>
+        /// Pushes a new history entry for <paramref name="path"/> without re-matching routes.
+        /// Returns false when an <see cref="OnBeforeNavigate"/> guard refused the navigation, in
+        /// which case the URL is left alone and the caller must not show the new view either
+        /// (see <see cref="UnsavedChangesGuard"/>); true otherwise, including when the browser
+        /// was already at <paramref name="path"/> and there was nothing to do.
+        /// </summary>
+        public static bool Push(string path)
+        {
+            if (AlreadyThere(path))
+            {
+                // Nothing to do
+                return true;
+            }
+
+            var toState = StateFromPath(path);
+
+            if (!AllowedToNavigateTo(toState)) return false;
+
+            _lastState    = _currentState;
+            _currentState = toState;
+
+            window.history.pushState(null, "", path);
+            return true;
+        }
+
+        /// <summary>
+        /// Replaces the current history entry with <paramref name="path"/> without re-matching
+        /// routes. Returns false when an <see cref="OnBeforeNavigate"/> guard refused it — see
+        /// <see cref="Push"/>.
+        /// </summary>
+        public static bool Replace(string path)
+        {
+            if (AlreadyThere(path))
+            {
+                // Nothing to do
+                return true;
+            }
+
+            var toState = StateFromPath(path);
+
+            if (!AllowedToNavigateTo(toState)) return false;
+
+            _lastState    = _currentState;
+            _currentState = toState;
+
+            window.history.replaceState(null, "", path);
+            return true;
+        }
+
+        /// <summary>
+        /// Asks the <see cref="OnBeforeNavigate"/> guard about a navigation that doesn't go
+        /// through route matching. Push/Replace skip the matcher, but they are still navigation
+        /// as far as a guard is concerned: an app that renders the new view itself after pushing
+        /// would otherwise walk straight past a guard that wanted to stop it.
+        /// </summary>
+        private static bool AllowedToNavigateTo(State toState)
+        {
+            if (_beforeNavigate is null) return true;
+
+            var isBack = _lastState is object && _lastState.Path == toState.Path;
+
+            return _beforeNavigate(toState, _currentState, isBack: isBack);
+        }
+
+        // Push/Replace bypass route matching, so derive the state's Path and Parameters from the pushed
+        // path itself - otherwise GetQueryParameters would keep returning the previous route's values and
+        // the next SetQueryParameters would resurrect them into the URL.
+        private static State StateFromPath(string fullPath)
+        {
+            var hashIndex  = fullPath.IndexOf('#');
+            var hash       = hashIndex >= 0 ? fullPath.Substring(hashIndex + 1) : fullPath;
+            var queryStart = hash.IndexOf('?');
+            var path       = queryStart >= 0 ? hash.Substring(0, queryStart) : hash;
+
+            var par = new Dictionary<string, string>();
+
+            if (queryStart >= 0)
+            {
+                ParseQueryInto(hash.Substring(queryStart + 1), par);
+            }
+
+            return new State(new Parameters(par), _currentState?.RouteName, path, fullPath);
+        }
+
+        private static void ParseQueryInto(string query, Dictionary<string, string> par)
+        {
+            var queryParts = query.Split(new[] { '&' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var qp in queryParts)
+            {
+                // Split on the first '=' only, so values containing '=' survive intact
+                var eq = qp.IndexOf('=');
+
+                if (eq < 0)
+                {
+                    par[Script.DecodeURIComponent(qp)] = "";
+                }
+                else if (eq > 0)
+                {
+                    par[Script.DecodeURIComponent(qp.Substring(0, eq))] = Script.DecodeURIComponent(qp.Substring(eq + 1));
+                }
+            }
+        }
+
+        public static Parameters GetQueryParameters() => _currentState?.Parameters ?? new Parameters();
+
+        public static void SetQueryParameters(Parameters parameters, bool pushToHistory = false)
+        {
+            if (_currentState is null)
+            {
+                // No route matched yet, so there is no URL to anchor the query to
+                return;
+            }
+
+            // Query parameters are only ever read back out of the URL hash (see LocationChanged),
+            // so they must be written *into* the hash. This method used to append the query string
+            // to the end of the full path, which placed it in the document query string (before the
+            // '#') whenever the current route had no hash - for example the home route - a location
+            // the router never inspects, so the parameters silently failed to round-trip. Keep
+            // everything before the hash untouched and rebuild only the hash's query segment.
+            //
+            // The base is _currentState.FullPath (the router's own source of truth, which Push/Replace
+            // may have set to a relative path), NOT window.location.href - the two are not equivalent.
+            var fullPath = _currentState.FullPath ?? "";
+
+            var hashIndex  = fullPath.IndexOf('#');
+            var beforeHash = hashIndex >= 0 ? fullPath.Substring(0, hashIndex) : fullPath;
+            var hash       = hashIndex >= 0 ? fullPath.Substring(hashIndex) : "";
+
+            var queryStart = hash.IndexOf('?');
+
+            if (queryStart >= 0)
+            {
+                hash = hash.Substring(0, queryStart);
+            }
+
+            var queryString = parameters.ToQueryString();
+
+            if (hash.Length == 0 && queryString.Length > 0)
+            {
+                // No hash yet (e.g. the home route): give the query a fragment to attach to,
+                // otherwise it would fall into the document query string.
+                hash = "#";
+            }
+            else if (hash == "#" && queryString.Length == 0)
+            {
+                // Clearing the last parameter: drop the now-empty bare '#'.
+                hash = "";
+            }
+
+            var stateBefore = _currentState;
+            _currentState = new State(parameters, _currentState.RouteName, _currentState.Path, beforeHash + hash + queryString);
+            _lastState    = stateBefore;
+
+            if (pushToHistory)
+            {
+                window.history.pushState(null, "", _currentState.FullPath);
+            }
+            else
+            {
+                window.history.replaceState(null, "", _currentState.FullPath);
+            }
+        }
+
+        public static void ReplaceQueryParameters(Func<Parameters, Parameters> updateFn, bool pushToHistory = false)
+        {
+            if (_currentState is null)
+            {
+                // No route matched yet, so there is no URL to anchor the query to
+                return;
+            }
+
+            var currentParameters = _currentState.Parameters ?? new Parameters();
+            var newParameters     = updateFn(currentParameters.Clone());
+
+            if (newParameters.SameAs(currentParameters))
+            {
+                // Nothing to do
+                return;
+            }
+            SetQueryParameters(newParameters, pushToHistory);
+        }
+
+        /// <summary>
+        /// Sometimes it is desirable to forcibly rematch the current path as if it was a new location, even if it hasn't changed - depending upon how routing is configured and how views are rendererd according to those routes, this can be useful after
+        /// all of the routes have been configured as the callback from the 'Refresh' method. It can also useful if you have a path that you would like to replace with another without performing a redirect that will appear in the browser history; in that
+        /// case, call Replace and then this. Note: This is equivalent to calling the Navigate method and with the current window.location.hash value and specifying reload as true.
+        /// </summary>
+        public static void ForceMatchCurrent() => Navigate(window.location.hash, reload: true);
+
+        /// <summary>
+        /// This will navigate the User to the specified path (pushing a new entry in the navigation history stack, so the current page / URL will appear in the browser's back button history) unless the path is that which the browser is already at - this
+        /// behaviour may be overridden by setting the optional <paramref name="reload"/> to true (this does not force a reload of the page, it forces a reload of the current view by firing an OnNavigated event whether the specified path is 'new' or not)
+        /// </summary>
+        public static void Navigate(string path, bool reload = false)
+        {
+            if (_onWillNavigate is object)
+            {
+                if (!_onWillNavigate(path)) return;
+            }
+
+            var windowLocationSaysAlreadyThere = AlreadyThere(path);
+
+            if (reload)
+            {
+                ExecuteTheNavigation();
+                return;
+            }
+
+            var currentStateSaysAlreadyThere = AlreadyThere(_currentState?.FullPath, path);
+
+            if (windowLocationSaysAlreadyThere || currentStateSaysAlreadyThere)
+            {
+                // Nothing to do - we're already at the right point and we're not forcing a reload
+                return;
+            }
+
+            ExecuteTheNavigation();
+
+            void ExecuteTheNavigation()
+            {
+                if (!windowLocationSaysAlreadyThere)
+                {
+                    // If the window.location doesn't indicate that we're already at the desired path then update that and the "locationchange" event listener will fire off the LocationChanged method
+                    window.location.href = path;
+
+                    return;
+                }
+
+                // If the window.location DOES indicate that we're already at the desired path then changing the path isn't going to do anything, so we'll have to force the LocationChanged call ourselves
+                LocationChanged(allowCallbackEvenIfLocationUnchanged: reload, trigger: "navigate");
+            }
+        }
+
+        private static bool AlreadyThere(string path)
+        {
+            return window.location.href == path || window.location.hash == path;
+        }
+
+        private static bool AlreadyThere(string candidatePath, string hashOrPath)
+        {
+            if (string.IsNullOrEmpty(candidatePath)) return false;
+
+            if (candidatePath == hashOrPath) return true;
+
+            if (hashOrPath.StartsWith("#") || candidatePath.StartsWith("#"))
+            {
+                var ix1 = candidatePath.IndexOf('#');
+                var ix2 = hashOrPath.IndexOf('#');
+
+                if (ix1 < 0 && ix2 < 0) return false;
+
+                return candidatePath.Substring(ix1) == hashOrPath.Substring(ix2);
+            }
+
+            return false;
+        }
+
+        private static string LowerCasePath(string path)
+        {
+            var  sb          = new StringBuilder();
+            bool inParameter = false;
+
+            foreach (var c in path)
+            {
+                if (c == ':')
+                {
+                    inParameter = true;
+                    sb.Append(':');
+                }
+                else if (c == '/')
+                {
+                    inParameter = false;
+                    sb.Append('/');
+                }
+                else
+                {
+                    if (inParameter) sb.Append(c);
+                    else sb.Append(char.ToLower(c));
+                }
+            }
+            return sb.ToString();
+        }
+
+        public static void Register(string uniqueIdentifier, string path, Func<Parameters, Task> actionTask)
+        {
+            Register(uniqueIdentifier, path, (p) => actionTask(p).FireAndForget());
+        }
+
+        public static void Register(string uniquePath, Action<Parameters> action)
+        {
+            Register(uniquePath, uniquePath, action);
+        }
+
+        public static void Register(string uniquePath, Func<Parameters, bool> action)
+        {
+            Register(uniquePath, uniquePath, action, replace: false);
+        }
+
+        public static void Register(string uniquePath, Func<Parameters, Task> actionTask)
+        {
+            Register(uniquePath, uniquePath, (p) => actionTask(p).FireAndForget());
+        }
+
+        public static void Register(string uniqueIdentifier, string path, Action<Parameters> action, bool replace = false)
+        {
+            Register(uniqueIdentifier, path, (p) =>
+            {
+                action(p);
+                return true;
+            }, replace);
+        }
+
+        public static void Register(string uniqueIdentifier, string path, Func<Parameters, bool> action, bool replace = false)
+        {
+            path = path.Trim();
+            if (path.StartsWith("#")) path  = path.TrimStart('#');
+            if (!path.StartsWith("/")) path = "/" + path;
+
+            uniqueIdentifier = uniqueIdentifier.ToLower();
+
+            if (_registedRoutesMappedToActions.ContainsKey(uniqueIdentifier) && !replace)
+            {
+                // 2020-02-12 DWR: The last thing that the Mosaik App class does is register default routes - this means that the default routes are declared after any routes custom to the current app and this means that it
+                // wouldn't be possible to have custom home pages (for example).. unless we ignore any repeat calls that specify the same uniqueIdentifier. Ignoring them allows the current app to specify a "home" route and
+                // for the "home" route in the DefaultRouting.Initialize to then be ignored.
+                return;
+            }
+
+            var lowerCaseID = $"path-{uniqueIdentifier}";
+            var upperCaseID = $"PATH-{uniqueIdentifier.ToUpper()}";
+
+            _paths.Remove(uniqueIdentifier);
+            _paths.Remove(lowerCaseID);
+            _paths.Remove(upperCaseID);
+            _registedRoutesMappedToActions.Remove(uniqueIdentifier);
+            _registedRoutesMappedToActions.Remove(lowerCaseID);
+            _registedRoutesMappedToActions.Remove(upperCaseID);
+
+            var lowerCasePath = LowerCasePath(path);
+
+            if (path != lowerCasePath)
+            {
+                _registedRoutesMappedToActions[lowerCaseID] = action;
+                _paths[lowerCaseID]                         = lowerCasePath;
+            }
+
+            _registedRoutesMappedToActions[uniqueIdentifier] = action;
+            _paths[uniqueIdentifier]                         = path;
+
+            Refresh();
+        }
+
+        public static void Refresh(Action onDone = null)
+        {
+            if (!_initialized)
+                return;
+
+            _routesToTryMatchingOnLocationChanged.Clear();
+
+            foreach (var kv in _paths)
+            {
+                _routesToTryMatchingOnLocationChanged.Add(new Route(kv.Key, kv.Value, _registedRoutesMappedToActions[kv.Key]));
+            }
+
+            onDone?.Invoke();
+        }
+
+        public static bool Exists(string hashRoute)
+        {
+            hashRoute = hashRoute.Split(new[] { '?' }, count: 2).First();
+            return _paths.Values.Contains(hashRoute);
+        }
+
+        private static void LocationChanged(bool allowCallbackEvenIfLocationUnchanged, string trigger)
+        {
+            var currentPathFromHash = (window.location.hash ?? "");
+
+            if (_transformRoute is object)
+            {
+                currentPathFromHash = _transformRoute(currentPathFromHash);
+            }
+
+            if (!allowCallbackEvenIfLocationUnchanged && (_currentState is object))
+            {
+                if (AlreadyThere(_currentState.FullPath, currentPathFromHash))
+                {
+                    return;
+                }
+            }
+
+            //The call to AlreadyThere above expects the hash to be still in the URL, so we only remove it here
+            currentPathFromHash = currentPathFromHash.TrimStart('#');
+
+            var p = currentPathFromHash.Split(new[] { '?' }, count: 2); // Do not remove empty entries, as we need the empty entry in the array
+
+            var hash = (p.Length == 0) ? "" : p[0];
+
+            var par   = new Dictionary<string, string>();
+            var parts = hash.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var r in _routesToTryMatchingOnLocationChanged)
+            {
+                par.Clear();
+
+                if (!r.IsMatch(parts, par))
+                    continue;
+
+                if (p.Length > 1)
+                {
+                    ParseQueryInto(p[1], par);
+                }
+
+                var toState = new State(
+                    parameters: new Parameters(par),
+                    path: hash,
+                    fullPath: window.location.href,
+                    routeName: r.Name
+                );
+
+                var isBack = (_lastState is object && _lastState.Path == toState.Path);
+
+                if ((_beforeNavigate is null) || _beforeNavigate(toState, _currentState, isBack: isBack))
+                {
+                    // Allowed to navigate - do it!
+                    var oldState = _currentState;
+                    _currentState = toState;
+
+                    if (r.Activate(toState.Parameters))
+                    {
+                        Navigated?.Invoke(toState, oldState);
+                        _lastState = oldState;
+                    }
+                    else
+                    {
+                        _currentState = oldState;
+
+                        // New route was matched but refused to activate, so revert the current URL back to the "current state" (ie. the last state that was matched before this navigation attempt)
+                        if ((_currentState is object) && !string.IsNullOrEmpty(_currentState.FullPath))
+                        {
+                            window.location.href = _currentState.FullPath;
+                        }
+                    }
+                }
+                else
+                {
+                    // New route was matched but onBeforeNavigate denied navigation, so revert the current URL back to the "current state" (ie. the last state that was matched before this navigation attempt)
+                    if ((_currentState is object) && !string.IsNullOrEmpty(_currentState.FullPath))
+                    {
+                        window.location.href = _currentState.FullPath;
+                    }
+                }
+                return;
+            }
+
+            // If we got here without any of the routes being matched then it means we couldn't match the new URL
+            NotMatched?.Invoke(parts);
+        }
+
+        public sealed class State
+        {
+            public State(string fullPath) : this(null, null, null, fullPath) { }
+            public State(Parameters parameters, string routeName, string path, string fullPath)
+            {
+                Parameters = parameters;
+                RouteName  = routeName;
+                Path       = path;
+                FullPath   = fullPath;
+            }
+
+            public Parameters Parameters { get; }
+            public string     RouteName  { get; }
+            public string     Path       { get; }
+            public string     FullPath   { get; }
+
+            public State WithFullPath(string fullPath) => new State(Parameters, RouteName, Path, fullPath);
+        }
+
+        private sealed class RoutePart
+        {
+            public RoutePart(string path)
+            {
+                Path         = path;
+                IsVariable   = path.StartsWith(":");
+                VariableName = IsVariable ? path.TrimStart(':') : "";
+            }
+
+            public string Path         { get; }
+            public bool   IsVariable   { get; }
+            public string VariableName { get; }
+
+            public bool IsMatch(string pathPart, out string capturedVariable)
+            {
+                if (IsVariable)
+                {
+                    capturedVariable = pathPart;
+                    return true;
+                }
+                else
+                {
+                    capturedVariable = null;
+                    return string.Equals(pathPart, Path, StringComparison.InvariantCultureIgnoreCase);
+                }
+            }
+        }
+
+        private sealed class Route
+        {
+            private readonly RoutePart[]            _parts;
+            private readonly Func<Parameters, bool> _action;
+            public Route(string name, string path, Func<Parameters, bool> action)
+            {
+                Name = name;
+                Path = path;
+
+                _parts  = path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries).Select(p => new RoutePart(p)).ToArray();
+                _action = action;
+            }
+
+            public string Name { get; }
+            public string Path { get; }
+
+            public bool IsMatch(string[] parts, Dictionary<string, string> parameters)
+            {
+                if (parts.Length == _parts.Length)
+                {
+                    var isMatch = true;
+
+                    for (var i = 0; i < _parts.Length; i++)
+                    {
+                        isMatch &= _parts[i].IsMatch(parts[i], out var variable);
+
+                        if (isMatch && _parts[i].IsVariable)
+                        {
+                            parameters.Add(_parts[i].VariableName, variable);
+                        }
+
+                        if (!isMatch)
+                        {
+                            return false;
+                        }
+                    }
+
+                    return isMatch;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            public bool Activate(Parameters parameters) => _action(parameters);
+        }
+    }
+}

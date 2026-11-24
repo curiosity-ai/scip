@@ -1,0 +1,68 @@
+﻿using System;
+using static Transpose.Core.dom;
+
+namespace Tesserae
+{
+    public static partial class UI
+    {
+        /// <summary>
+        /// Creates a new <see cref="Attributes"/> object.
+        /// </summary>
+        public static Attributes Att()                 => new Attributes();
+        /// <summary>
+        /// Creates a new <see cref="Attributes"/> object with the specified class name.
+        /// </summary>
+        public static Attributes Att(string className) => new Attributes() { ClassName = className };
+
+        /// <summary>
+        /// Creates a new <see cref="Attributes"/> object with the specified parameters.
+        /// </summary>
+        public static Attributes Att(
+            string                      className    = null,
+            string                      id           = null,
+            string                      src          = null,
+            string                      href         = null,
+            string                      rel          = null,
+            string                      target       = null,
+            string                      text         = null,
+            string                      type         = null,
+            bool?                       disabled     = null,
+            string                      value        = null,
+            string                      placeholder  = null,
+            string                      defaultValue    = null,
+            string                      title           = null,
+            string                      role            = null,
+            string                      ariaLabel       = null,
+            string                      ariaLabelledBy  = null,
+            string                      ariaDescribedBy = null,
+            Action<HTMLElement>         el              = null,
+            Action<CSSStyleDeclaration> styles          = null)
+        {
+            return new Attributes
+            {
+                ClassName       = className,
+                Id              = id,
+                OnElementCreate = el,
+                Styles          = styles,
+
+                //TODO: remove all of this too:
+                Title  = title,
+                Href   = href,
+                Src    = src,
+                Rel    = rel,
+                Target = target,
+
+                Text            = text,
+                Type            = type,
+                Disabled        = disabled,
+                Value           = value,
+                DefaultValue    = defaultValue,
+                Placeholder     = placeholder,
+                Role            = role,
+                AriaLabel       = ariaLabel,
+                AriaLabelledBy  = ariaLabelledBy,
+                AriaDescribedBy = ariaDescribedBy
+            };
+        }
+    }
+}

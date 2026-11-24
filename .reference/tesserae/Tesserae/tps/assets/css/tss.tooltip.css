@@ -1,0 +1,230 @@
+﻿.tippy-box[data-animation=fade][data-state=hidden] {
+    opacity: 0
+}
+
+[data-tippy-root] {
+    max-width: calc(100vw - 10px)
+}
+
+.tippy-box {
+    position: relative;
+    background-color: var(--tss-tooltip-background-color);
+    color: var(--tss-tooltip-foreground-color);
+    font-size: var(--tss-font-size-small);
+    line-height: var(--tss-font-size-medium);
+    outline: 0;
+    transition-property: transform,visibility,opacity;
+    box-shadow: var(--tss-box-shadow);
+    border-radius: var(--tss-border-radius-md);
+}
+
+    .tippy-box > .tippy-content > div {
+        background: transparent;
+        border-radius: var(--tss-border-radius-sm);
+    }
+
+    .tippy-box[data-placement^=top] > .tippy-arrow {
+        bottom: 0
+    }
+
+        .tippy-box[data-placement^=top] > .tippy-arrow:before {
+            bottom: -7px;
+            left: 0;
+            border-width: 8px 8px 0;
+            border-top-color: initial;
+            transform-origin: center top
+        }
+
+    .tippy-box[data-placement^=bottom] > .tippy-arrow {
+        top: 0
+    }
+
+        .tippy-box[data-placement^=bottom] > .tippy-arrow:before {
+            top: -7px;
+            left: 0;
+            border-width: 0 8px 8px;
+            border-bottom-color: initial;
+            transform-origin: center bottom
+        }
+
+    .tippy-box[data-placement^=left] > .tippy-arrow {
+        right: 0
+    }
+
+        .tippy-box[data-placement^=left] > .tippy-arrow:before {
+            border-width: 8px 0 8px 8px;
+            border-left-color: initial;
+            right: -7px;
+            transform-origin: center left
+        }
+
+    .tippy-box[data-placement^=right] > .tippy-arrow {
+        left: 0
+    }
+
+        .tippy-box[data-placement^=right] > .tippy-arrow:before {
+            left: -7px;
+            border-width: 8px 8px 8px 0;
+            border-right-color: initial;
+            transform-origin: center right
+        }
+
+    .tippy-box[data-inertia][data-state=visible] {
+        transition-timing-function: cubic-bezier(.54,1.5,.38,1.11)
+    }
+
+.tippy-arrow {
+    width: 16px;
+    height: 16px;
+    color: var(--tss-tooltip-background-color);
+}
+
+    .tippy-arrow:before {
+        content: "";
+        position: absolute;
+        border-color: transparent;
+        border-style: solid
+    }
+
+.tippy-content {
+    position: relative;
+    padding: 5px 6px;
+    z-index: 1
+}
+
+.tippy-box[data-animation=scale-subtle][data-placement^=top] {
+    transform-origin: bottom
+}
+
+.tippy-box[data-animation=scale-subtle][data-placement^=bottom] {
+    transform-origin: top
+}
+
+.tippy-box[data-animation=scale-subtle][data-placement^=left] {
+    transform-origin: right
+}
+
+.tippy-box[data-animation=scale-subtle][data-placement^=right] {
+    transform-origin: left
+}
+
+.tippy-box[data-animation=scale-subtle][data-state=hidden] {
+    transform: scale(.8);
+    opacity: 0
+}
+
+.tippy-box[data-animation=shift-away-subtle][data-state=hidden] {
+    opacity: 0
+}
+
+    .tippy-box[data-animation=shift-away-subtle][data-state=hidden][data-placement^=top] {
+        transform: translateY(5px)
+    }
+
+    .tippy-box[data-animation=shift-away-subtle][data-state=hidden][data-placement^=bottom] {
+        transform: translateY(-5px)
+    }
+
+    .tippy-box[data-animation=shift-away-subtle][data-state=hidden][data-placement^=left] {
+        transform: translateX(5px)
+    }
+
+    .tippy-box[data-animation=shift-away-subtle][data-state=hidden][data-placement^=right] {
+        transform: translateX(-5px)
+    }
+
+.tippy-box[data-animation=shift-toward-subtle][data-state=hidden] {
+    opacity: 0
+}
+
+    .tippy-box[data-animation=shift-toward-subtle][data-state=hidden][data-placement^=top][data-state=hidden] {
+        transform: translateY(-5px)
+    }
+
+    .tippy-box[data-animation=shift-toward-subtle][data-state=hidden][data-placement^=bottom][data-state=hidden] {
+        transform: translateY(5px)
+    }
+
+    .tippy-box[data-animation=shift-toward-subtle][data-state=hidden][data-placement^=left][data-state=hidden] {
+        transform: translateX(-5px)
+    }
+
+    .tippy-box[data-animation=shift-toward-subtle][data-state=hidden][data-placement^=right][data-state=hidden] {
+        transform: translateX(5px)
+    }
+
+
+.tippy-box[data-animation=perspective-subtle][data-placement^=top] {
+    transform-origin: bottom
+}
+
+    .tippy-box[data-animation=perspective-subtle][data-placement^=top][data-state=visible] {
+        transform: perspective(700px)
+    }
+
+    .tippy-box[data-animation=perspective-subtle][data-placement^=top][data-state=hidden] {
+        transform: perspective(700px) translateY(5px) rotateX(30deg)
+    }
+
+.tippy-box[data-animation=perspective-subtle][data-placement^=bottom] {
+    transform-origin: top
+}
+
+    .tippy-box[data-animation=perspective-subtle][data-placement^=bottom][data-state=visible] {
+        transform: perspective(700px)
+    }
+
+    .tippy-box[data-animation=perspective-subtle][data-placement^=bottom][data-state=hidden] {
+        transform: perspective(700px) translateY(-5px) rotateX(-30deg)
+    }
+
+.tippy-box[data-animation=perspective-subtle][data-placement^=left] {
+    transform-origin: right
+}
+
+    .tippy-box[data-animation=perspective-subtle][data-placement^=left][data-state=visible] {
+        transform: perspective(700px)
+    }
+
+    .tippy-box[data-animation=perspective-subtle][data-placement^=left][data-state=hidden] {
+        transform: perspective(700px) translateX(5px) rotateY(-30deg)
+    }
+
+.tippy-box[data-animation=perspective-subtle][data-placement^=right] {
+    transform-origin: left
+}
+
+    .tippy-box[data-animation=perspective-subtle][data-placement^=right][data-state=visible] {
+        transform: perspective(700px)
+    }
+
+    .tippy-box[data-animation=perspective-subtle][data-placement^=right][data-state=hidden] {
+        transform: perspective(700px) translateX(-5px) rotateY(30deg)
+    }
+
+.tippy-box[data-animation=perspective-subtle][data-state=hidden] {
+    opacity: 0
+}
+
+
+/* A tooltip is its own surface, so text in it takes the tooltip's foreground - which is what .tippy-box
+   above sets for anything that simply inherits. A component carries a colour of its own (a TextBlock is
+   .tss-fontcolor-default), and that colour is the page's, not this surface's. This used to hand it the
+   page *background* instead, which is white on a near-white bubble in the light theme and near-black on
+   a grey one in the dark: a tooltip built from a component read as empty either way. */
+.tippy-content .tss-fontcolor-default {
+    color: var(--tss-tooltip-foreground-color);
+}
+
+
+.tippy-content .tss-btn-default:not(.tss-disabled) {
+    color: var(--tss-default-foreground-color);
+    background-color: var(--tss-default-background-color);
+    border-color: var(--tss-default-background-color);
+}
+
+    .tippy-content .tss-btn-default:not(.tss-disabled):hover {
+        color: var(--tss-default-foreground-hover-color);
+        background-color: var(--tss-default-background-hover-color);
+        border-color: var(--tss-default-background-hover-color);
+    }

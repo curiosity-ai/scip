@@ -1,0 +1,37 @@
+﻿/* TextBlock*/
+.tss-textblock {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.tss-text-ellipsis {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.tss-text-nowrap {
+    white-space: nowrap;
+}
+
+.tss-text-breakspaces {
+    white-space: pre-line; /* fallback for Safari */
+    white-space: break-spaces;
+}
+
+
+.tss-textblock-selectable {
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+.tss-textblock-with-after {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+}
+
+.tss-text-glow {
+    text-shadow: 0 0 10px var(--tss-text-glow-color, currentColor), 0 0 20px color-mix(in srgb, var(--tss-text-glow-color, currentColor) 40%, transparent);
+}

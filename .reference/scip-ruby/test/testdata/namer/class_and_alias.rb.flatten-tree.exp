@@ -1,0 +1,11 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  ::A = 91
+
+  class ::A<<C A>> < (::<todo sym>)
+  end
+
+  class ::B<<C B>> < (::<todo sym>)
+  end
+
+  ::B = 91
+end

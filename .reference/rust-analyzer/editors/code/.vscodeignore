@@ -1,0 +1,12 @@
+**
+!icon.png
+!language-configuration.json
+!LICENSE
+!out/main.js
+!out/crate_graph.js
+!package-lock.json
+!package.json
+!ra_syntax_tree.tmGrammar.json
+!server
+!README.md
+!walkthrough-*

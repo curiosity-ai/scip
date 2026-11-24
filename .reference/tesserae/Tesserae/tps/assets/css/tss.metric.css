@@ -1,0 +1,207 @@
+/* Metric — a KPI tile: an optional icon tile, a title, a big value, a chart and a change indicator. */
+
+.tss-metric {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    /* A tile takes the width it is given. It used to reach the edges of its card only by accident —
+       the chart inside reported a wide intrinsic size and the tile was shrunk back to fit — so a
+       chart with a modest declared size left the number floating in a corner. Claiming the leftover
+       space says it directly, and two tiles sharing one card still split it. */
+    flex-grow: 1;
+    gap: 12px;
+    padding: 0px;
+    background: transparent;
+}
+
+/* Everything but the leading tile: the title, the value, the chart and the change, stacked. */
+.tss-metric-body {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    min-width: 0;
+}
+
+/* The tile leads the whole block, so it stays centred against a two-line title/value pair. */
+.tss-metric-icon {
+    display: flex;
+    flex-grow: 0;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.tss-metric-icon > .tss-icontile {
+    --tss-icontile-size: 44px;
+    --tss-icontile-radius: 12px;
+}
+
+.tss-metric-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tss-metric-title {
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.tss-metric-value {
+    display: flex;
+    align-items: baseline;
+}
+
+.tss-metric-change {
+    margin-left: 8px;
+    display: flex;
+    align-items: center;
+    font-size: var(--tss-font-size-small);
+}
+
+/* ValueFirst(): the number on top and the words under it - "5 / In my scope" rather than the other way
+   round. Only the order changes, so the title keeps reading as the title. */
+.tss-metric-value-first .tss-metric-header {
+    order: 2;
+}
+
+.tss-metric-value-first .tss-metric-value {
+    order: 1;
+}
+
+.tss-metric-value-first .tss-metric-title {
+    margin-bottom: 0;
+}
+
+/* ChangeInHeader(): the trend pulled up level with the title and pushed to the far end of its line. */
+.tss-metric-change-in-header .tss-metric-header {
+    width: 100%;
+}
+
+.tss-metric-change-in-header .tss-metric-header > .tss-metric-title {
+    flex-grow: 1;
+    margin-bottom: 0;
+}
+
+.tss-metric-change-in-header .tss-metric-header > .tss-metric-change {
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.tss-metric-change-in-header .tss-metric-header {
+    margin-bottom: 8px;
+}
+
+/* Compact(): the title and the value on one line, sharing a baseline - "42 Open tickets", or "Open tickets 42"
+   without ValueFirst(). The change follows them on the same line; a chart, which needs the width, wraps onto
+   a line of its own under them. The header and the value keep the order ValueFirst() gives them (0, or 1 and 2),
+   so the change and the chart only have to come after both. */
+.tss-metric-compact .tss-metric-body {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 8px;
+}
+
+.tss-metric-compact .tss-metric-title,
+.tss-metric-compact.tss-metric-change-in-header .tss-metric-header {
+    margin-bottom: 0;
+}
+
+.tss-metric-compact.tss-metric-change-in-header .tss-metric-header {
+    width: auto;
+}
+
+.tss-metric-compact .tss-metric-change {
+    order: 3;
+    margin-left: 0;
+}
+
+.tss-metric-compact .tss-metric-chart {
+    order: 4;
+    flex-basis: 100%;
+}
+
+/* A one-line metric is about a line and a half tall, so the leading tile shrinks to match it. IconSize()
+   writes the size on the tile itself and still wins. */
+.tss-metric-compact .tss-metric-icon > .tss-icontile {
+    --tss-icontile-size: 32px;
+    --tss-icontile-radius: 8px;
+}
+
+/* Large(): a headline tile - a bigger number with the change beside it on the same baseline, and a chart that
+   gets room under them. The value's own text size is a class on its TextBlock, so the rule has to outrank it. */
+.tss-metric-large .tss-metric-value .tss-textblock,
+.tss-metric-large .tss-metric-value > * {
+    font-size: var(--tss-font-size-xxlarge);
+    line-height: 1.15;
+}
+
+.tss-metric-large .tss-metric-title {
+    margin-bottom: 4px;
+}
+
+.tss-metric-large .tss-metric-value > .tss-metric-change {
+    margin-left: 10px;
+    font-size: var(--tss-font-size-medium);
+    line-height: normal;
+}
+
+.tss-metric-large .tss-metric-value > .tss-metric-change * {
+    font-size: inherit;
+}
+
+.tss-metric-large .tss-metric-chart:not(:empty) {
+    margin-top: 16px;
+}
+
+/* ValueBackground(): the number on a filled badge. The fill hugs the value rather than spanning the column
+   the value sits in, and the value is recoloured only when a foreground was asked for. */
+.tss-metric-value-filled .tss-metric-value {
+    background: var(--tss-metric-value-background);
+    padding: 2px 10px;
+    border-radius: var(--tss-border-radius-md);
+}
+
+.tss-metric-value-filled:not(.tss-metric-compact) .tss-metric-value {
+    align-self: flex-start;
+}
+
+.tss-metric-value-recolored .tss-metric-value,
+.tss-metric-value-recolored .tss-metric-value * {
+    color: var(--tss-metric-value-foreground);
+}
+
+/* A chart under the value - a Sparkline, a ContributionBar - takes the full width of the card rather than
+   the width of its own content, so a bar reaches both edges the way the value does. */
+.tss-metric-chart {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+}
+
+.tss-metric-chart:not(:empty) {
+    margin-top: 8px;
+}
+
+/* A clickable tile (Metric.OnClick). It has no padding of its own - the card around it supplies that - so
+   the hover wash is drawn past its edges with a spread shadow of the same colour instead of padding, which
+   would move the number the moment it became clickable. */
+.tss-metric-clickable {
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background-color .15s linear, box-shadow .15s linear;
+}
+
+.tss-metric-clickable:hover {
+    background: var(--tss-default-background-hover-color);
+    box-shadow: 0 0 0 6px var(--tss-default-background-hover-color);
+}
+
+.tss-metric-clickable:focus-visible {
+    outline: 2px solid var(--tss-primary-background-color);
+    outline-offset: 6px;
+}

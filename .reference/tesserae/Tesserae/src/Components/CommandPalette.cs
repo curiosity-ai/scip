@@ -1,0 +1,1160 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Transpose.Core;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A keyboard-driven full-screen command launcher (Ctrl/Cmd-K style) that lets users search and invoke
+    /// application commands.
+    /// </summary>
+    [Transpose.Name("tss.CommandPalette")]
+    public sealed class CommandPalette : Layer<CommandPalette>
+    {
+        private readonly HTMLDivElement _overlay;
+        private readonly HTMLDivElement _positioner;
+        private readonly HTMLDivElement _animator;
+        private readonly HTMLDivElement _searchContainer;
+        private readonly OmniBox _searchBox;
+        private readonly HTMLDivElement _breadcrumbs;
+        private readonly HTMLButtonElement _backButton;
+        private readonly HTMLButtonElement _closeButton;
+        private readonly HTMLSpanElement _pathText;
+        private readonly HTMLDivElement _results;
+        private readonly HTMLDivElement _emptyState;
+
+        private readonly List<CommandPaletteAction> _actions = new List<CommandPaletteAction>();
+        private readonly Dictionary<string, CommandPaletteAction> _actionLookup = new Dictionary<string, CommandPaletteAction>();
+
+        // One entry per navigable row, actions and host results alike, so the arrow keys walk the list the
+        // user sees rather than the actions inside it.
+        private readonly List<PaletteEntry> _entries = new List<PaletteEntry>();
+        private readonly List<HTMLElement> _entryElements = new List<HTMLElement>();
+
+        private readonly List<CommandPaletteResult> _hostResults = new List<CommandPaletteResult>();
+        private Func<OmniBox.SearchQuery, Task<IEnumerable<CommandPaletteResult>>> _search;
+        private int _searchDebounceMs = 200;
+        private double _searchTimer = -1;
+        private int _searchGeneration;
+
+        private string _currentParentId;
+        private int _activeIndex = -1;
+        private HTMLElement _focusBeforeShow;
+        private bool _isSearching;
+        private double _clearRowsTimer = -1;
+
+        /// <summary>How long <see cref="Layer{T}"/> takes to fade a hidden layer out before removing it.</summary>
+        private const int LAYER_FADE_OUT_MS = 150;
+
+        /// <summary>
+        /// How long the rows of the query before this one stay up once a search starts - the same grace the
+        /// search box takes to turn its magnifier into a spinner, so the two happen together.
+        /// </summary>
+        private const int SEARCHING_GRACE_MS = 140;
+
+        private sealed class PaletteEntry
+        {
+            public CommandPaletteAction Action { get; set; }
+            public CommandPaletteResult Result { get; set; }
+        }
+
+        private readonly Action<Event> _globalKeyDownHandler;
+        private bool _globalListenerActive;
+
+        private readonly Action<Event> _lightDismissHandler;
+        private bool _canLightDismiss;
+
+        /// <summary>
+        /// Raised when action executed occurs.
+        /// </summary>
+        public event Action<CommandPaletteAction> ActionExecuted;
+
+        /// <summary>
+        /// Raised when one of the host's own rows is activated - see <see cref="SetResults(IEnumerable{CommandPaletteResult})"/>.
+        /// </summary>
+        public event Action<CommandPaletteResult> ResultActivated;
+
+        /// <summary>
+        /// Enables the global shortcut on the component.
+        /// </summary>
+        public bool EnableGlobalShortcut { get; set; } = true;
+        /// <summary>
+        /// Enables the global action shortcuts on the component.
+        /// </summary>
+        public bool EnableGlobalActionShortcuts { get; set; } = true;
+        /// <summary>
+        /// Hides the on action.
+        /// </summary>
+        public bool HideOnAction { get; set; } = true;
+
+        /// <summary>
+        /// Key (combined with Ctrl/Cmd) that toggles the palette globally. Case-insensitive. Defaults to "k".
+        /// </summary>
+        public string GlobalShortcutKey { get; set; } = "k";
+
+        /// <summary>
+        /// Whether clicking beside the palette closes it, the way it does on a <see cref="Modal"/>. On by
+        /// default.
+        /// </summary>
+        public bool CanLightDismiss
+        {
+            get => _canLightDismiss;
+            set
+            {
+                if (_canLightDismiss == value) return;
+
+                _canLightDismiss = value;
+
+                if (value)
+                {
+                    _overlay.addEventListener("click",    _lightDismissHandler);
+                    _positioner.addEventListener("click", _lightDismissHandler);
+                }
+                else
+                {
+                    _overlay.removeEventListener("click",    _lightDismissHandler);
+                    _positioner.removeEventListener("click", _lightDismissHandler);
+                }
+            }
+        }
+
+        /// <summary>Enables light-dismiss behaviour (clicking outside the palette closes it).</summary>
+        public CommandPalette LightDismiss()
+        {
+            CanLightDismiss = true;
+            return this;
+        }
+
+        /// <summary>Removes / disables the light dismiss on the component.</summary>
+        public CommandPalette NoLightDismiss()
+        {
+            CanLightDismiss = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Whether a close button is drawn at the end of the search row, beside the search box's own trigger
+        /// button. Off by default - Escape closes the palette and a click beside it does too - so it is for
+        /// the surfaces where neither is obvious: a touch screen, a palette opened from a button rather than
+        /// a shortcut, or one shown with <see cref="NoLightDismiss"/> so there is nothing beside it to click.
+        /// <para>
+        /// Closing this way is closing, not going back: it dismisses the palette even from a level down
+        /// inside a nested action, where Escape goes back first.
+        /// </para>
+        /// </summary>
+        public bool WillShowCloseButton
+        {
+            get => _closeButton.style.display != "none";
+            set => _closeButton.style.display = value ? "" : "none";
+        }
+
+        /// <summary>Shows the close button at the end of the search row.</summary>
+        public CommandPalette ShowCloseButton()
+        {
+            WillShowCloseButton = true;
+            return this;
+        }
+
+        /// <summary>Hides the close button at the end of the search row (the default).</summary>
+        public CommandPalette HideCloseButton()
+        {
+            WillShowCloseButton = false;
+            return this;
+        }
+
+        /// <summary>
+        /// The box the palette is typed into. It is a full <see cref="OmniBox"/>, so a host can give the
+        /// palette the same snaps, value filters, history and suggestions its own search box has instead of
+        /// the palette being a lesser search than the page it stands in for.
+        /// </summary>
+        public OmniBox SearchBox => _searchBox;
+
+        /// <summary>
+        /// Configures <see cref="SearchBox"/> - the place to hand the palette the search box configuration
+        /// the rest of the app shares.
+        /// </summary>
+        public CommandPalette ConfigureSearchBox(Action<OmniBox> configure)
+        {
+            configure?.Invoke(_searchBox);
+            return this;
+        }
+
+        /// <summary>
+        /// Creates a CommandPalette whose global Ctrl/Cmd keyboard listener is bound
+        /// to the lifetime of <paramref name="host"/>: the listener is attached when
+        /// <paramref name="host"/> first mounts to the DOM and detached when it is
+        /// removed. This prevents the palette from leaking listeners (and continuing
+        /// to respond to its shortcut) after the owning view has been navigated away.
+        /// </summary>
+        public CommandPalette(IComponent host, IEnumerable<CommandPaletteAction> actions = null)
+        {
+            if (host is null) throw new ArgumentNullException(nameof(host));
+
+            //The palette searches with the same box the rest of the app searches with, so a host can give it
+            //the snaps, filters, history and suggestions its own search box has - see ConfigureSearchBox.
+            _searchBox = UI.OmniBox(new OmniBox.Config(OmniBox.Mode.Search) { PlaceholderSearch = "Type a command" })
+               .Class("tss-commandpalette-search");
+
+            _searchBox.OnInput((_, __) => RefreshResults());
+            _searchBox.OnKeyDown((_, e) => HandleSearchKeyDown(e));
+
+            //A chip is part of the query - picking "kind:pdf" out of a suggestion narrows the search the
+            //same way typing does - and it arrives without an input event, so it has to be watched for.
+            _searchBox.InlineFilterChips?.ObserveFutureChanges(_ => RefreshResults());
+
+            //Enter is the OmniBox's own - it commits a snap suggestion or raises a search - so what the
+            //palette does with it hangs off the search rather than off the key.
+            _searchBox.OnSearch((_, __) => ActivateSelected());
+
+            _backButton = UI.Button(Att("tss-commandpalette-back tss-fontweight-semibold", type: "button", title: "Go Back"),
+                                    Div(Att("tss-commandpalette-icon"), I(Att($"tss-commandpalette-icon-item {UIcons.AngleLeft.ToCssClass()}"))));
+
+            _backButton.addEventListener("click", e =>
+            {
+                StopEvent(e);
+                NavigateBack();
+            });
+
+            _pathText = Span(Att("tss-commandpalette-path tss-fontweight-semibold"));
+            _breadcrumbs = Div(Att("tss-commandpalette-breadcrumbs"), _backButton, _pathText);
+
+            //Beside the search box's own trigger button, and off unless asked for: the palette is a keyboard
+            //surface where Escape is the way out, and a pointer has the backdrop. It earns its place where a
+            //pointer is all there is - a touch screen, or a palette embedded with no backdrop to click.
+            _closeButton = UI.Button(Att("tss-commandpalette-close", type: "button", title: "Close", ariaLabel: "Close"),
+                                     I(Att($"tss-commandpalette-close-icon {UIcons.CrossSmall.ToCssClass()}")));
+
+            _closeButton.addEventListener("click", e =>
+            {
+                StopEvent(e);
+                Hide();
+            });
+
+            _searchContainer = Div(Att("tss-commandpalette-search-container"), _breadcrumbs, _searchBox.Render(), _closeButton);
+            WillShowCloseButton = false;
+
+            _results = Div(Att("tss-commandpalette-results", role: "listbox"));
+            _emptyState = Div(Att("tss-commandpalette-empty", text: "No results"));
+
+            _animator = Div(Att("tss-commandpalette-animator"), _searchContainer, _results, _emptyState);
+            _positioner = Div(Att("tss-commandpalette-positioner"), _animator);
+            _overlay = Div(Att("tss-commandpalette-overlay"));
+
+            //The positioner covers the overlay, so a click beside the palette lands on it rather than on the
+            //backdrop - both have to answer, or light dismiss only works on the strip the positioner misses.
+            _lightDismissHandler = e =>
+            {
+                if (e.target is object && e.target != _overlay && e.target != _positioner) return;
+
+                StopEvent(e);
+                Hide();
+            };
+
+            CanLightDismiss = true;
+
+            _contentHtml = Div(Att("tss-commandpalette-container"), _overlay, _positioner);
+
+            SetActions(actions);
+
+            _globalKeyDownHandler = HandleGlobalKeyDown;
+            host.WhenMounted(() =>
+            {
+                if (_globalListenerActive) return;
+                window.addEventListener("keydown", _globalKeyDownHandler);
+                _globalListenerActive = true;
+                host.WhenRemoved(() =>
+                {
+                    if (!_globalListenerActive) return;
+                    window.removeEventListener("keydown", _globalKeyDownHandler);
+                    _globalListenerActive = false;
+                    if (IsVisible) Hide();
+                });
+            });
+
+            InnerElement    = _contentHtml;
+
+        }
+
+        /// <summary>
+        /// Gets or sets the placeholder text shown when the component is empty.
+        /// </summary>
+        public string Placeholder
+        {
+            get => _searchBox.SearchPlaceholder;
+            set => _searchBox.SetSearchPlaceholder(value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// What is said when there is nothing to show. Defaults to "No results", which is right for a
+        /// palette that filters a list it already has; a palette that goes and searches usually wants to
+        /// say what to do instead ("Type to search").
+        /// </summary>
+        public string EmptyText
+        {
+            get => _emptyState.innerText;
+            set => _emptyState.innerText = value ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Whether the palette is saying that a search is running - the search box's magnifier turns into a
+        /// spinner, the rows that answered the query before this one come down, and there is no "No results"
+        /// until it is known that there are none. Kept up to date on its own while an
+        /// <see cref="OnSearch(Func{OmniBox.SearchQuery, Task{IEnumerable{CommandPaletteResult}}}, int)"/>
+        /// call is in flight; set it with <see cref="SetSearching"/> for a palette that fills its rows some
+        /// other way.
+        /// </summary>
+        public bool IsSearching => _isSearching;
+
+        /// <summary>
+        /// Says whether a search is running - see <see cref="IsSearching"/>. A palette that searches through
+        /// <see cref="OnSearch(Func{OmniBox.SearchQuery, Task{IEnumerable{CommandPaletteResult}}}, int)"/>
+        /// does not need to call this: the palette knows when its own search is in flight.
+        /// </summary>
+        public CommandPalette SetSearching(bool searching)
+        {
+            if (_isSearching == searching) return this;
+
+            _isSearching = searching;
+
+            _searchBox.SetSearching(searching);
+
+            CancelPendingRowClear();
+
+            if (searching)
+            {
+                //Rows that answered the query before this one are not an answer to this one, so they come
+                //down while the search runs rather than staying up to be clicked by mistake - after the same
+                //grace the spinner waits, so an answer that is back before then replaces them outright
+                //instead of the palette blinking through an empty list.
+                _clearRowsTimer = window.setTimeout(_ =>
+                {
+                    _clearRowsTimer = -1;
+
+                    if (_isSearching) SetResults((IEnumerable<CommandPaletteResult>)null);
+                }, SEARCHING_GRACE_MS);
+            }
+
+            //"No results" is only true once the search that would have found some has come back.
+            UpdateEmptyState();
+
+            return this;
+        }
+
+        private void CancelPendingRowClear()
+        {
+            if (_clearRowsTimer < 0) return;
+
+            window.clearTimeout(_clearRowsTimer);
+            _clearRowsTimer = -1;
+        }
+
+        /// <summary>
+        /// Sets the actions of the component.
+        /// </summary>
+        public CommandPalette SetActions(IEnumerable<CommandPaletteAction> actions)
+        {
+            _actions.Clear();
+            if (actions != null)
+            {
+                _actions.AddRange(actions.Where(a => a != null));
+            }
+            RebuildLookup();
+            RefreshResults();
+            return this;
+        }
+
+        /// <summary>
+        /// Adds the given action to the component.
+        /// </summary>
+        public CommandPalette AddAction(CommandPaletteAction action)
+        {
+            if (action == null)
+            {
+                return this;
+            }
+
+            _actions.Add(action);
+            if (!string.IsNullOrWhiteSpace(action.Id))
+            {
+                _actionLookup[action.Id] = action;
+            }
+            RefreshResults();
+            return this;
+        }
+
+        /// <summary>
+        /// Puts rows of the host's own at the top of the palette, above its actions - search results drawn
+        /// as <see cref="OmniResult{T}"/>s, recent files, anything a list of actions can't say. Each carries
+        /// what Enter does with it, and they take part in the arrow-key walk like any other row.
+        /// <para>
+        /// These are shown as given: the palette does not filter them, because the host that produced them
+        /// for a query already knows which ones answer it. Use <see cref="OnSearch"/> to have them refreshed
+        /// as the query changes, or call this whenever the host has new ones.
+        /// </para>
+        /// </summary>
+        public CommandPalette SetResults(IEnumerable<CommandPaletteResult> results)
+        {
+            _hostResults.Clear();
+
+            if (results != null) _hostResults.AddRange(results.Where(r => r != null));
+
+            RenderEntries();
+
+            return this;
+        }
+
+        /// <summary>Puts one row of the host's own at the top of the palette. See <see cref="SetResults"/>.</summary>
+        public CommandPalette SetResults(params CommandPaletteResult[] results) => SetResults((IEnumerable<CommandPaletteResult>)results);
+
+        /// <summary>
+        /// Asks the host for the rows to show, every time the query changes and once when the palette opens.
+        /// The call is debounced, and an answer that arrives after a newer query was typed is dropped, so a
+        /// slow search can never overwrite a faster one behind it.
+        /// </summary>
+        /// <param name="search">
+        /// Given what the box says - parsed, with whatever snaps and value filters the host registered on
+        /// <see cref="SearchBox"/> already picked out of it - the rows to show. Null clears the search.
+        /// </param>
+        /// <param name="debounceMs">How long typing has to stop before the search runs.</param>
+        public CommandPalette OnSearch(Func<OmniBox.SearchQuery, Task<IEnumerable<CommandPaletteResult>>> search, int debounceMs = 200)
+        {
+            _search           = search;
+            _searchDebounceMs = debounceMs < 0 ? 0 : debounceMs;
+
+            if (_search is null)
+            {
+                CancelPendingSearch();
+
+                //Nothing is searching any more, and whatever was in flight is nobody's answer now.
+                _searchGeneration++;
+
+                SetSearching(false);
+                SetResults((IEnumerable<CommandPaletteResult>)null);
+            }
+            else if (IsVisible)
+            {
+                RunSearch(_searchBox.CurrentSearchQuery);
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Asks the host for the rows to show, for a palette that only needs the text that was typed. See
+        /// <see cref="OnSearch(Func{OmniBox.SearchQuery, Task{IEnumerable{CommandPaletteResult}}}, int)"/>
+        /// for the overload that also hands over the box's filters.
+        /// </summary>
+        public CommandPalette OnSearch(Func<string, Task<IEnumerable<CommandPaletteResult>>> search, int debounceMs = 200)
+        {
+            return OnSearch(search is null ? null : (Func<OmniBox.SearchQuery, Task<IEnumerable<CommandPaletteResult>>>)(query => search(query?.RawQuery?.Trim() ?? string.Empty)), debounceMs);
+        }
+
+        /// <summary>What is typed in the palette's search box right now, trimmed.</summary>
+        public string CurrentQuery => _searchBox.SearchText?.Trim() ?? string.Empty;
+
+        /// <summary>
+        /// Opens the component.
+        /// </summary>
+        public CommandPalette Open()
+        {
+            Show();
+            return this;
+        }
+
+        /// <summary>
+        /// Closes the component.
+        /// </summary>
+        public CommandPalette Close()
+        {
+            Hide();
+            return this;
+        }
+
+        /// <summary>
+        /// Toggles the component's state.
+        /// </summary>
+        public CommandPalette Toggle()
+        {
+            if (IsVisible) Hide();
+            else Show();
+            return this;
+        }
+
+        /// <summary>
+        /// Shows the component.
+        /// </summary>
+        public override CommandPalette Show()
+        {
+            //Whatever had the focus gets it back when the palette closes - see Hide.
+            _focusBeforeShow = document.activeElement.As<HTMLElement>();
+
+            base.Show();
+            ResetState();
+            window.setTimeout(_ => _searchBox.Focus(), 0);
+            return this;
+        }
+
+        /// <summary>
+        /// Hides the component.
+        /// </summary>
+        public override void Hide(Action onHidden = null)
+        {
+            var restoreTo = _focusBeforeShow;
+
+            _focusBeforeShow = null;
+
+            //A closed palette is not searching for anything, whatever is still on its way back.
+            CancelPendingSearch();
+            SetSearching(false);
+
+            base.Hide(onHidden);
+
+            //The palette holds the focus while it is open and its search box leaves the document with it,
+            //so closing it leaves the page with nothing focused - and the browser then takes the next
+            //Ctrl+K for itself and drops the caret in the address bar. The document has to be given the
+            //focus back, actively, once the layer is actually gone: the layer fades out on a timer, so
+            //doing it only now would put the focus on something that is about to be removed.
+            RestoreFocus(restoreTo);
+
+            window.setTimeout(_ => RestoreFocus(restoreTo), 0);
+            window.setTimeout(_ => RestoreFocus(restoreTo), LAYER_FADE_OUT_MS);
+        }
+
+        private void RestoreFocus(HTMLElement restoreTo)
+        {
+            var active = document.activeElement.As<HTMLElement>();
+
+            //Something outside the palette has the focus - a modal an activated row opened, or the page
+            //itself, already restored by an earlier pass - and it is more entitled to it than this.
+            if (active is object && active != document.body && !_contentHtml.contains(active)) return;
+
+            if (restoreTo is object && restoreTo != document.body && document.body.contains(restoreTo))
+            {
+                restoreTo.focus();
+                return;
+            }
+
+            //Nothing to hand it back to, so the document holds it itself. body only accepts the focus once
+            //it is focusable, and the window has to be told separately, or the page keeps reporting a
+            //focused body while the browser goes on treating the keystrokes as its own.
+            if (document.body.tabIndex < 0) document.body.tabIndex = -1;
+
+            window.focus();
+            document.body.focus();
+        }
+
+        private void ResetState()
+        {
+            _searchBox.SetSearchText(string.Empty);
+            _currentParentId = null;
+            RefreshResults();
+        }
+
+        private void RebuildLookup()
+        {
+            _actionLookup.Clear();
+            foreach (var action in _actions)
+            {
+                if (action == null || string.IsNullOrWhiteSpace(action.Id))
+                {
+                    continue;
+                }
+                _actionLookup[action.Id] = action;
+            }
+        }
+
+        private void HandleGlobalKeyDown(Event ev)
+        {
+            var e = ev.As<KeyboardEvent>();
+
+            //Escape closes the palette wherever the focus ended up - activating a row takes it out of the
+            //search box, and a palette that can only be closed with the mouse after that is a trap.
+            if (IsVisible && e.key == "Escape")
+            {
+                var focused = document.activeElement.As<HTMLElement>();
+
+                if (focused is null || !_searchContainer.contains(focused))
+                {
+                    StopEvent(e);
+                    Hide();
+                    return;
+                }
+            }
+
+            if (!EnableGlobalShortcut && !EnableGlobalActionShortcuts)
+            {
+                return;
+            }
+
+            var target = (e.target is object ? e.target : e.srcElement).As<HTMLElement>();
+            if (target != null && (target.isContentEditable || target.tagName == "INPUT" || target.tagName == "TEXTAREA" || target.tagName == "SELECT"))
+            {
+                return;
+            }
+
+            if (EnableGlobalShortcut && !string.IsNullOrEmpty(GlobalShortcutKey)
+                && string.Equals(e.key, GlobalShortcutKey, StringComparison.OrdinalIgnoreCase)
+                && (e.metaKey || e.ctrlKey))
+            {
+                StopEvent(e);
+                Toggle();
+                return;
+            }
+
+            if (!EnableGlobalActionShortcuts || IsVisible)
+            {
+                return;
+            }
+
+            var action = FindShortcutAction(e.key);
+            if (action != null)
+            {
+                StopEvent(e);
+                ExecuteAction(action);
+            }
+        }
+
+        private void HandleSearchKeyDown(KeyboardEvent e)
+        {
+            if (e.key == "ArrowDown" || (e.ctrlKey && e.key == "n"))
+            {
+                StopEvent(e);
+                MoveActive(1);
+                return;
+            }
+
+            if (e.key == "ArrowUp" || (e.ctrlKey && e.key == "p"))
+            {
+                StopEvent(e);
+                MoveActive(-1);
+                return;
+            }
+
+            //Enter never reaches here - the OmniBox stops it and raises its search instead, which is what
+            //the palette listens to (see the constructor).
+            if (e.key == "Tab")
+            {
+                StopEvent(e);
+                ActivateSelected();
+                return;
+            }
+
+            if (e.key == "Escape")
+            {
+                StopEvent(e);
+                
+                if(_breadcrumbs.style.display != "none")
+                {
+                    NavigateBack();
+                }
+                else
+                {
+                    Hide();
+                }
+                return;
+            }
+
+            if (e.key == "Backspace" && string.IsNullOrEmpty(_searchBox.SearchText) && !string.IsNullOrEmpty(_currentParentId))
+            {
+                StopEvent(e);
+                NavigateBack();
+                return;
+            }
+        }
+
+        private void NavigateBack()
+        {
+            if (string.IsNullOrEmpty(_currentParentId))
+            {
+                return;
+            }
+
+            var current = _actionLookup.ContainsKey(_currentParentId) ? _actionLookup[_currentParentId] : null;
+            _currentParentId = current?.ParentId;
+            _searchBox.SetSearchText(string.Empty);
+            RefreshResults();
+            window.setTimeout(_ => _searchBox.Focus(), 0);
+        }
+
+        private void ActivateSelected()
+        {
+            if (_activeIndex < 0 || _activeIndex >= _entries.Count)
+            {
+                return;
+            }
+
+            var entry = _entries[_activeIndex];
+
+            if (entry.Action is object) ExecuteAction(entry.Action);
+            else                        ActivateResult(entry.Result);
+        }
+
+        private void ActivateResult(CommandPaletteResult result)
+        {
+            if (result is null || result.Activate is null) return;
+
+            result.Activate.Invoke();
+            ResultActivated?.Invoke(result);
+
+            if (HideOnAction) Hide();
+        }
+
+        private void ExecuteAction(CommandPaletteAction action)
+        {
+            if (action == null || !action.IsEnabled)
+            {
+                return;
+            }
+
+            if (HasChildren(action))
+            {
+                _currentParentId = action.Id;
+                _searchBox.SetSearchText(string.Empty);
+                RefreshResults();
+                return;
+            }
+
+            action.Perform?.Invoke();
+            ActionExecuted?.Invoke(action);
+            if (HideOnAction)
+            {
+                Hide();
+            }
+        }
+
+        private bool HasChildren(CommandPaletteAction action)
+        {
+            if (action == null || string.IsNullOrWhiteSpace(action.Id))
+            {
+                return false;
+            }
+
+            return _actions.Any(a => a != null && a.ParentId == action.Id && a.IsVisible);
+        }
+
+        private void MoveActive(int delta)
+        {
+            if (_entryElements.Count == 0)
+            {
+                _activeIndex = -1;
+                return;
+            }
+
+            var nextIndex = _activeIndex + delta;
+            if (nextIndex < 0)
+            {
+                nextIndex = _entryElements.Count - 1;
+            }
+            else if (nextIndex >= _entryElements.Count)
+            {
+                nextIndex = 0;
+            }
+
+            SetActiveIndex(nextIndex);
+        }
+
+        private void SetActiveIndex(int index)
+        {
+            if (_entryElements.Count == 0)
+            {
+                _activeIndex = -1;
+                return;
+            }
+
+            if (_activeIndex >= 0 && _activeIndex < _entryElements.Count)
+            {
+                _entryElements[_activeIndex].classList.remove("tss-active");
+            }
+
+            _activeIndex = index;
+            if (_activeIndex >= 0 && _activeIndex < _entryElements.Count)
+            {
+                var activeEl = _entryElements[_activeIndex];
+                activeEl.classList.add("tss-active");
+                try
+                {
+                    activeEl.scrollIntoViewIfNeeded();
+                }
+                catch
+                {
+                    activeEl.scrollIntoView();
+                }
+            }
+        }
+
+        private void RefreshResults()
+        {
+            RenderEntries();
+            ScheduleSearch();
+        }
+
+        private void RenderEntries()
+        {
+            var query   = CurrentQuery;
+            var actions = FilterActions(query).ToList();
+
+            _results.RemoveChildElements();
+            _entries.Clear();
+            _entryElements.Clear();
+
+            string lastSection = null;
+
+            //The host's own rows lead: they answer the query itself, where an action only offers to go
+            //somewhere that might.
+            foreach (var result in _hostResults)
+            {
+                lastSection = AppendSection(result.Section, lastSection);
+
+                var item = BuildResultElement(result, _entryElements.Count);
+
+                _results.appendChild(item);
+                _entries.Add(new PaletteEntry { Result = result });
+                _entryElements.Add(item);
+            }
+
+            foreach (var action in actions)
+            {
+                lastSection = AppendSection(action.Section, lastSection);
+
+                var item = BuildActionElement(action, _entryElements.Count);
+
+                _results.appendChild(item);
+                _entries.Add(new PaletteEntry { Action = action });
+                _entryElements.Add(item);
+            }
+
+            UpdateEmptyState();
+            UpdateBreadcrumbs();
+            SetActiveIndex(_entries.Count > 0 ? 0 : -1);
+        }
+
+        private void UpdateEmptyState()
+        {
+            _emptyState.style.display = _entries.Count == 0 && !_isSearching ? "block" : "none";
+        }
+
+        private string AppendSection(string section, string lastSection)
+        {
+            if (string.IsNullOrWhiteSpace(section) || section == lastSection) return lastSection;
+
+            _results.appendChild(Div(Att("tss-commandpalette-section", text: section)));
+
+            return section;
+        }
+
+        private void ScheduleSearch()
+        {
+            if (_search is null) return;
+
+            CancelPendingSearch();
+
+            var query = _searchBox.CurrentSearchQuery;
+
+            if (_searchDebounceMs == 0)
+            {
+                RunSearch(query);
+                return;
+            }
+
+            _searchTimer = window.setTimeout(_ =>
+            {
+                _searchTimer = -1;
+                RunSearch(query);
+            }, _searchDebounceMs);
+        }
+
+        private void CancelPendingSearch()
+        {
+            if (_searchTimer < 0) return;
+
+            window.clearTimeout(_searchTimer);
+            _searchTimer = -1;
+        }
+
+        private void RunSearch(OmniBox.SearchQuery query)
+        {
+            var search = _search;
+
+            if (search is null) return;
+
+            //An answer to a query the user has already typed past is thrown away rather than replacing the
+            //rows a later, faster search already put up.
+            var generation = ++_searchGeneration;
+
+            SetSearching(true);
+
+            RunSearchAsync(search, query, generation).FireAndForget();
+        }
+
+        private async Task RunSearchAsync(Func<OmniBox.SearchQuery, Task<IEnumerable<CommandPaletteResult>>> search, OmniBox.SearchQuery query, int generation)
+        {
+            try
+            {
+                var results = await search(query);
+
+                if (generation != _searchGeneration) return;
+
+                SetSearching(false);
+                SetResults(results);
+            }
+            catch
+            {
+                //A search that threw is over too - the spinner has to stop, or the palette goes on claiming
+                //to be looking for something nobody is looking for any more.
+                if (generation == _searchGeneration) SetSearching(false);
+
+                throw;
+            }
+        }
+
+        private IEnumerable<CommandPaletteAction> FilterActions(string query)
+        {
+            IEnumerable<CommandPaletteAction> candidates;
+            if (string.IsNullOrEmpty(query))
+            {
+                candidates = _actions.Where(a => a != null && a.IsVisible && IsParentMatch(a.ParentId, _currentParentId));
+            }
+            else
+            {
+                candidates = _actions.Where(a => a != null && a.IsVisible && MatchesQuery(a, query));
+            }
+
+            return candidates;
+        }
+
+        private bool IsParentMatch(string actionParent, string currentParent)
+        {
+            if (string.IsNullOrWhiteSpace(actionParent) && string.IsNullOrWhiteSpace(currentParent))
+            {
+                return true;
+            }
+
+            return string.Equals(actionParent, currentParent, StringComparison.Ordinal);
+        }
+
+        private bool MatchesQuery(CommandPaletteAction action, string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                return true;
+            }
+
+            var haystack = string.Join(" ", new[] { action.Name, action.Subtitle, action.Keywords, action.Section }.Where(x => !string.IsNullOrWhiteSpace(x))).ToLower();
+            var terms = query.ToLower().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            return terms.All(term => haystack.Contains(term));
+        }
+
+        private HTMLElement BuildActionElement(CommandPaletteAction action, int index)
+        {
+            var iconContainer = Div(Att("tss-commandpalette-icon"));
+            if (action.Icon.HasValue)
+            {
+                iconContainer.appendChild(I(Att($"tss-commandpalette-icon-item {action.Icon.Value.ToCssClass()}")));
+            }
+            else
+            {
+                iconContainer.appendChild(Span(Att("tss-commandpalette-icon-placeholder", text: "•")));
+            }
+
+            var title = Div(Att("tss-commandpalette-title", text: action.Name));
+            var content = Div(Att("tss-commandpalette-content"), title);
+
+            if (!string.IsNullOrWhiteSpace(action.Subtitle))
+            {
+                content.appendChild(Div(Att("tss-commandpalette-subtitle", text: action.Subtitle)));
+            }
+
+            var shortcuts = Div(Att("tss-commandpalette-shortcuts"));
+            if (action.Shortcut != null && action.Shortcut.Length > 0)
+            {
+                foreach (var shortcut in action.Shortcut)
+                {
+                    shortcuts.appendChild(Span(Att("tss-commandpalette-shortcut", text: shortcut)));
+                }
+            }
+
+            if (HasChildren(action))
+            {
+                shortcuts.appendChild(Span(Att("tss-commandpalette-submenu", text: "›")));
+            }
+
+            var item = Div(Att("tss-commandpalette-item", role: "option"), iconContainer, content, shortcuts);
+            if (!action.IsEnabled)
+            {
+                item.classList.add("tss-disabled");
+            }
+
+            item.addEventListener("mousemove", _ => SetActiveIndex(index));
+            item.addEventListener("click", e =>
+            {
+                StopEvent(e);
+                ExecuteAction(action);
+            });
+
+            return item;
+        }
+
+        private HTMLElement BuildResultElement(CommandPaletteResult result, int index)
+        {
+            var item = Div(Att("tss-commandpalette-item tss-commandpalette-result", role: "option"));
+
+            if (result.Component is object) item.appendChild(result.Component.Render());
+
+            item.addEventListener("mousemove", _ => SetActiveIndex(index));
+
+            //A row of the host's own usually answers its own click - an OmniResult opens what it stands for -
+            //so the palette only steps in when it was given something to do, and gets out of the way after
+            //either, because a palette that stays open over what it just opened is in the way.
+            item.addEventListener("click", e =>
+            {
+                if (result.Activate is object)
+                {
+                    StopEvent(e);
+                    ActivateResult(result);
+                    return;
+                }
+
+                if (HideOnAction) Hide();
+            });
+
+            return item;
+        }
+
+        private CommandPaletteAction FindShortcutAction(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return null;
+            }
+
+            var normalized = key.ToLower();
+            foreach (var action in _actions)
+            {
+                if (action == null || !action.IsVisible || !action.IsEnabled || action.Shortcut == null)
+                {
+                    continue;
+                }
+
+                if (action.Shortcut.Any(s => string.Equals(s, normalized, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return action;
+                }
+            }
+
+            return null;
+        }
+
+        private void UpdateBreadcrumbs()
+        {
+            if (string.IsNullOrWhiteSpace(_currentParentId))
+            {
+                _breadcrumbs.style.display = "none";
+                _pathText.innerText = string.Empty;
+                return;
+            }
+
+            var names = new List<string>();
+            var cursor = _currentParentId;
+            while (!string.IsNullOrWhiteSpace(cursor) && _actionLookup.ContainsKey(cursor))
+            {
+                var action = _actionLookup[cursor];
+                names.Add(action.Name);
+                cursor = action.ParentId;
+            }
+
+            names.Reverse();
+            _pathText.innerText = string.Join(" / ", names);
+            _breadcrumbs.style.display = "flex";
+        }
+    }
+
+    /// <summary>
+    /// A row of the host's own in a <see cref="CommandPalette"/> - a search result drawn as an
+    /// <see cref="OmniResult{T}"/>, a recent file, a preview card - rather than one of the palette's actions.
+    /// </summary>
+    [Transpose.Name("tss.CommandPaletteResult")]
+    public sealed class CommandPaletteResult
+    {
+        /// <summary>
+        /// A row and what Enter does with it. With no <paramref name="activate"/> the row is only clickable,
+        /// which is what a component that already answers its own click (an <see cref="OmniResult{T}"/> with
+        /// an <c>OpenWith</c>) wants.
+        /// </summary>
+        public CommandPaletteResult(IComponent component, Action activate = null)
+        {
+            Component = component;
+            Activate  = activate;
+        }
+
+        /// <summary>The row itself.</summary>
+        public IComponent Component { get; }
+
+        /// <summary>What Enter - and a click, when it is given - does with the row.</summary>
+        public Action Activate { get; }
+
+        /// <summary>The heading this row sits under, when a palette groups its rows.</summary>
+        public string Section { get; set; }
+    }
+
+    [Transpose.Name("tss.CommandPaletteAction")]
+    public sealed class CommandPaletteAction
+    {
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public CommandPaletteAction(string id, string name)
+        {
+            Id = id;
+            Name = name;
+        }
+
+        /// <summary>
+        /// Sets the DOM id of the component.
+        /// </summary>
+        public string Id { get; }
+        /// <summary>
+        /// Gets or sets the name of the component.
+        /// </summary>
+        public string Name { get; set; }
+        /// <summary>
+        /// Gets or sets the subtitle.
+        /// </summary>
+        public string Subtitle { get; set; }
+        /// <summary>
+        /// Gets or sets the keywords.
+        /// </summary>
+        public string Keywords { get; set; }
+        /// <summary>
+        /// Gets or sets the section.
+        /// </summary>
+        public string Section { get; set; }
+        /// <summary>
+        /// Gets or sets the parent id.
+        /// </summary>
+        public string ParentId { get; set; }
+        /// <summary>
+        /// Gets or sets the icon shown by the component.
+        /// </summary>
+        public UIcons? Icon { get; set; }
+        /// <summary>
+        /// Gets or sets the shortcut.
+        /// </summary>
+        public string[] Shortcut { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether the component is interactive (enabled).
+        /// </summary>
+        public bool IsEnabled { get; set; } = true;
+        /// <summary>
+        /// Gets a value indicating whether the component is currently visible.
+        /// </summary>
+        public bool IsVisible { get; set; } = true;
+        /// <summary>
+        /// Gets or sets the perform.
+        /// </summary>
+        public Action Perform { get; set; }
+    }
+}

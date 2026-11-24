@@ -1,0 +1,9 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  def a_method(<blk>)
+    <emptyTree>
+  end
+
+  <self>.foobar() do ||
+    <runtime method definition of a_method>
+  end
+end

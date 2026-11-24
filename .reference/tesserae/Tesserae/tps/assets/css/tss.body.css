@@ -1,0 +1,33 @@
+﻿/* Body */
+/* Sizes are in px, so a phone's own text inflation (iOS in landscape, Android font boosting) only breaks the layout */
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    width: 100%;
+    height: 100vh;
+    height: 100svh;
+    min-width: 320px;
+    line-height: 1.4;
+    overflow-x: hidden;
+    overflow-y: scroll;
+    color: var(--tss-default-foreground-color);
+    background-color: var(--tss-default-background-color);
+    font-size: var(--tss-font-size-small);
+    font-family: var(--tss-sansserif-font-family);
+}
+
+/* Form controls do not inherit the document font, so an app that overrides
+   --tss-sansserif-font-family would otherwise keep the browser's own font inside every input. */
+input,
+textarea,
+select,
+button,
+optgroup {
+    font-family: inherit;
+}

@@ -1,0 +1,292 @@
+﻿using static Tesserae.UI;
+using static Transpose.Core.dom;
+using System.Linq;
+using System;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A spinner component used to indicate loading states.
+    /// </summary>
+    [Transpose.Name("tss.Spinner")]
+    public class Spinner : ComponentBase<Spinner, HTMLDivElement>
+    {
+        private readonly HTMLElement _container;
+        private readonly HTMLElement _label;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="Spinner"/> class.
+        /// </summary>
+        /// <param name="text">The label text.</param>
+        public Spinner(string text = string.Empty)
+        {
+            InnerElement = Div(Att("tss-spinner"));
+            _label       = Label(Att("tss-spinner-label", text: text));
+            _container   = Div(Att("tss-spinner-container tss-spinner-position-right tss-spinner-size-small"), InnerElement, _label);
+            AttachClick();
+        }
+
+        /// <summary>
+        /// Sets the spinner to indicate success.
+        /// </summary>
+        /// <returns>The current instance.</returns>
+        public Spinner Success()
+        {
+            InnerElement.classList.add("tss-spinner-success");
+            InnerElement.classList.remove("tss-spinner-danger", "tss-spinner-warning");
+            InnerElement.style.removeProperty("--tss-spinner-color");
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the spinner to indicate danger/error.
+        /// </summary>
+        /// <returns>The current instance.</returns>
+        public Spinner Danger()
+        {
+            InnerElement.classList.add("tss-spinner-danger");
+            InnerElement.classList.remove("tss-spinner-success", "tss-spinner-warning");
+            InnerElement.style.removeProperty("--tss-spinner-color");
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the spinner to indicate a warning.
+        /// </summary>
+        /// <returns>The current instance.</returns>
+        public Spinner Warning()
+        {
+            InnerElement.classList.add("tss-spinner-warning");
+            InnerElement.classList.remove("tss-spinner-success", "tss-spinner-danger");
+            InnerElement.style.removeProperty("--tss-spinner-color");
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the spinner to the primary color.
+        /// </summary>
+        /// <returns>The current instance.</returns>
+        public Spinner Primary()
+        {
+            InnerElement.classList.remove("tss-spinner-success", "tss-spinner-warning");
+            InnerElement.classList.remove("tss-spinner-danger", "tss-spinner-warning");
+            InnerElement.style.removeProperty("--tss-spinner-color");
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the spinner to the AI gradient - waiting on a model rather than on a server. The ring runs
+        /// purple to blue and fades into its tail, and the label beside it is painted with the same
+        /// gradient; the determinate form (<see cref="Progress(float)"/>) runs the gradient across the
+        /// filled part of the sweep. It rotates at the speed it always did.
+        /// </summary>
+        /// <param name="strongEffect">Asks for the louder form of the AI styling. A custom theme that tones the AI
+        /// look down (e.g. Tesserae.Themes.Curiosity) brings more of it back for this element; the default theme
+        /// draws both forms the same today. Sets the <c>tss-ai-strong</c> class.</param>
+        public Spinner AI(bool strongEffect = false)
+        {
+            InnerElement.classList.add("tss-ai");
+            InnerElement.UpdateClassIf(strongEffect, "tss-ai-strong");
+            _container.UpdateClassIf(strongEffect, "tss-ai-strong");
+            InnerElement.classList.remove("tss-spinner-success", "tss-spinner-danger");
+            InnerElement.style.removeProperty("--tss-spinner-color");
+            _container.classList.add("tss-ai-label");
+            return this;
+        }
+
+        /// <summary>
+        /// Configures the custom color on the component.
+        /// </summary>
+        public Spinner CustomColor(string color)
+        {
+            InnerElement.style.setProperty("--tss-spinner-color", color);
+            InnerElement.classList.remove("tss-spinner-success", "tss-spinner-warning");
+            InnerElement.classList.remove("tss-spinner-danger", "tss-spinner-warning");
+            return this;
+        }
+
+        /// <summary>
+        /// Gets or sets the position of the label.
+        /// </summary>
+        public LabelPosition Position
+        {
+            get
+            {
+                var s = _container.classList.FirstOrDefault(x => x.StartsWith("tss-spinner-position-"));
+                if (s != null && Enum.TryParse(s, true, out LabelPosition result)) return result;
+                return LabelPosition.Right;
+            }
+            set
+            {
+                var s = _container.classList.FirstOrDefault(x => x.StartsWith("tss-spinner-position-"));
+                if (s != null) _container.classList.remove(s);
+                _container.classList.add($"tss-spinner-position-{value.ToString().ToLower()}");
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the size of the spinner.
+        /// </summary>
+        public CircleSize Size
+        {
+            get
+            {
+                var s = _container.classList.FirstOrDefault(x => x.StartsWith("tss-spinner-size-"));
+                if (s != null && Enum.TryParse(s, true, out CircleSize result)) return result;
+                return CircleSize.Small;
+            }
+            set
+            {
+                var s = _container.classList.FirstOrDefault(x => x.StartsWith("tss-spinner-size-"));
+                if (s != null) _container.classList.remove(s);
+                _container.classList.add($"tss-spinner-size-{value.ToString().ToLower()}");
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the label text.
+        /// </summary>
+        public string Text
+        {
+            get => _label.innerText;
+            set => _label.innerText = value;
+        }
+
+        /// <summary>
+        /// Sets the progress position (between 0 and total).
+        /// </summary>
+        /// <param name="position">The current position.</param>
+        /// <param name="total">The total amount.</param>
+        /// <returns>The current instance.</returns>
+        public Spinner Progress(int position, int total) => Progress(100f * position / total);
+
+        /// <summary>
+        /// Sets the progress percentage (between 0 and 100).
+        /// </summary>
+        /// <param name="percent">The percentage.</param>
+        /// <returns>The current instance.</returns>
+        public Spinner Progress(float percent)
+        {
+            if (!InnerElement.classList.contains("tss-spinner-progress"))
+            {
+                InnerElement.classList.add("tss-spinner-progress");
+            }
+            percent = Math.Max(0f, Math.Min(100f, percent));
+            InnerElement.style.setProperty("--tss-spinner-progress", percent.ToString());
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the spinner back to the normal indeterminate state.
+        /// </summary>
+        /// <returns>The current instance.</returns>
+        public Spinner Indeterminate()
+        {
+            if (InnerElement.classList.contains("tss-spinner-progress"))
+            {
+                InnerElement.classList.remove("tss-spinner-progress");
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the component.
+        /// </summary>
+        /// <returns>The rendered HTML element.</returns>
+        public override HTMLElement Render()
+        {
+            return _container;
+        }
+
+        /// <summary>Sets the label position to left.</summary>
+        public Spinner Left()
+        {
+            Position = LabelPosition.Left;
+            return this;
+        }
+        /// <summary>Sets the label position to right.</summary>
+        public Spinner Right()
+        {
+            Position = LabelPosition.Right;
+            return this;
+        }
+        /// <summary>Sets the label position to above.</summary>
+        public Spinner Above()
+        {
+            Position = LabelPosition.Above;
+            return this;
+        }
+        /// <summary>Sets the label position to below.</summary>
+        public Spinner Below()
+        {
+            Position = LabelPosition.Below;
+            return this;
+        }
+
+        /// <summary>Sets the size to extra small.</summary>
+        public Spinner XSmall()
+        {
+            Size = CircleSize.XSmall;
+            return this;
+        }
+        /// <summary>Sets the size to small.</summary>
+        public Spinner Small()
+        {
+            Size = CircleSize.Small;
+            return this;
+        }
+        /// <summary>Sets the size to medium.</summary>
+        public Spinner Medium()
+        {
+            Size = CircleSize.Medium;
+            return this;
+        }
+        /// <summary>Sets the size to large.</summary>
+        public Spinner Large()
+        {
+            Size = CircleSize.Large;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the label text.
+        /// </summary>
+        /// <param name="text">The text.</param>
+        /// <returns>The current instance.</returns>
+        public Spinner SetText(string text)
+        {
+            Text = text;
+            return this;
+        }
+
+        /// <summary>
+        /// Represents the position of a spinner label.
+        /// </summary>
+        public enum LabelPosition
+        {
+            /// <summary>Above the spinner.</summary>
+            Above,
+            /// <summary>Below the spinner.</summary>
+            Below,
+            /// <summary>To the left of the spinner.</summary>
+            Left,
+            /// <summary>To the right of the spinner.</summary>
+            Right
+        }
+
+        /// <summary>
+        /// Represents the size of a spinner.
+        /// </summary>
+        public enum CircleSize
+        {
+            /// <summary>Extra small.</summary>
+            XSmall,
+            /// <summary>Small.</summary>
+            Small,
+            /// <summary>Medium.</summary>
+            Medium,
+            /// <summary>Large.</summary>
+            Large
+        }
+    }
+}

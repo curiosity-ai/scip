@@ -1,0 +1,435 @@
+#include "core/packages/PackageDB.h"
+#include "absl/strings/str_split.h"
+#include "core/GlobalState.h"
+
+using namespace std;
+
+namespace sorbet::core::packages {
+
+namespace {
+static const PackageInfo NONE_PKG(MangledName(), FileRef(), LocOffsets::none(), LocOffsets::none());
+} // namespace
+
+UnfreezePackages::UnfreezePackages(PackageDB &db) : db(db) {
+    ENFORCE(db.frozen);
+    db.writerThread = this_thread::get_id();
+    db.frozen = false;
+}
+
+UnfreezePackages::~UnfreezePackages() {
+    ENFORCE(!db.frozen);
+    db.writerThread = thread::id();
+    db.frozen = true;
+}
+
+MangledName PackageDB::enterPackage(unique_ptr<PackageInfo> pkg) {
+    ENFORCE(!frozen);
+    ENFORCE(writerThread == this_thread::get_id(), "PackageDB writes are not thread safe");
+    auto nr = pkg->mangledName();
+    auto [it, newlyInserted] = packages_.insert({nr, nullptr});
+    if (newlyInserted) {
+        for (const auto &prefix : pkg->pathPrefixes()) {
+            packagesByPathPrefix[prefix] = nr;
+        }
+        mangledNames.emplace_back(nr);
+    } else {
+        // Package files do not have full featured content hashing. If the contents of one changes
+        // we always run slow-path and fully rebuild the set of packages. In some cases, the LSP
+        // fast-path may re-run on an unchanged package file. Sanity check to ensure the loc and
+        // prefixes are the same.
+        ENFORCE(it->second->declLoc() == pkg->declLoc());
+        ENFORCE(it->second->pathPrefixes() == pkg->pathPrefixes());
+    }
+    it->second = move(pkg);
+    ENFORCE(mangledNames.size() == packages_.size());
+    return nr;
+}
+
+const MangledName PackageDB::getPackageNameForFile(FileRef file) const {
+    if (this->packageForFile_.size() <= file.id()) {
+        return MangledName();
+    }
+
+    return this->packageForFile_[file.id()];
+}
+
+MangledName PackageDB::getParentPackage(const GlobalState &gs, MangledName pkg) const {
+    ENFORCE(pkg.exists());
+
+    auto ownerSym = pkg.owner.data(gs)->owner;
+    while (ownerSym.exists() && ownerSym != core::Symbols::PackageSpecRegistry()) {
+        auto &owner = this->getPackageInfo(MangledName(ownerSym));
+
+        if (owner.exists()) {
+            return MangledName(ownerSym);
+        }
+
+        ownerSym = ownerSym.data(gs)->owner;
+    }
+
+    return MangledName();
+}
+
+void PackageDB::setPackageNameForFile(FileRef file, MangledName mangledName) {
+    if (this->packageForFile_.size() <= file.id()) {
+        this->packageForFile_.resize(file.id() + 1, MangledName());
+    }
+
+    this->packageForFile_[file.id()] = mangledName;
+}
+
+MangledName PackageDB::findPackageByPath(const core::GlobalState &gs, core::FileRef file) const {
+    ENFORCE(enabled_);
+
+    // Note about safety: we're only using the file data for two pieces of information: the file path and the
+    // sourceType. The path is present even on unloaded files, and the sourceType we're interested in is `Package`,
+    // which will have been loaded by a previous step for the packageDB to be valid.
+    //
+    // See https://github.com/sorbet/sorbet/pull/5291 for more information.
+    auto &fileData = file.dataAllowingUnsafe(gs);
+
+    return this->findPackageByPath(gs, fileData);
+}
+
+MangledName PackageDB::findPackageByPath(const core::GlobalState &gs, const core::File &fileData) const {
+    string_view path = fileData.path();
+    int curPrefixPos = path.find_last_of('/');
+    while (curPrefixPos > 0) {
+        const auto &it = packagesByPathPrefix.find(path.substr(0, curPrefixPos + 1));
+        if (it != packagesByPathPrefix.end()) {
+            return it->second;
+        }
+
+        if (fileData.isPackage(gs)) {
+            // When looking up a `__package.rb` file do not search parent directories
+            break;
+        }
+        curPrefixPos = path.find_last_of('/', curPrefixPos - 1);
+    }
+    return MangledName();
+}
+
+const PackageInfo &PackageDB::getPackageInfo(MangledName mangledName) const {
+    auto it = packages_.find(mangledName);
+    if (it == packages_.end()) {
+        return NONE_PKG;
+    }
+    return *it->second;
+}
+
+PackageInfo *PackageDB::getPackageInfoNonConst(MangledName mangledName) {
+    auto it = packages_.find(mangledName);
+    if (it == packages_.end()) {
+        return nullptr;
+    }
+    return it->second.get();
+}
+
+absl::Span<const MangledName> PackageDB::packages() const {
+    return absl::MakeSpan(mangledNames);
+}
+
+absl::Span<const string> PackageDB::skipRBIExportEnforcementDirs() const {
+    return absl::MakeSpan(skipRBIExportEnforcementDirs_);
+}
+
+absl::Span<const core::NameRef> PackageDB::layers() const {
+    return absl::MakeSpan(layers_);
+}
+
+const int PackageDB::layerIndex(core::NameRef layer) const {
+    auto findResult = absl::c_find(layers_, layer);
+    ENFORCE(findResult != layers_.end());
+    return distance(layers_.begin(), findResult);
+}
+
+const bool PackageDB::enforceLayering() const {
+    return !layers_.empty();
+}
+
+absl::Span<const string> PackageDB::extraPackageFilesDirectoryUnderscorePrefixes() const {
+    return absl::MakeSpan(extraPackageFilesDirectoryUnderscorePrefixes_);
+}
+
+absl::Span<const string> PackageDB::extraPackageFilesDirectorySlashDeprecatedPrefixes() const {
+    return absl::MakeSpan(extraPackageFilesDirectorySlashDeprecatedPrefixes_);
+}
+
+absl::Span<const string> PackageDB::extraPackageFilesDirectorySlashPrefixes() const {
+    return absl::MakeSpan(extraPackageFilesDirectorySlashPrefixes_);
+}
+
+const string_view PackageDB::errorHint() const {
+    return errorHint_;
+}
+
+void PackageDB::resolvePackagesWithRelaxedChecks(GlobalState &gs) {
+    UnorderedSet<MangledName> packagesWithRelaxedChecks;
+    for (const auto &pkgName : allowRelaxedPackagerChecksFor_) {
+        auto pkgNameParts = absl::StrSplit(pkgName, "::");
+        auto mangledName = MangledName::lookupMangledName(gs, pkgNameParts);
+        packagesWithRelaxedChecks.emplace(mangledName);
+    }
+    this->packagesWithRelaxedChecks_ = move(packagesWithRelaxedChecks);
+}
+
+void PackageDB::resolvePackagesToUpdateVisibilityFor(GlobalState &gs) {
+    if (updateVisibilityFor_.empty()) {
+        return;
+    }
+
+    UnorderedSet<MangledName> packagesToUpdateVisibilityFor;
+    for (const auto &pkgName : updateVisibilityFor_) {
+        auto pkgNameParts = absl::StrSplit(pkgName, "::");
+        auto mangledName = MangledName::lookupMangledName(gs, pkgNameParts);
+        packagesToUpdateVisibilityFor.emplace(mangledName);
+    }
+    this->packagesToUpdateVisibilityFor_ = move(packagesToUpdateVisibilityFor);
+}
+
+bool PackageDB::allowRelaxedPackagerChecksFor(MangledName mangledName) const {
+    return this->packagesWithRelaxedChecks_.contains(mangledName);
+}
+
+bool PackageDB::updateVisibilityFor(MangledName mangledName) const {
+    return this->packagesToUpdateVisibilityFor_.contains(mangledName);
+}
+
+bool PackageDB::anyUpdateVisibilityFor() const {
+    return this->packagesToUpdateVisibilityFor_.size() > 0;
+}
+
+PackageDB PackageDB::deepCopy() const {
+    ENFORCE(frozen);
+    PackageDB result;
+
+    // --- data ---
+    result.packages_.reserve(this->packages_.size());
+    for (auto const &[nr, pkgInfo] : this->packages_) {
+        result.packages_[nr] = pkgInfo->deepCopy();
+    }
+    result.packagesByPathPrefix = this->packagesByPathPrefix;
+    // This assumes that the GlobalState this PackageDB is getting copied into also has these
+    // interned mangledName NameRefs at the same IDs as the current PackageDB.
+    result.mangledNames = this->mangledNames;
+    // Likewise, this assumes that the GlobalState this PackageDB is getting copied into also has
+    // the same set of files available.
+    result.packageForFile_ = this->packageForFile_;
+
+    // --- options ---
+    result.enabled_ = this->enabled_;
+    result.genPackagesMode_ = this->genPackagesMode_;
+    result.allowRelaxingTestVisibility_ = this->allowRelaxingTestVisibility_;
+    result.extraPackageFilesDirectoryUnderscorePrefixes_ = this->extraPackageFilesDirectoryUnderscorePrefixes_;
+    result.extraPackageFilesDirectorySlashDeprecatedPrefixes_ =
+        this->extraPackageFilesDirectorySlashDeprecatedPrefixes_;
+    result.extraPackageFilesDirectorySlashPrefixes_ = this->extraPackageFilesDirectorySlashPrefixes_;
+    result.skipRBIExportEnforcementDirs_ = this->skipRBIExportEnforcementDirs_;
+    // This assumes that the GlobalState this PackageDB is getting copied into also has these
+    // interned layer NameRefs at the same IDs as the current PackageDB.
+    result.layers_ = this->layers_;
+    result.allowRelaxedPackagerChecksFor_ = this->allowRelaxedPackagerChecksFor_;
+    // Likewise, this assumes that we've entered MangledNames in the target GlobalState, but ALSO
+    // that we've copied symbols, because MangledNames store ClassOrModuleRef's now
+    result.packagesWithRelaxedChecks_ = this->packagesWithRelaxedChecks_;
+    result.updateVisibilityFor_ = this->updateVisibilityFor_;
+    result.packagesToUpdateVisibilityFor_ = this->packagesToUpdateVisibilityFor_;
+    result.errorHint_ = this->errorHint_;
+
+    return result;
+}
+
+UnfreezePackages PackageDB::unfreeze() {
+    return UnfreezePackages(*this);
+}
+
+void PackageDB::setCondensation(Condensation &&condensation) {
+    this->condensation_ = move(condensation);
+}
+
+const Condensation &PackageDB::condensation() const {
+    return this->condensation_;
+}
+
+namespace {
+// TODO(neil): deduplicate, this helper is also declared in VisibilityChecker.cc
+core::SymbolRef getEnumClassForEnumValue(const core::GlobalState &gs, core::SymbolRef sym) {
+    if (sym.isStaticField(gs) && sym.owner(gs).isClassOrModule()) {
+        auto owner = sym.owner(gs);
+        // There's a hidden class like `MyEnum::X$1` between `MyEnum::X` and `T::Enum` in the ancestor chain.
+        if (owner.asClassOrModuleRef().data(gs)->superClass() == core::Symbols::T_Enum()) {
+            return owner;
+        }
+    }
+
+    return core::Symbols::noSymbol();
+}
+
+bool ownerWillBeExported(const core::GlobalState &gs, const vector<core::SymbolRef> &alreadyExported,
+                         core::ClassOrModuleRef owner) {
+    while (owner != core::Symbols::root()) {
+        if (absl::c_find(alreadyExported, owner) != alreadyExported.end()) {
+            return true;
+        }
+        owner = owner.data(gs)->owner;
+    }
+    return false;
+}
+
+void exportClassOrModule(const core::GlobalState &gs,
+                         UnorderedMap<core::packages::MangledName, vector<core::SymbolRef>> &toExport,
+                         core::ClassOrModuleRef symbol, vector<core::FileRef> &referencingFiles) {
+    auto data = symbol.data(gs);
+    auto owningPackage = data->package;
+    if (!owningPackage.exists() || gs.packageDB().getPackageInfo(owningPackage).locs.exportAll.exists()) {
+        return;
+    }
+
+    for (auto &f : referencingFiles) {
+        auto packageForF = gs.packageDB().getPackageNameForFile(f);
+        if (packageForF == owningPackage || gs.packageDB().allowRelaxedPackagerChecksFor(packageForF)) {
+            continue;
+        }
+
+        if (packageForF.exists()) {
+            auto &referencingPkgInfo = gs.packageDB().getPackageInfo(packageForF);
+            auto *imp = referencingPkgInfo.importsPackage(owningPackage);
+            if (imp != nullptr && imp->usesInternals) {
+                continue;
+            }
+        }
+
+        if (ownerWillBeExported(gs, toExport[owningPackage], data->owner)) {
+            // No need to check the rest of referencingFiles, we're already going to export the owner
+            break;
+        }
+
+        toExport[owningPackage].push_back(symbol);
+        break;
+    }
+}
+
+void exportField(const core::GlobalState &gs,
+                 UnorderedMap<core::packages::MangledName, vector<core::SymbolRef>> &toExport, core::FieldRef symbol,
+                 vector<core::FileRef> &referencingFiles) {
+    auto data = symbol.data(gs);
+    auto owningPackage = data->owner.data(gs)->package;
+    if (!owningPackage.exists() || gs.packageDB().getPackageInfo(owningPackage).locs.exportAll.exists()) {
+        return;
+    }
+
+    for (auto &f : referencingFiles) {
+        auto packageForF = gs.packageDB().getPackageNameForFile(f);
+        if (packageForF == owningPackage || gs.packageDB().allowRelaxedPackagerChecksFor(packageForF)) {
+            continue;
+        }
+
+        if (packageForF.exists()) {
+            auto &referencingPkgInfo = gs.packageDB().getPackageInfo(packageForF);
+            auto *imp = referencingPkgInfo.importsPackage(owningPackage);
+            if (imp != nullptr && imp->usesInternals) {
+                continue;
+            }
+        }
+
+        if (ownerWillBeExported(gs, toExport[owningPackage], data->owner)) {
+            // No need to check the rest of referencingFiles, we're already going to export the owner
+            break;
+        }
+
+        auto maybeEnumClass = getEnumClassForEnumValue(gs, core::SymbolRef(symbol));
+        if (maybeEnumClass.exists()) {
+            // No need to check if maybeEnumClass is already going to be exported since we have a ownerWillBeExported
+            // call above
+            toExport[owningPackage].push_back(maybeEnumClass);
+        } else {
+            toExport[owningPackage].push_back(symbol);
+        }
+        break;
+    }
+}
+
+UnorderedMap<core::SymbolRef, vector<core::FileRef>> computeReferencingFiles(const core::GlobalState &gs) {
+    auto referencingFiles = UnorderedMap<core::SymbolRef, vector<core::FileRef>>{};
+    // symbolsReferencedByFile is a map from file -> [symbol] referenced in that file
+    // This loop computes the inverse: referencingFiles is a map from symbol -> [file] that reference that symbol
+    Timer timeit(gs.tracer(), "gen_packages.compute_referencing_files");
+    auto numFiles = gs.getFiles().size();
+    for (auto i = 1; i < numFiles; i++) {
+        core::FileRef fref(i);
+        auto referencedSymbols = gs.getSymbolsReferencedByFile(fref);
+        for (auto &symbol : referencedSymbols) {
+            referencingFiles[symbol].push_back(fref);
+        }
+    }
+    return referencingFiles;
+}
+}; // namespace
+
+UnorderedMap<core::packages::MangledName, vector<core::SymbolRef>>
+PackageDB::exportsByPackage(const core::GlobalState &gs) {
+    auto referencingFiles = computeReferencingFiles(gs);
+
+    auto toExport = UnorderedMap<core::packages::MangledName, vector<core::SymbolRef>>{};
+    for (uint32_t i = 1; i < gs.classAndModulesUsed(); ++i) {
+        auto classOrModuleRef = core::ClassOrModuleRef(gs, i);
+        exportClassOrModule(gs, toExport, classOrModuleRef, referencingFiles[classOrModuleRef]);
+    }
+    for (uint32_t i = 1; i < gs.fieldsUsed(); ++i) {
+        auto fieldRef = core::FieldRef(gs, i);
+        exportField(gs, toExport, fieldRef, referencingFiles[fieldRef]);
+    }
+    return toExport;
+}
+
+optional<core::AutocorrectSuggestion> PackageDB::aggregateMissingExportsForFile(const core::GlobalState &gs,
+                                                                                const core::FileRef fref) {
+    auto toExport = UnorderedMap<core::packages::MangledName, vector<core::SymbolRef>>{};
+    auto referencingFiles = vector<FileRef>{fref};
+    for (auto &sym : gs.getSymbolsReferencedByFile(fref)) {
+        if (sym.isFieldOrStaticField()) {
+            exportField(gs, toExport, sym.asFieldRef(), referencingFiles);
+        } else if (sym.isClassOrModule()) {
+            exportClassOrModule(gs, toExport, sym.asClassOrModuleRef(), referencingFiles);
+        } else {
+            ENFORCE(false);
+        }
+    }
+
+    vector<core::AutocorrectSuggestion::Edit> allEdits;
+    for (auto &[pkgName, syms] : toExport) {
+        auto &pkgInfo = gs.packageDB().getPackageInfo(pkgName);
+        ENFORCE(pkgInfo.exists());
+        for (auto &symbol : syms) {
+            switch (symbol.kind()) {
+                case core::SymbolRef::Kind::ClassOrModule:
+                    if (symbol.asClassOrModuleRef().data(gs)->flags.isExported) {
+                        continue;
+                    }
+                    break;
+                case core::SymbolRef::Kind::FieldOrStaticField:
+                    if (symbol.asFieldRef().data(gs)->flags.isExported) {
+                        continue;
+                    }
+                    break;
+                case core::SymbolRef::Kind::TypeMember:
+                case core::SymbolRef::Kind::Method:
+                case core::SymbolRef::Kind::TypeParameter:
+                    ENFORCE(false, "trying to export something other than ClassOrModule or FieldOrStaticField");
+            }
+            auto autocorrect = pkgInfo.addExport(gs, symbol);
+            if (autocorrect.has_value()) {
+                allEdits.insert(allEdits.end(), make_move_iterator(autocorrect.value().edits.begin()),
+                                make_move_iterator(autocorrect.value().edits.end()));
+            }
+        }
+    }
+
+    if (allEdits.empty()) {
+        return nullopt;
+    }
+
+    AutocorrectSuggestion::mergeAdjacentEdits(allEdits);
+    return core::AutocorrectSuggestion{"Add missing exports", move(allEdits)};
+}
+} // namespace sorbet::core::packages

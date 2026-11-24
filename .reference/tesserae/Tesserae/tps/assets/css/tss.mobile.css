@@ -1,0 +1,543 @@
+/* Mobile styles — applied when body has the tss-mobile class */
+
+/* ─── Layout ─────────────────────────────────────────────────────────────── */
+
+/* Top-level page layout: sidebar + content becomes stacked vertically on mobile */
+body.tss-mobile .tss-page-layout {
+    flex-direction: column !important;
+}
+
+/* ─── Navbar (Sidebar in mobile mode) ────────────────────────────────────── */
+
+/* Fixed full-width navbar bar at the top */
+body.tss-mobile .tss-navbar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100vw !important;
+    height: 52px !important;
+    z-index: 1002 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12) !important;
+    padding: 0 12px !important;
+}
+
+/* Push the page content area down below the fixed navbar, and make it own the full
+   width of the column.
+
+   The width matters as much as the offset: an app that built its shell as a row
+   (sidebar | content) gives the content `width: 1px` plus `flex-grow`, which is how a
+   flex item claims the leftover main axis. Flipping the direction to column above turns
+   width into the *cross* axis, so that 1px stops being a growable basis and becomes the
+   content's actual width — a page one pixel wide, which reads as a blank white screen.
+   Restating the sizing for the new axis keeps a layout built for either mode readable. */
+body.tss-mobile .tss-page-layout > .tss-stack-item:last-child {
+    margin-top: 52px;
+    width: 100% !important;
+    height: auto !important;
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+}
+
+/* Full-screen drawer: always in DOM for animation, positioned fixed */
+body.tss-mobile .tss-navbar .tss-navbar-drawer {
+    display: flex !important;
+    flex-direction: column !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    right: auto !important;
+    width: 85vw !important;
+    max-width: 320px !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    z-index: 1001 !important;
+    padding: 0 !important;
+    overflow-y: auto !important;
+    transform: translateX(-105%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.28s ease;
+    box-shadow: none;
+    background: var(--tss-sidebar-background-color);
+}
+
+/* Closed state — off-screen; use tss-collapse as the authoritative toggle */
+body.tss-mobile .tss-navbar .tss-navbar-drawer.tss-collapse {
+    display: flex !important;
+    transform: translateX(-105%) !important;
+    pointer-events: none !important;
+}
+
+/* Open state — slide in; no tss-collapse means the drawer is visible */
+body.tss-mobile .tss-navbar .tss-navbar-drawer:not(.tss-collapse) {
+    transform: translateX(0) !important;
+    pointer-events: all !important;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* ─── Mobile backdrop (real DOM element, injected by Sidebar.AsNavbar()) ──── */
+
+/* Hidden by default — only shown on mobile, and only when visible class is added */
+.tss-mobile-backdrop {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.28s ease;
+}
+
+body.tss-mobile .tss-mobile-backdrop {
+    display: block;
+}
+
+.tss-mobile-backdrop.tss-mobile-backdrop-visible {
+    opacity: 1;
+    pointer-events: all;
+}
+
+/* Mobile-only drawer header (close button row) */
+.tss-navbar-mobile-header {
+    display: none;
+}
+
+body.tss-mobile .tss-navbar-mobile-header {
+    display: flex !important;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px 16px;
+    border-bottom: 1px solid var(--tss-default-border-color);
+    min-height: 52px;
+    flex-shrink: 0;
+}
+
+/* Mobile close button */
+.tss-navbar-mobile-close {
+    display: none !important;
+}
+
+body.tss-mobile .tss-navbar-mobile-close {
+    display: inline-flex !important;
+    padding: 0 !important;
+    width: 32px !important;
+    height: 32px !important;
+    min-height: unset !important;
+    border-radius: 6px !important;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Drawer middle scrollable area — full height minus header/footer */
+body.tss-mobile .tss-navbar .tss-navbar-drawer .tss-sidebar-middle {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    max-height: none !important;
+    padding: 8px 12px !important;
+}
+
+/* Drawer footer */
+body.tss-mobile .tss-navbar .tss-navbar-drawer .tss-sidebar-footer {
+    flex-shrink: 0 !important;
+    padding: 8px 12px !important;
+    border-top: 1px solid var(--tss-default-border-color);
+}
+
+/* Burger button — slightly larger for touch */
+body.tss-mobile .tss-navbar-burger {
+    width: 40px !important;
+    height: 40px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* ─── Sidebar hidden in mobile (only a navbar or a page is shown) ────────── */
+/* A sidebar rendering as a page (Sidebar.AsPage) is the other mobile layout, and a child sidebar it has
+   shifted into lives inside it. */
+body.tss-mobile .tss-sidebar:not(.tss-navbar):not(.tss-sidebar-page):not(.tss-sidebar-page .tss-sidebar) {
+    display: none !important;
+}
+
+/* ─── Touch targets ──────────────────────────────────────────────────────── */
+/* 40px is the standard height of a button on a phone (Material 3); rows in a list get 44px (Apple HIG).
+   Anything taller reads as oversized next to the platform's own controls, and a small button stays small:
+   it is small because it sits inline with text or in a dense toolbar. */
+body.tss-mobile .tss-btn {
+    min-height: 40px !important;
+}
+
+body.tss-mobile .tss-btn.tss-small {
+    min-height: 32px !important;
+}
+
+/* A button inside a search field is part of the field, not a touch target of its own: taller than the
+   field's 36px it overflows it, and a host's footer items - some of them wrapped in a Defer - land
+   off-centre. So in there it keeps the floor it has on a desktop. */
+body.tss-mobile .tss-omnibox-search-container .tss-btn {
+    min-height: 36px !important;
+}
+
+body.tss-mobile .tss-sidebar-btn-open > .tss-btn,
+body.tss-mobile .tss-sidebar-btn-open > a > .tss-btn {
+    height: 44px !important;
+    min-height: 44px !important;
+}
+
+body.tss-mobile .tss-sidebar-commands-line .tss-btn,
+body.tss-mobile .tss-sidebar-commands-line-extra .tss-btn,
+body.tss-mobile .tss-sidebar.tss-sidebar-closed .tss-sidebar-btn.tss-btn {
+    height: 40px !important;
+    min-height: 40px !important;
+}
+
+/* Sidebar nav arrow shifted for taller rows */
+body.tss-mobile .tss-sidebar-nav-header > .tss-sidebar-nav-arrow.tss-btn {
+    top: 12px !important;
+}
+
+body.tss-mobile .tss-sidebar-commands {
+    top: 10px !important;
+}
+
+/* ─── Sidebar as a page ──────────────────────────────────────────────────── */
+/* A page is the whole screen, so it does not need the gutter a rail keeps against the content. */
+body.tss-mobile .tss-sidebar.tss-sidebar-page {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+/* ─── Typography adjustments ─────────────────────────────────────────────── */
+body.tss-mobile {
+    font-size: var(--tss-font-size-smallplus);
+}
+
+/* ─── Card adjustments ───────────────────────────────────────────────────── */
+body.tss-mobile .tss-card {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+}
+
+/* ─── Dropdown / context menus — prevent overflow on narrow screens ──────── */
+body.tss-mobile .tippy-box {
+    max-width: min(340px, 95vw) !important;
+}
+
+/* ─── Pagination — smaller controls ─────────────────────────────────────── */
+body.tss-mobile .tss-pagination .tss-btn {
+    min-width: 36px !important;
+    padding: 0 6px !important;
+}
+
+/* ─── CommandBar — hide overflow items ───────────────────────────────────── */
+body.tss-mobile .tss-commandbar {
+    flex-wrap: wrap !important;
+}
+
+/* ─── Panel — full width on mobile ──────────────────────────────────────── */
+body.tss-mobile .tss-panel {
+    width: 100vw !important;
+    max-width: 100vw !important;
+}
+
+/* ─── Modal / Dialog — full width on small screens ──────────────────────── */
+@media (max-width: 480px) {
+    body.tss-mobile .tss-modal,
+    body.tss-mobile .tss-dialog {
+        width: 95vw !important;
+        max-width: 95vw !important;
+    }
+}
+
+/* ─── Scrollbar — thinner on mobile ─────────────────────────────────────── */
+body.tss-mobile ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+body.tss-mobile ::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+    background: rgba(var(--tss-secondary-foreground-color-root), 0.3);
+}
+
+/* ─── Section Stack ─────────────────────────────────────── */
+
+.tss-mobile .tss-sectionstack {
+    padding: 8px 8px 8px 16px;
+}
+
+/* ─── Section Title — wrap trailing commands onto their own line ──────────── */
+/* The title row is a single no-wrap flex row: icon + title + grow-spacer +
+   commands (e.g. a page's "Documentation" / "View Code" actions). On a narrow
+   screen the commands get pushed past the right edge and are clipped by the
+   content area's hidden horizontal overflow, so they become unreachable.
+   Letting the row wrap drops the commands onto their own line, kept
+   right-aligned, where they stay tappable. */
+body.tss-mobile .tss-sectiontitle-top {
+    flex-wrap: wrap !important;
+    row-gap: 8px;
+}
+
+body.tss-mobile .tss-sectiontitle-commands {
+    margin-left: auto;
+    flex-wrap: wrap !important;
+    justify-content: flex-end;
+}
+
+/* Let the title itself wrap rather than force the row wider than the viewport. */
+body.tss-mobile .tss-sectiontitle-title {
+    white-space: normal !important;
+}
+
+/* ─── Cards — tighter inner padding to reclaim horizontal space ───────────── */
+/* The default card padding eats a large share of a phone's width; trim it so
+   form fields and text get more room without touching the desktop layout. */
+body.tss-mobile .tss-card {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+}
+
+/* ─── Inputs — avoid iOS Safari's auto-zoom on focus ──────────────────────── */
+/* Mobile Safari zooms the whole page in when a focused field's font is below
+   16px. Floor text-entry controls at 16px (but never shrink a larger one). */
+body.tss-mobile .tss-textbox,
+body.tss-mobile .tss-textarea,
+body.tss-mobile .tss-searchbox input,
+body.tss-mobile .tss-omnibox-search-input,
+body.tss-mobile input[type="text"],
+body.tss-mobile input[type="search"],
+body.tss-mobile input[type="number"],
+body.tss-mobile input[type="email"],
+body.tss-mobile input[type="password"],
+body.tss-mobile textarea {
+    font-size: max(16px, 1em) !important;
+}
+
+/* ─── OmniBox — one row on a phone ───────────────────────────────────────── */
+/* [+] [input] [send]. The footer is dissolved into the box's own row (display: contents) and keeps only
+   what OmniBox marks .tss-omnibox-mobile-keep - the send and search buttons, and the "+" that opens the
+   rest of the footer in a sheet (OmniBox.ShowMobileOptions). Everything else is hidden here, not removed:
+   a host's own footer items are in the sheet as soon as it opens. .tss-omnibox-footer-measuring lifts the
+   rule for the moment OmniBox asks which of them the current mode shows. */
+body.tss-mobile .tss-omnibox-container.tss-omnibox-mode-chat,
+body.tss-mobile .tss-omnibox-container.tss-omnibox-chat-and-search {
+    --tss-omnibox-radius: 22px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    padding: 4px;
+    column-gap: 2px;
+}
+
+body.tss-mobile .tss-omnibox-container > .tss-omnibox-footer {
+    display: contents;
+}
+
+    body.tss-mobile .tss-omnibox-footer:not(.tss-omnibox-footer-measuring) > :not(.tss-omnibox-mobile-keep) {
+        display: none !important;
+    }
+
+/* What is attached to the next message, above the row */
+body.tss-mobile .tss-omnibox-container > .tss-omnibox-chat-header,
+body.tss-mobile .tss-omnibox-container > .tss-omnibox-context {
+    order: 1;
+    width: 100%;
+    flex: 0 0 100%;
+}
+
+body.tss-mobile .tss-omnibox-footer > .tss-omnibox-mobile-options {
+    order: 2;
+}
+
+/* The input of the row - only in a box with a chat half: a plain search box is already one row, and keeps
+   its desktop layout */
+body.tss-mobile .tss-omnibox-container > .tss-omnibox-chat-container,
+body.tss-mobile .tss-omnibox-container.tss-omnibox-chat-and-search > .tss-omnibox-search-container {
+    order: 3;
+    flex: 1 1 0%;
+    width: auto;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* One line of text is as tall as the buttons beside it (4 + 28 + 4 = 36), so the row centres on all three and
+   a message that grows keeps them level with its last line. A textarea is inline by default, and the line
+   box it sits on added a baseline gap below it that pushed the text up and the buttons down. The search half of
+   a chat-and-search box takes the same inset, so switching modes leaves the text where it was. */
+body.tss-mobile .tss-omnibox-container > .tss-omnibox-chat-container,
+body.tss-mobile .tss-omnibox-container.tss-omnibox-chat-and-search > .tss-omnibox-search-container {
+    padding: 4px;
+}
+
+    body.tss-mobile .tss-omnibox-container > .tss-omnibox-chat-container > .tss-omnibox-chat-input {
+        display: block;
+    }
+
+    /* With code boxes in it the input scrolls past a lower cap than on a desktop: the keyboard has the other half */
+    body.tss-mobile .tss-omnibox-container > .tss-omnibox-chat-container.tss-omnibox-has-code {
+        max-height: 40vh;
+    }
+
+body.tss-mobile .tss-omnibox-footer > .tss-omnibox-mobile-keep:not(.tss-omnibox-mobile-options) {
+    order: 4;
+}
+
+body.tss-mobile .tss-omnibox-footer > .tss-btn {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px !important;
+    padding: 0px;
+    margin: 0px;
+    border-radius: var(--tss-border-radius-full);
+    flex-shrink: 0;
+}
+
+.tss-omnibox-mobile-options {
+    display: none;
+}
+
+body.tss-mobile .tss-omnibox-footer > .tss-omnibox-mobile-options {
+    display: inline-flex;
+    box-shadow: none;
+    background: transparent;
+}
+
+/* The sheet the rest of the footer moves into: one item per row, each at a size a thumb can hit */
+.tss-omnibox-mobile-options-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 8px;
+}
+
+.tss-omnibox-mobile-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    flex-wrap: wrap;
+}
+
+    .tss-omnibox-mobile-option.tss-omnibox-mobile-option-labelled {
+        cursor: pointer;
+    }
+
+    .tss-omnibox-mobile-option > .tss-btn {
+        margin: 0px;
+    }
+
+.tss-omnibox-mobile-option-label {
+    font-size: var(--tss-font-size-smallplus);
+    color: var(--tss-default-foreground-color);
+}
+
+/* ─── Button.HideTextOnMobile — the icon alone ──────────────────────────── */
+/* Only a button that has an icon to fall back on, and drawn the way a button that never had text is. */
+body.tss-mobile .tss-btn.tss-btn-hide-text-mobile:has(> i) > span {
+    display: none;
+}
+
+body.tss-mobile .tss-btn.tss-btn-hide-text-mobile:has(> i) {
+    min-width: unset !important;
+    aspect-ratio: 1;
+    padding: 0px 10px;
+}
+
+    body.tss-mobile .tss-btn.tss-btn-hide-text-mobile:has(> i) > i {
+        margin: 0px !important;
+    }
+
+/* ─── Keyboard shortcuts — none on a device without a keyboard ──────────── */
+/* Every chip the toolkit draws for a key, wherever it sits, and the room reserved for one on a sidebar row. */
+body.tss-mobile .tss-kbd-shortcut,
+body.tss-mobile .tss-sidebar-btn-shortcut,
+body.tss-mobile .tss-searchbox-shortcut,
+body.tss-mobile .tss-omnibox-shortcut,
+body.tss-mobile .tss-commandpalette-shortcut,
+body.tss-mobile .tss-commandpalette-shortcuts,
+body.tss-mobile .tss-omniresult-modal-shortcuts {
+    display: none !important;
+}
+
+body.tss-mobile .tss-sidebar-btn-open > .tss-btn.tss-sidebar-btn-has-shortcut,
+body.tss-mobile .tss-sidebar-btn-open > a > .tss-btn.tss-sidebar-btn-has-shortcut {
+    padding-right: 0px;
+}
+
+/* ─── Chat — every message the width of the screen ──────────────────────── */
+/* A bubble capped at a share of a phone's width wraps a short answer into a column, so every message takes
+   the whole row, and the commands beside it stay on screen: there is no hover to bring them in. */
+body.tss-mobile .tss-chatarea {
+    padding: 8px;
+}
+
+body.tss-mobile .tss-chatmessage-container .tss-chatmessage-bubble {
+    max-width: none;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+body.tss-mobile .tss-chatmessage-avatar {
+    margin-left: 0px;
+    margin-right: 6px;
+}
+
+body.tss-mobile .tss-chat-right .tss-chatmessage-avatar {
+    margin-left: 6px;
+    margin-right: 0px;
+}
+
+/* The commands get a line of their own under the message, at its end, rather than a column beside it that
+   every line of the message would pay for */
+body.tss-mobile .tss-chatmessage-container {
+    flex-wrap: wrap;
+}
+
+body.tss-mobile .tss-chatmessage-commands {
+    opacity: 1;
+    flex: 0 0 100%;
+    display: flex;
+    justify-content: flex-end;
+    margin: 2px 0px 0px 0px;
+}
+
+/* ─── Message — a horizontal strip wraps ──────────────────────────────────── */
+/* Beside an icon and an action, the text of a horizontal message is left a column a word wide on a phone. The
+   icon keeps its place beside the text, and the action drops to a line of its own under both. */
+body.tss-mobile .tss-message-horizontal {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px 14px;
+}
+
+    body.tss-mobile .tss-message-horizontal .tss-message-icon {
+        font-size: 22px;
+        width: 36px;
+        height: 36px;
+        line-height: 36px;
+        flex-shrink: 0;
+    }
+
+        body.tss-mobile .tss-message-horizontal .tss-message-icon i {
+            line-height: 36px;
+        }
+
+    body.tss-mobile .tss-message-horizontal .tss-message-content {
+        flex: 1 1 0%;
+        min-width: 0;
+    }
+
+    body.tss-mobile .tss-message-horizontal .tss-message-action:not(:empty) {
+        flex: 1 0 100%;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+    }

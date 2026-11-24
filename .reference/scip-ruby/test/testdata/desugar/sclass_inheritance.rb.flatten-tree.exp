@@ -1,0 +1,48 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  def main(<blk>)
+    begin
+      <self>.puts(::A.newer())
+      <self>.puts(::B.newer())
+      <self>.puts(::C.newerer())
+    end
+  end
+
+  module ::MM<<C MM>> < ()
+  end
+
+  class ::A<<C A>> < (::<todo sym>)
+    class <singleton class><<Class:A>> < (::MM)
+      def newer(<blk>)
+        <self>.new()
+      end
+
+      <self>.include(::MM)
+
+      <runtime method definition of newer>
+    end
+  end
+
+  class ::B<<C B>> < (::<todo sym>)
+    def self.newer(<blk>)
+      <self>.new()
+    end
+
+    <self>.extend(::MM)
+
+    <runtime method definition of self.newer>
+  end
+
+  class ::C<<C C>> < (::A)
+    class <singleton class><<Class:C>> < ()
+      def newerer(<blk>)
+        <self>.newer()
+      end
+
+      <runtime method definition of newerer>
+    end
+  end
+
+  <runtime method definition of main>
+
+  <self>.main()
+end

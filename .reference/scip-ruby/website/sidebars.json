@@ -1,0 +1,103 @@
+{
+  "core": {
+    "Getting Started": [
+      "overview",
+      "adopting",
+      "metrics",
+      "quickref",
+      "vscode",
+      "from-typescript"
+    ],
+    "Static & Runtime": [
+      "gradual",
+      "static",
+      "runtime",
+      "load-time-tuning",
+      "rbi",
+      "cli",
+      "cli-ref",
+      "tconfiguration"
+    ],
+    "Troubleshooting": [
+      "troubleshooting",
+      "why-type-annotations",
+      "faq",
+      "error-reference",
+      "unsupported"
+    ],
+    "Type System": [
+      "sigs",
+      "type-annotations",
+      "type-assertions",
+      "class-types",
+      "stdlib-generics",
+      "nilable-types",
+      "union-types",
+      "flow-sensitive",
+      "type-aliases",
+      "exhaustiveness",
+      "tstruct",
+      "tenum",
+      "untyped",
+      "procs",
+      "abstract",
+      "final",
+      "override-checking",
+      "sealed",
+      "class-of",
+      "self-type",
+      "noreturn",
+      "anything",
+      "attached-class",
+      "intersection-types",
+      "generics",
+      "strong"
+    ],
+    "Ruby & DSL Features": [
+      "attr_reader",
+      "minitest"
+    ],
+    "Editor Features": [
+      "lsp",
+      "server-status",
+      "lsp-typed-level",
+      "go-to-def",
+      "hover",
+      "autocompletion",
+      "references",
+      "code-actions",
+      "outline",
+      "doc-comments",
+      "sig-suggestion",
+      "highlight-untyped",
+      "sorbet-uris"
+    ],
+    "Experimental Features": [
+      "tuples",
+      "shapes",
+      "overloads",
+      "requires-ancestor",
+      "rbs-support"
+    ]
+  },
+  "talks": {
+    "Talks": [
+      "talks/ruby-kaigi-2018",
+      "talks/strange-loop-2018",
+      "talks/ruby-conf-2018",
+      "talks/ruby-kaigi-2019",
+      "talks/curry-on-2019",
+      "talks/jvm-ls-2019",
+      "talks/ruby-conf-2019",
+      "talks/qcon-2019",
+      "talks/parisrb-2020",
+      "talks/pdxrb-2020",
+      "talks/ruby-conf-2021"
+    ]
+  },
+  "legal": {
+    "Legal": [
+      "legal/trademark-policy"
+    ]
+  }
+}

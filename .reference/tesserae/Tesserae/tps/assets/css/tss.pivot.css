@@ -1,0 +1,260 @@
+/* Tabs */
+.tss-pivot {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    /* The pane below reaches --tss-focus-ring-room beyond this box (its negative margin): let that much show. */
+    overflow: clip;
+    overflow-clip-margin: var(--tss-focus-ring-room);
+    position: relative;
+}
+
+.tss-pivot-titlebar-wrapper {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    flex-shrink: 0;
+    flex-grow: 0;
+    align-items: stretch;
+    width: 100%;
+    background: var(--tss-secondary-background-color);
+    /* Above the content pane, which overlaps the bottom edge of the strip by its focus ring room. */
+    position: relative;
+    z-index: 1;
+}
+
+.tss-pivot-titlebar-scroller {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0; /* allow the scroller to shrink below its content size */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none; /* Firefox: hide native scrollbar (scroll buttons handle it) */
+    -ms-overflow-style: none;
+}
+
+.tss-pivot-titlebar-scroller::-webkit-scrollbar {
+    display: none;
+}
+
+.tss-pivot-titlebar {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    /* Stretch to fill the scroller when tabs are narrower (so justify-content works)
+       and grow with the content when tabs overflow (enabling horizontal scroll). */
+    min-width: 100%;
+    width: max-content;
+    font-size: 14px;
+    font-weight: 400;
+    box-shadow: none;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    color: var(--tss-primary-background-color);
+    white-space: nowrap;
+}
+
+    .tss-pivot-titlebar > * {
+        background: var(--tss-secondary-background-color);
+        border: 0px;
+        margin: 0px;
+        flex-shrink: 0;
+    }
+
+
+    .tss-pivot-titlebar > .tss-pivot-selected-title {
+        font-weight: var(--tss-font-weight-semibold);
+        background: transparent;
+    }
+
+        .tss-pivot-titlebar > .tss-pivot-selected-title > span {
+            font-weight: var(--tss-font-weight-semibold);
+        }
+
+        .tss-pivot-titlebar > .tss-pivot-selected-title > div {
+            font-weight: var(--tss-font-weight-semibold);
+        }
+
+.tss-pivot-titlebar-more,
+.tss-pivot-titlebar-scroll-left,
+.tss-pivot-titlebar-scroll-right {
+    flex-shrink: 0;
+    flex-grow: 0;
+    align-self: stretch;
+}
+
+/* NoMinSize and NoPadding leave an icon button as wide as its glyph - 10px for the chevrons - which is no
+   target for a pointer; a textless Button also writes an inline min-width: unset, so the width is set
+   rather than its minimum. The height is the titlebar's, by the stretch above: a Button is otherwise
+   height: fit-content, which left these as short as their icon. */
+.tss-pivot-titlebar-wrapper > .tss-btn.tss-pivot-titlebar-more,
+.tss-pivot-titlebar-wrapper > .tss-btn.tss-pivot-titlebar-scroll-left,
+.tss-pivot-titlebar-wrapper > .tss-btn.tss-pivot-titlebar-scroll-right {
+    width: 28px;
+    height: auto;
+}
+
+.tss-pivot-titlebar-scroll-left i,
+.tss-pivot-titlebar-scroll-right i {
+    font-size: 10px;
+}
+
+.tss-pivot-content {
+    /* The pane scrolls, so it clips whatever a flush child draws outside its box (a focus ring, a shadow). Room to
+       draw it: padded by --tss-focus-ring-room and pulled back by as much, so the content does not move. */
+    margin: calc(-1 * var(--tss-focus-ring-room));
+    padding: var(--tss-focus-ring-room);
+    flex-grow: 1;
+    flex-shrink: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+}
+
+.tss-pivot-line {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 4px;
+    width: 0px;
+    z-index: 1;
+    background-color: var(--tss-primary-background-hover-color);
+    overflow: hidden;
+    pointer-events: none;
+    border-radius: 4px;
+    transition: left 0.5s cubic-bezier(0.2, 0, 0, 1),
+                width 0.5s cubic-bezier(0.2, 0, 0, 1);
+    will-change: left, width;
+}
+
+.tss-pivot-line.tss-pivot-line-instant {
+    transition: none;
+}
+
+.tss-pivot-tab-closeable {
+    padding-right: 8px !important;
+}
+
+/* The close glyph draws exactly what it always did. The box around it is there only to
+   centre the unsaved-changes marker over the glyph (below) and to give the keyboard
+   somewhere to land — it paints nothing of its own. */
+.tss-pivot-tab-close {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.tss-pivot-tab-close:hover {
+    color: var(--tss-danger-background-color, red);
+}
+
+.tss-pivot-tab-close:focus-visible {
+    outline: 2px solid var(--tss-primary-background-color);
+    outline-offset: 2px;
+}
+
+/* Unsaved-changes marker, toggled by TabSaveIndicator.MarkDirty / MarkClean. On a
+   closeable tab it stands in for the close glyph rather than sitting beside it, so going
+   dirty never resizes the tab and the two can't crowd each other. The icon font draws the
+   glyph in ::before, which leaves ::after for the marker; hiding the glyph with
+   "visibility" rather than "display" keeps the slot exactly as wide as the glyph. */
+.tss-pivot-tab-needs-saving .tss-pivot-tab-close::before {
+    visibility: hidden;
+}
+
+.tss-pivot-tab-needs-saving .tss-pivot-tab-close::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--tss-primary-background-color, currentColor);
+}
+
+/* Pointing at the tab — which includes pointing at the marker — brings the glyph back,
+   so there is always something to close the tab with. Same on keyboard focus. */
+.tss-pivot-titlebar > .tss-pivot-tab:hover .tss-pivot-tab-close::before,
+.tss-pivot-tab-close:focus-visible::before {
+    visibility: visible;
+}
+
+.tss-pivot-titlebar > .tss-pivot-tab:hover .tss-pivot-tab-close::after,
+.tss-pivot-tab-close:focus-visible::after {
+    display: none;
+}
+
+/* The same marker beside the label, for the cases with no glyph to stand in for. Only
+   "content" decides whether it renders, so the look is written once; "order" keeps it next
+   to the label rather than after anything the caller's title appended. */
+.tss-pivot-tab-needs-saving::after,
+.tss-pivot-tab-mark {
+    order: 1;
+    width: 7px;
+    height: 7px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: var(--tss-primary-background-color, currentColor);
+    flex-shrink: 0;
+}
+
+/* A tab with no close button has no slot, so it always draws it here. */
+.tss-pivot-tab-needs-saving:not(.tss-pivot-tab-closeable)::after {
+    content: "";
+}
+
+/* Nothing hovers on a touch screen, so the glyph can never be brought back — the marker
+   has to sit beside the label there instead of standing in for it. */
+@media (hover: none) {
+    .tss-pivot-tab-needs-saving .tss-pivot-tab-close::before {
+        visibility: visible;
+    }
+
+    .tss-pivot-tab-needs-saving .tss-pivot-tab-close::after {
+        display: none;
+    }
+
+    .tss-pivot-tab-needs-saving::after {
+        content: "";
+    }
+
+    /* The marker reads as belonging to the label, so it goes before the close button. */
+    .tss-pivot-tab-needs-saving > .tss-pivot-tab-close {
+        order: 2;
+    }
+}
+
+
+.tss-pivot .tss-pivot-cached-hidden{
+    display:none !important;
+}
+
+/* Drag-to-reorder (Pivot.Reorderable) */
+.tss-pivot-titlebar.tss-pivot-reordering > .tss-pivot-tab {
+    cursor: grabbing;
+}
+
+.tss-pivot-tab-ghost {
+    opacity: 0.35;
+}
+
+.tss-pivot-tab-drag,
+.tss-pivot-tab-fallback {
+    opacity: 1;
+    cursor: grabbing;
+    background: var(--tss-secondary-background-color);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* The underline can't track a tab that is mid-flight, so park it until the drop. */
+.tss-pivot-titlebar.tss-pivot-reordering > .tss-pivot-line {
+    opacity: 0;
+    transition: none;
+}

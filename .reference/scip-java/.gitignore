@@ -1,0 +1,83 @@
+*.class
+*.log
+
+# nix
+result
+result-*
+
+# build tool output
+.gradle/
+build/
+.cache
+.history
+.lib/
+dist/*
+target/
+lib_managed/
+src_managed/
+.bloop
+
+_site/
+
+# Scala-IDE specific
+.scala_dependencies
+.worksheet
+
+.idea
+
+# ENSIME specific
+.ensime_cache/
+.ensime
+
+.metals/
+metals.sbt
+metals/project/
+
+.bsp
+
+.vscode/
+
+local.*
+
+.DS_Store
+
+node_modules
+
+lib/core/metadata.js
+lib/core/MetadataBlog.js
+
+website/translated_docs
+website/build/
+website/yarn.lock
+website/node_modules
+website/i18n/*
+
+project/metals.sbt
+out/
+*.hnir
+test-report.json
+index.scip
+
+./generated
+/sources
+bazel-bin
+bazel-out
+bazel-testlogs
+/bazel-bindings
+/bazel-scip-java
+/bazel-lsif-java
+/examples/bazel-example/bazel-bazel-example
+
+VERSION
+
+scip-gradle-plugin/gradle
+/aspects/
+
+scip-snapshots/META-INF/
+
+# scip-kotlinc kctfork-based tests run kotlinc with our plugin, which
+# writes META-INF/scip/sources/Test.kt.scip relative to the test
+# cwd.
+scip-kotlinc/META-INF/
+
+/.kotlin/

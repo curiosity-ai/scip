@@ -1,0 +1,265 @@
+﻿using System;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A horizontal split pane with a draggable handle that resizes a left and right pane.
+    /// </summary>
+    [Transpose.Name("tss.HorizontalSplitView")]
+    public class HorizontalSplitView : IComponent, ISpecialCaseStyling
+    {
+        private readonly HTMLElement _splitContainer;
+        private readonly string      _splitterSize;
+        private readonly Raw         _topComponent;
+        private readonly Raw         _splitterComponent;
+        private readonly Raw         _bottomComponent;
+        private          bool        _resizable;
+        private          Action<int> _onResizeEnd;
+
+        /// <summary>
+        /// Gets the HTMLElement that should receive styling. Exposing the root as the
+        /// styling container (via <see cref="ISpecialCaseStyling"/>) lets sizing helpers
+        /// like .S() / .Grow() write directly onto the split view instead of an extra
+        /// wrapper when it is placed inside a Stack or Grid.
+        /// </summary>
+        public HTMLElement StylingContainer => _splitContainer;
+
+        /// <summary>
+        /// Gets whether a sizing helper applied to this component should tag it so a wrapper-building container hoists the style onto the wrapper.
+        /// </summary>
+        public bool PropagateStylesToWrapper => true;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public HorizontalSplitView(UnitSize splitterSize = null)
+        {
+            _splitterSize = (splitterSize is object && splitterSize.Unit != Unit.Auto && splitterSize.Unit != Unit.Inherit)
+                ? splitterSize.ToString()
+                : "8px";
+            _topComponent = Raw(Div(Att()));
+            var splitter = Div(Att("tss-splitter  tss-no-splitter"));
+            splitter.draggable        = false;
+            _splitterComponent        = Raw(splitter);
+            _bottomComponent          = Raw(Div(Att()));
+            _splitterComponent.Height = _splitterSize;
+            _topComponent.Width       = "100%";
+            _splitterComponent.Width  = "100%";
+            _bottomComponent.Width    = "100%";
+
+            _topComponent.Height    = "10px";
+            _bottomComponent.Height = "10px";
+
+            _topComponent.FlexGrow    = "1";
+            _bottomComponent.FlexGrow = "1";
+
+            _splitContainer = Div(Att("tss-splitview tss-splitview-horizontal"), _topComponent.Render(), _splitterComponent.Render(), _bottomComponent.Render());
+        }
+
+        /// <summary>
+        /// Configures the component to resizable.
+        /// </summary>
+        public HorizontalSplitView Resizable(Action<int> onResizeEnd = null)
+        {
+            _resizable   = true;
+            _onResizeEnd = onResizeEnd;
+            _splitterComponent.RemoveClass("tss-no-splitter");
+            _splitterComponent.Height = _splitterSize;
+            HookDragEvents(_splitterComponent);
+            return this;
+        }
+
+        private void HookDragEvents(IComponent dragArea)
+        {
+            // Use the unified pointer-based pan gesture so the splitter is draggable with mouse, touch and pen.
+            // (Previously only mouse events were wired, so resizing did not work on touch screens.)
+            double      height       = 0;
+            DOMRect     rect         = null;
+            HTMLElement current      = null;
+            bool        currentIsBottom = false;
+
+            dragArea.OnPan(g =>
+            {
+                if (g.Phase == GesturePhase.Start)
+                {
+                    currentIsBottom = _splitContainer.classList.contains("tss-split-bottom");
+                    current         = currentIsBottom ? _bottomComponent.Render() : _topComponent.Render();
+                    rect            = _splitContainer.getBoundingClientRect().As<DOMRect>();
+                }
+
+                if (rect == null || current == null) return;
+
+                double raw = currentIsBottom ? (rect.bottom - g.Y) : (g.Y - rect.top);
+                height                   = Math.Min(rect.height - 16, Math.Max(16, raw));
+                current.style.height     = height + "px";
+                current.style.flexGrow   = "0";
+                current.style.flexShrink = "1";
+
+                if (g.Phase == GesturePhase.End)
+                {
+                    // Report what the pane really ended up at: the pane's own min/max height and flex-shrink
+                    // can make it differ from the pointer-derived value written above.
+                    _onResizeEnd?.Invoke((int)Math.Round(current.getBoundingClientRect().As<DOMRect>().height));
+                    rect = null;
+                }
+            });
+        }
+
+        /// <summary>
+        /// Aligns the content of the component to the top.
+        /// </summary>
+        public HorizontalSplitView Top(IComponent component, string background = "")
+        {
+            _topComponent.Content(component);
+
+            if (!string.IsNullOrEmpty(background))
+            {
+                _topComponent.Background = background;
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Aligns the content of the component to the bottom.
+        /// </summary>
+        public HorizontalSplitView Bottom(IComponent component, string background = "")
+        {
+            _bottomComponent.Content(component);
+
+            if (!string.IsNullOrEmpty(background))
+            {
+                _bottomComponent.Background = background;
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the split view using the panel-style border treatment.
+        /// </summary>
+        public HorizontalSplitView PanelStyle()
+        {
+            _splitContainer.classList.add("tss-splitview-panel-style");
+            return this;
+        }
+
+        /// <summary>
+        /// Disables resizing of the split view's handle.
+        /// </summary>
+        public HorizontalSplitView NotResizable()
+        {
+            _splitterComponent.Class("tss-no-splitter");
+            _splitterComponent.Height = "";
+            return this;
+        }
+
+        /// <summary>
+        /// Splits the view exactly in the middle by default.
+        /// </summary>
+        public HorizontalSplitView SplitInMiddle()
+        {
+            _bottomComponent.MaxHeight = "";
+            _topComponent.MaxHeight    = "";
+            _splitContainer.classList.remove("tss-split-top");
+            _splitContainer.classList.remove("tss-split-bottom");
+            return this;
+        }
+
+        /// <summary>
+        /// Closes the component.
+        /// </summary>
+        public HorizontalSplitView Close()
+        {
+            if (_splitContainer.classList.contains("tss-split-top"))
+            {
+                _topComponent.Collapse();
+            }
+            else if (_splitContainer.classList.contains("tss-split-bottom"))
+            {
+                _bottomComponent.Collapse();
+            }
+            else
+            {
+                throw new Exception("Only valid for left or right splits");
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Opens the component.
+        /// </summary>
+        public HorizontalSplitView Open()
+        {
+            if (_splitContainer.classList.contains("tss-split-top"))
+            {
+                _topComponent.Show();
+            }
+            else if (_splitContainer.classList.contains("tss-split-bottom"))
+            {
+                _bottomComponent.Show();
+            }
+            else
+            {
+                throw new Exception("Only valid for left or right splits");
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Sizes the split view so the top pane is the smaller of the two, with optional min/max bounds.
+        /// </summary>
+        public HorizontalSplitView TopIsSmaller(UnitSize topSize, UnitSize maxTopSize = null, UnitSize minTopSize = null)
+        {
+            _topComponent.Height     = topSize.ToString();
+            _topComponent.MaxHeight  = maxTopSize?.ToString() ?? "";
+            _topComponent.MinHeight  = minTopSize?.ToString() ?? "";
+            _topComponent.FlexGrow   = "";
+            _topComponent.FlexShrink = "";
+
+            bool fullTop = _topComponent.Height == "100%";
+
+            _bottomComponent.Height     = fullTop ? "0px" : "1px";
+            _bottomComponent.FlexGrow   = fullTop ? "0" :"1";
+            _bottomComponent.MaxHeight  = "";
+            _bottomComponent.FlexShrink = "";
+            _splitContainer.classList.add("tss-split-top");
+            _splitContainer.classList.remove("tss-split-bottom");
+
+            return this;
+        }
+
+        /// <summary>
+        /// Sizes the split view so the bottom pane is the smaller of the two, with optional min/max bounds.
+        /// </summary>
+        public HorizontalSplitView BottomIsSmaller(UnitSize bottomSize, UnitSize maxBottomSize = null, UnitSize minBottomSize = null)
+        {
+            _bottomComponent.Height     = bottomSize.ToString();
+            _bottomComponent.MaxHeight  = maxBottomSize?.ToString() ?? "";
+            _bottomComponent.MinHeight  = minBottomSize?.ToString() ?? "";
+            _bottomComponent.FlexGrow   = "";
+            _bottomComponent.FlexShrink = "";
+
+            bool fullBottom = _bottomComponent.Height == "100%";
+            _topComponent.Height     = fullBottom ? "0px" : "10px";
+            _topComponent.FlexGrow   = fullBottom ? "0" : "1";
+            _topComponent.MaxHeight  = "";
+            _topComponent.FlexShrink = "";
+            _splitContainer.classList.add("tss-split-bottom");
+            _splitContainer.classList.remove("tss-split-top");
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public HTMLElement Render()
+        {
+            return _splitContainer;
+        }
+    }
+}

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA1861</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\Scip.Reprolang\Scip.Reprolang.csproj" />
+    <Content Include="testdata\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

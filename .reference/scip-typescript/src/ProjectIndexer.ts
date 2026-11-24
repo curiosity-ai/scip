@@ -1,0 +1,378 @@
+import * as path from 'path'
+
+import { create } from '@bufbuild/protobuf'
+import {
+  type Document,
+  DocumentSchema,
+  IndexSchema,
+  type Occurrence,
+  PositionEncoding,
+  SymbolRole,
+} from '@scip-code/scip'
+import ProgressBar from 'progress'
+import * as ts from 'typescript'
+
+import { GlobalCache, ProjectOptions } from './CommandLineOptions.js'
+import { FileIndexer } from './FileIndexer.js'
+import { Input } from './Input.js'
+import { Packages } from './Packages.js'
+import { Range } from './Range.js'
+import { ScipSymbol } from './ScipSymbol.js'
+import { SourceInfo, typescriptSourceInfo } from './SourceInfo.js'
+import {
+  isSvelteFile,
+  sanitizeSvelteDocumentation,
+  svelteShimPath,
+  SvelteSupport,
+} from './Svelte.js'
+
+function createCompilerHost(
+  cache: GlobalCache,
+  compilerOptions: ts.CompilerOptions,
+  projectOptions: ProjectOptions,
+  hasSvelte: boolean,
+  sourceInfos: Map<ts.SourceFile, SourceInfo>
+): ts.CompilerHost {
+  const host = ts.createCompilerHost(compilerOptions)
+  if (!hasSvelte && !projectOptions.globalCaches) {
+    return host
+  }
+  const hostCopy = { ...host }
+  const svelte = hasSvelte
+    ? new SvelteSupport(hostCopy, compilerOptions, sourceInfos)
+    : undefined
+  if (svelte) {
+    host.fileExists = fileName => svelte.fileExists(fileName)
+    host.readFile = fileName => svelte.readFile(fileName)
+    host.realpath = fileName => svelte.realpath(fileName)
+    host.resolveModuleNameLiterals = (
+      moduleLiterals,
+      containingFile,
+      redirectedReference,
+      options,
+      containingSourceFile
+    ) =>
+      svelte.resolveModuleNameLiterals(
+        moduleLiterals,
+        containingFile,
+        redirectedReference,
+        options,
+        containingSourceFile
+      )
+    // A host that resolves modules itself must also provide its cache.
+    // Otherwise createProgram runs without one, and every source file parses
+    // and keeps its own copy of the nearest package.json.
+    host.getModuleResolutionCache = () => svelte.moduleResolutionCache
+  }
+
+  if (projectOptions.globalCaches) {
+    host.getParsedCommandLine = (fileName: string) => {
+      if (!hostCopy.getParsedCommandLine) {
+        return undefined
+      }
+      const fromCache = cache.parsedCommandLines.get(fileName)
+      if (fromCache !== undefined) {
+        return fromCache
+      }
+      const result = hostCopy.getParsedCommandLine(fileName)
+      if (result !== undefined) {
+        // Don't cache undefined results even if they could be cached
+        // theoretically. The big performance gains from this cache come from
+        // caching non-undefined results.
+        cache.parsedCommandLines.set(fileName, result)
+      }
+      return result
+    }
+  }
+  host.getSourceFile = (
+    fileName,
+    languageVersion,
+    onError,
+    shouldCreateNewSourceFile
+  ) => {
+    if (projectOptions.globalCaches) {
+      const fromCache = cache.sources.get(fileName)
+      if (fromCache !== undefined) {
+        const [sourceFile, cachedLanguageVersion] = fromCache
+        if (isSameLanguageVersion(languageVersion, cachedLanguageVersion)) {
+          return sourceFile
+        }
+      }
+    }
+    const result = svelte
+      ? svelte.getSourceFile(
+          fileName,
+          languageVersion,
+          onError,
+          shouldCreateNewSourceFile
+        )
+      : hostCopy.getSourceFile(
+          fileName,
+          languageVersion,
+          onError,
+          shouldCreateNewSourceFile
+        )
+    if (projectOptions.globalCaches && result !== undefined) {
+      // Don't cache undefined results even if they could be cached
+      // theoretically. The big performance gains from this cache come from
+      // caching non-undefined results.
+      cache.sources.set(fileName, [result, languageVersion])
+    }
+    return result
+  }
+  return host
+}
+
+export class ProjectIndexer {
+  private program: ts.Program
+  private checker: ts.TypeChecker
+  private symbolCache: Map<ts.Node, ScipSymbol> = new Map()
+  private hasConstructor: Map<ts.ClassDeclaration, boolean> = new Map()
+  private packages: Packages
+  private indexedFiles: Set<string>
+  private sourceInfos: Map<ts.SourceFile, SourceInfo>
+  private readonly hasSvelte: boolean
+  constructor(
+    public readonly config: ts.ParsedCommandLine,
+    public readonly options: ProjectOptions,
+    cache: GlobalCache
+  ) {
+    const hasSvelte = config.fileNames.some(isSvelteFile)
+    this.hasSvelte = hasSvelte
+    const sourceInfos = options.globalCaches
+      ? cache.sourceInfos
+      : new Map<ts.SourceFile, SourceInfo>()
+    const host = createCompilerHost(
+      cache,
+      config.options,
+      options,
+      hasSvelte,
+      sourceInfos
+    )
+    const rootNames = hasSvelte
+      ? [
+          ...config.fileNames,
+          // Ambient declarations for the __sveltets helpers emitted by
+          // svelte2tsx. They let TypeScript infer component props and generics,
+          // but are not in config.fileNames and therefore are not indexed.
+          svelteShimPath(),
+        ]
+      : config.fileNames
+    this.program = ts.createProgram(rootNames, config.options, host)
+    this.checker = this.program.getTypeChecker()
+    this.packages = new Packages(options.projectRoot)
+    this.indexedFiles = cache.indexedFiles
+    this.sourceInfos = sourceInfos
+  }
+  public index(): void {
+    const startTimestamp = Date.now()
+    const sourceFiles = this.program.getSourceFiles()
+
+    const filesToIndex: ts.SourceFile[] = []
+    let projectFileCount = 0
+    // Visit every sourceFile in the program
+    for (const sourceFile of sourceFiles) {
+      const includes = this.config.fileNames.includes(sourceFile.fileName)
+      if (!includes) {
+        continue
+      }
+      projectFileCount++
+      if (this.indexedFiles.has(sourceFile.fileName)) {
+        continue
+      }
+      filesToIndex.push(sourceFile)
+    }
+
+    if (filesToIndex.length === 0) {
+      if (projectFileCount > 0) {
+        // Every source belongs to a project that was indexed earlier. SCIP
+        // requires document paths to be unique across a complete index.
+        return
+      }
+      throw new Error(
+        `no indexable files in project '${this.options.projectDisplayName}'`
+      )
+    }
+
+    const jobs: ProgressBar | undefined = this.options.progressBar
+      ? new ProgressBar(
+          `  ${this.options.projectDisplayName} [:bar] :current/:total :title`,
+          {
+            total: filesToIndex.length,
+            renderThrottle: 100,
+            incomplete: '_',
+            complete: '#',
+            width: 20,
+            clear: true,
+            stream: process.stderr,
+          }
+        )
+      : undefined
+    let lastWrite = startTimestamp
+    for (const [index, sourceFile] of filesToIndex.entries()) {
+      const title = path.relative(this.options.cwd, sourceFile.fileName)
+      jobs?.tick({ title })
+      if (!this.options.progressBar) {
+        const now = Date.now()
+        const elapsed = now - lastWrite
+        if (elapsed > 1000 && index > 2) {
+          lastWrite = now
+          process.stdout.write('.')
+        }
+      }
+      const sourceInfo =
+        this.sourceInfos.get(sourceFile) ?? typescriptSourceInfo(sourceFile)
+      const document = create(DocumentSchema, {
+        language:
+          sourceInfo.language ?? languageForFileName(sourceInfo.fileName),
+        relativePath: path.relative(this.options.cwd, sourceInfo.fileName),
+        occurrences: [],
+        // TypeScript and Svelte source map positions count UTF-16 code units.
+        positionEncoding: PositionEncoding.UTF16CodeUnitOffsetFromLineStart,
+      })
+      const input = new Input(sourceInfo.fileName, sourceInfo.originalText)
+      const visitor = new FileIndexer(
+        this.checker,
+        this.options,
+        input,
+        document,
+        this.symbolCache,
+        this.hasConstructor,
+        this.packages,
+        sourceFile,
+        sourceInfo,
+        this.sourceInfos,
+        // TypeScript callers can expose generated component types in inferred
+        // signatures too. Apply cleanup to every file in Svelte projects.
+        this.hasSvelte ? sanitizeSvelteDocumentation : value => value
+      )
+      try {
+        visitor.index()
+      } catch (error) {
+        console.error(
+          `unexpected error indexing project root '${this.options.cwd}'`,
+          error
+        )
+      }
+      sourceInfo.releaseCaches()
+      if (sourceInfo.isSvelte) {
+        deduplicateOccurrences(visitor.document)
+      }
+      if (visitor.document.occurrences.length > 0) {
+        this.options.writeIndex(
+          create(IndexSchema, {
+            documents: [visitor.document],
+          })
+        )
+        // Only suppress the file in later overlapping projects after its
+        // document has actually been emitted. If indexing or emission fails,
+        // another project that includes the file can still retry it.
+        this.indexedFiles.add(sourceFile.fileName)
+      }
+    }
+    jobs?.terminate()
+    const elapsed = Date.now() - startTimestamp
+    if (!this.options.progressBar && lastWrite > startTimestamp) {
+      process.stdout.write('\n')
+    }
+    console.log(
+      `+ ${this.options.projectDisplayName} (${prettyMilliseconds(elapsed)})`
+    )
+  }
+}
+
+export function languageForFileName(fileName: string): string | undefined {
+  // Document.language uses the exact names from SCIP's Language enum, not the
+  // lowercase language identifiers used by editors.
+  const extension = path.extname(fileName).toLowerCase()
+  if (extension === '.tsx') return 'TypeScriptReact'
+  if (extension === '.ts' || extension === '.mts' || extension === '.cts') {
+    return 'TypeScript'
+  }
+  if (extension === '.jsx') return 'JavaScriptReact'
+  if (extension === '.js' || extension === '.mjs' || extension === '.cjs') {
+    return 'JavaScript'
+  }
+  if (extension === '.json') return 'JSON'
+  return undefined
+}
+
+export function deduplicateOccurrences(document: Document): void {
+  const occurrences = new Map<string, Occurrence>()
+  for (const occurrence of document.occurrences) {
+    const key = `${Range.fromOccurrence(occurrence).toString()} ${occurrence.symbol}`
+    const existing = occurrences.get(key)
+    if (existing) {
+      const symbolRoles = existing.symbolRoles | occurrence.symbolRoles
+      const existingIsDefinition =
+        (existing.symbolRoles & SymbolRole.Definition) !== 0
+      const occurrenceIsDefinition =
+        (occurrence.symbolRoles & SymbolRole.Definition) !== 0
+      // svelte2tsx can map a generated reference and definition to the same
+      // source range. Keep the definition as the survivor because it carries
+      // the enclosing range and diagnostics associated with the declaration.
+      if (occurrenceIsDefinition && !existingIsDefinition) {
+        occurrence.symbolRoles = symbolRoles
+        if (occurrence.typedEnclosingRange.case === undefined) {
+          occurrence.typedEnclosingRange = existing.typedEnclosingRange
+        }
+        if (occurrence.diagnostics.length === 0) {
+          occurrence.diagnostics = existing.diagnostics
+        }
+        occurrences.set(key, occurrence)
+      } else {
+        existing.symbolRoles = symbolRoles
+        if (existing.typedEnclosingRange.case === undefined) {
+          existing.typedEnclosingRange = occurrence.typedEnclosingRange
+        }
+        if (existing.diagnostics.length === 0) {
+          existing.diagnostics = occurrence.diagnostics
+        }
+      }
+    } else {
+      occurrences.set(key, occurrence)
+    }
+  }
+  document.occurrences = [...occurrences.values()]
+}
+
+export function prettyMilliseconds(milliseconds: number): string {
+  let ms = Math.floor(milliseconds)
+  let result = ''
+  if (ms >= 1000 * 60) {
+    const minutes = Math.floor(ms / (1000 * 60))
+    if (minutes !== 0) {
+      result += `${minutes}m `
+      ms -= minutes * 1000 * 60
+    }
+  }
+  if (result !== '' || ms >= 1000) {
+    const seconds = Math.floor(ms / 1000)
+    result += `${seconds}s `
+    ms -= seconds * 1000
+  }
+  result += `${ms}ms`
+  return result.trim()
+}
+
+function isSameLanguageVersion(
+  a: ts.ScriptTarget | ts.CreateSourceFileOptions,
+  b: ts.ScriptTarget | ts.CreateSourceFileOptions
+): boolean {
+  if (typeof a === 'number' && typeof b === 'number') {
+    return a === b
+  }
+  if (typeof a === 'number' || typeof b === 'number') {
+    // Different shape: one is ts.ScriptTarget, the other is
+    // ts.CreateSourceFileOptions
+    return false
+  }
+  return (
+    a.languageVersion === b.languageVersion &&
+    a.impliedNodeFormat === b.impliedNodeFormat
+    // Ignore setExternalModuleIndicator even if that increases the risk of a
+    // false positive. A local experiment revealed that we never get a cache hit
+    // if we compare setExternalModuleIndicator since it's function with a
+    // unique reference on every `CompilerHost.getSourceFile` callback.
+  )
+}

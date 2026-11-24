@@ -1,0 +1,3 @@
+s(:block,
+  s(:send,
+    s(:resolved_const, "Kernel"), :lambda), nil, nil)

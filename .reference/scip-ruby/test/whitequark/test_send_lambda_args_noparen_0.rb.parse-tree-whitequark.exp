@@ -1,0 +1,6 @@
+s(:block,
+  s(:send,
+    s(:resolved_const, "Kernel"), :lambda),
+  s(:params,
+    s(:kwoptarg, :a,
+      s(:int, "1"))), nil)

@@ -1,0 +1,206 @@
+/* InlineLabel — one small fact: an optional mark, then optional text.
+
+   On its own it is a compact button: a bordered pill sized to be clicked. Inside an OmniResult footer -
+   a line of facts rather than a row of chips - the nested rules at the bottom of this file strip the
+   chrome and shrink it back to the footer's own type size. */
+
+.tss-inlinelabel {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    -webkit-user-select: none;
+    user-select: none;
+    gap: 6px;
+    max-width: 100%;
+    min-width: 0;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-md);
+    background: var(--tss-secondary-background-color);
+    color: var(--tss-default-foreground-color);
+    font-size: 13px;
+    line-height: 1;
+    text-decoration: none;
+    outline: none;
+    flex-wrap: nowrap;
+}
+
+/* Whatever the mark is - a glyph, an image, a square of colour - it takes the same box, so a row of
+   labels built out of different things still sits on one baseline. */
+.tss-inlinelabel-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 0;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    line-height: 0;
+}
+
+.tss-inlinelabel-mark-icon {
+    font-size: 13px;
+    line-height: 1;
+}
+
+.tss-inlinelabel-mark-color {
+    border-radius: 3px;
+}
+
+/* A component of the host's own - an Avatar, a Spinner - is fitted to the mark box rather than keeping
+   the size it has on its own, so it lines up with a glyph or a logo in the same row of labels. */
+.tss-inlinelabel-mark-image > * {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    font-size: 0.6em;
+    line-height: 1;
+}
+
+.tss-inlinelabel-mark-image img,
+.tss-inlinelabel-mark-image svg,
+.tss-inlinelabel-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: 2px;
+}
+
+.tss-inlinelabel-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Text read as a path ("Projects: Brake sensors") is two parts and an angle between them, laid out as one
+   run of text so the span's own ellipsis does the truncating: the end goes first - the part after the
+   angle - and the part before it only once even that is gone, so a label short of room still says where
+   the thing is before it says less of what it is, and always ends in an ellipsis rather than a hard cut.
+   The parts are not flex items on purpose: an ellipsis is drawn for a line of inline content, never for
+   a row of boxes. */
+.tss-inlinelabel-text-head,
+.tss-inlinelabel-text-tail {
+    white-space: nowrap;
+}
+
+.tss-inlinelabel-text-separator {
+    margin: 0 2px;
+    font-size: 0.85em;
+    line-height: 1;
+    vertical-align: -0.05em;
+    opacity: 0.7;
+}
+
+/* Pressable, or a real link. Either way hovering it lifts the background - the whole label answers the
+   pointer, which is what says it can be pressed. Nothing else moves - no border change, no reflow. */
+.tss-inlinelabel-interactive {
+    cursor: pointer;
+    transition: background 120ms ease-out;
+}
+
+.tss-inlinelabel-interactive:hover,
+.tss-inlinelabel-interactive:focus-visible {
+    background: var(--tss-default-background-hover-color);
+}
+
+.tss-inlinelabel-interactive:active {
+    background: var(--tss-secondary-background-color);
+}
+
+.tss-inlinelabel-interactive:focus-visible {
+    outline: 2px solid var(--tss-primary-background-color);
+    outline-offset: 1px;
+}
+
+/* Only a real link underlines. The label is an anchor whether or not it links anywhere, so the global
+   a:hover underline has to be turned off first - a label that merely runs a handler is a button, and
+   underlining it would promise an address it doesn't have. */
+.tss-inlinelabel:hover {
+    text-decoration: none;
+}
+
+.tss-inlinelabel[href]:hover .tss-inlinelabel-text,
+.tss-inlinelabel[href]:focus-visible .tss-inlinelabel-text,
+.tss-inlinelabel[href]:hover .tss-inlinelabel-text-head,
+.tss-inlinelabel[href]:focus-visible .tss-inlinelabel-text-head,
+.tss-inlinelabel[href]:hover .tss-inlinelabel-text-tail,
+.tss-inlinelabel[href]:focus-visible .tss-inlinelabel-text-tail {
+    text-decoration: underline;
+}
+
+/* Looking up what it says ---------------------------------------------------------------------------- */
+
+/* While the task runs the label is nothing but the skeleton: the pill's chrome would be a promise about
+   a size it doesn't know yet, and a label that turns out to have nothing to say removes itself anyway. */
+.tss-inlinelabel-loading {
+    height: auto;
+    padding: 0;
+    border: none;
+    background: none;
+    pointer-events: none;
+}
+
+.tss-inlinelabel-skeleton {
+    display: block;
+    width: 72px;
+    height: 12px;
+    border-radius: var(--tss-border-radius-sm);
+}
+
+/* In a footer -------------------------------------------------------------------------------------- */
+
+/* A footer is a line of facts, not a row of chips, so the pill's chrome comes off and the label takes
+   the footer's own colour and type size. It stays pressable - it just underlines instead of filling. */
+.tss-omniresult-footer .tss-inlinelabel {
+    height: auto;
+    padding: 0;
+    gap: 4px;
+    border: none;
+    border-radius: var(--tss-border-radius-sm);
+    background: none;
+    color: var(--tss-secondary-foreground-color);
+    font-size: inherit;
+    line-height: inherit;
+}
+
+.tss-omniresult-footer .tss-inlinelabel-mark {
+    width: 12px;
+    height: 12px;
+}
+
+.tss-omniresult-footer .tss-inlinelabel-mark-icon {
+    font-size: 11px;
+}
+
+/* A glyph in the footer is punctuation for the fact beside it, not an accent of its own: the row already
+   has one thing carrying a node's colour - its icon tile - and repeating that colour on a 11px glyph
+   under the title turns a quiet line of facts into a row of little flags. So the glyph takes the
+   footer's own colour even when the host asked for one, which it does by an inline style, hence the
+   !important. A colour swatch (tss-inlinelabel-mark-color) is exempt - it is nothing but its colour. */
+.tss-omniresult-footer .tss-inlinelabel-mark-icon,
+.tss-omniresult-footer .tss-inlinelabel-mark-icon .tss-inlinelabel-glyph {
+    color: var(--tss-secondary-foreground-color) !important;
+}
+
+/* The row is already sitting on the hover background by the time the pointer reaches one of its labels,
+   so the label needs a step further away from it - a shade the row can't be - or its own hover is
+   invisible. The neutral scale flips with the theme, so this reads as darker on light and lighter on
+   dark, which is "further" either way. */
+.tss-omniresult-footer .tss-inlinelabel-interactive:hover,
+.tss-omniresult-footer .tss-inlinelabel-interactive:focus-visible {
+    background: var(--tss-colors-neutral-400);
+    color: var(--tss-default-foreground-hover-color);
+}
+
+/* The glyph lifts with the text it belongs to - the rule above muted it with !important, so this one
+   has to raise it the same way or a hovered label would brighten from the text leftwards only. */
+.tss-omniresult-footer .tss-inlinelabel-interactive:hover .tss-inlinelabel-mark-icon,
+.tss-omniresult-footer .tss-inlinelabel-interactive:hover .tss-inlinelabel-mark-icon .tss-inlinelabel-glyph,
+.tss-omniresult-footer .tss-inlinelabel-interactive:focus-visible .tss-inlinelabel-mark-icon,
+.tss-omniresult-footer .tss-inlinelabel-interactive:focus-visible .tss-inlinelabel-mark-icon .tss-inlinelabel-glyph {
+    color: var(--tss-default-foreground-hover-color) !important;
+}

@@ -1,0 +1,4 @@
+s(:def, :f,
+  s(:params,
+    s(:kwrestarg, :baz),
+    s(:blockparam, :b)), nil)

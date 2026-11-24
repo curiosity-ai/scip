@@ -1,0 +1,56 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  class ::Parent<<C Parent>> < (::<todo sym>)
+    def initialize(<blk>)
+      begin
+        @ivar = <cast:let>(1, Integer, ::Integer)
+        @ivar2 = <cast:let>(2, Integer, ::Integer)
+      end
+    end
+
+    def hi(<blk>)
+      begin
+        @ivar = 1
+        @ivar2
+      end
+    end
+
+    <runtime method definition of initialize>
+
+    @@class_var = <cast:let>("hi", String, ::String)
+
+    <runtime method definition of hi>
+  end
+
+  module ::Mixin<<C Mixin>> < ()
+    @@mixin_cvar = <cast:let>(3, Integer, ::Integer)
+
+    @@mixin_cvar
+  end
+
+  class ::Child<<C Child>> < (::Parent, ::Mixin)
+    def child_method(<blk>)
+      begin
+        @@class_var
+        @@mixin_cvar
+        @ivar2
+        @undefinedivar
+      end
+    end
+
+    <self>.include(::Mixin)
+
+    @@class_var
+
+    @@mixin_cvar
+
+    @@undefined_cvar
+
+    <runtime method definition of child_method>
+  end
+
+  ::Alias = ::Parent
+
+  class ::Child1<<C Child1>> < (::Alias)
+    @@class_var
+  end
+end

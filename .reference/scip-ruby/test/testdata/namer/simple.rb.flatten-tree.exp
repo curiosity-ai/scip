@@ -1,0 +1,50 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  class ::NormalClass<<C NormalClass>> < (::<todo sym>)
+    def normal_method(<blk>)
+      <emptyTree>
+    end
+
+    def self.normal_static_method(<blk>)
+      <emptyTree>
+    end
+
+    <runtime method definition of normal_method>
+
+    <runtime method definition of self.normal_static_method>
+
+    class ::NormalClass::InnerClass<<C InnerClass>> < (::<todo sym>)
+    end
+
+    module ::NormalClass::InnerModule<<C InnerModule>> < ()
+    end
+  end
+
+  module ::ANamespace<<C ANamespace>> < ()
+    class ::ANamespace::ObviousChild<<C ObviousChild>> < (::<todo sym>)
+    end
+  end
+
+  class ::ANamespace::ClassInNamespace<<C ClassInNamespace>> < (::<todo sym>)
+  end
+
+  class ::Parent<<C Parent>> < (::<todo sym>)
+  end
+
+  module ::Mixin<<C Mixin>> < ()
+  end
+
+  module ::OtherMixin<<C OtherMixin>> < ()
+  end
+
+  class ::Child<<C Child>> < (::Parent, ::Mixin)
+    <self>.include(::Mixin)
+
+    <self>.include(3)
+
+    <self>.include(::Mixin) do ||
+      <emptyTree>
+    end
+
+    <self>.whatever().include(::OtherMixin)
+  end
+end

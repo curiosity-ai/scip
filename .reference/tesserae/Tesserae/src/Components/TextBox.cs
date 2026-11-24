@@ -1,0 +1,415 @@
+﻿using System;
+using System.Linq;
+using System.Threading.Tasks;
+using static Tesserae.UI;
+using static Transpose.Core.dom;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A single-line text input component.
+    /// </summary>
+    [Transpose.Name("tss.TextBox")]
+    public class TextBox : Input<TextBox>, ITextFormating, IHasBackgroundColor, IHasForegroundColor, IRoundedStyle, IDictationTarget
+    {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TextBox"/> class.
+        /// </summary>
+        /// <param name="text">The initial text.</param>
+        public TextBox(string text = string.Empty) : base("text", text)
+        {
+            InnerElement.classList.add("tss-fontsize-small");
+            InnerElement.classList.add("tss-fontweight-regular");
+
+            DictationTargets.Register(Render(), this);
+        }
+
+        /// <summary>Gets or sets the placeholder text.</summary>
+        public string Placeholder
+        {
+            get => InnerElement.placeholder;
+            set => InnerElement.placeholder = value;
+        }
+
+        /// <summary>Gets or sets whether the text box is read-only.</summary>
+        public bool IsReadOnly
+        {
+            get => InnerElement.hasAttribute("readonly");
+            set
+            {
+                if (value)
+                {
+                    InnerElement.setAttribute("readonly", string.Empty);
+                }
+                else
+                {
+                    InnerElement.removeAttribute("readonly");
+                }
+            }
+        }
+
+        /// <summary>Gets or sets the maximum length of the text.</summary>
+        public int MaxLength
+        {
+            get => InnerElement.maxLength;
+            set => InnerElement.maxLength = value;
+        }
+
+        /// <summary>Gets or sets whether the text box is in password mode.</summary>
+        public bool IsPassword
+        {
+            get => InnerElement.type == "password";
+            set
+            {
+                if (value)
+                {
+                    InnerElement.type = "password";
+                }
+                else
+                {
+                    InnerElement.type = string.Empty;
+                }
+            }
+        }
+
+        /// <summary>Gets or sets the text size.</summary>
+        public virtual TextSize Size
+        {
+            get => ITextFormatingExtensions.FromClassList(InnerElement, TextSize.Small);
+            set
+            {
+                InnerElement.classList.remove(Size.ToString());
+                InnerElement.classList.add(value.ToString());
+            }
+        }
+
+        /// <summary>Gets or sets the text weight.</summary>
+        public virtual TextWeight Weight
+        {
+            get => ITextFormatingExtensions.FromClassList(InnerElement, TextWeight.Regular);
+            set
+            {
+                InnerElement.classList.remove(Weight.ToString());
+                InnerElement.classList.add(value.ToString());
+            }
+        }
+
+        /// <summary>Gets or sets the text alignment.</summary>
+        public TextAlign TextAlign
+        {
+            get
+            {
+                return ITextFormatingExtensions.FromClassList(InnerElement, TextAlign.Left);
+            }
+            set
+            {
+                InnerElement.classList.remove(TextAlign.ToString());
+                InnerElement.classList.add(value.ToString());
+            }
+        }
+
+        /// <summary>Gets or sets the background color.</summary>
+        public string Background
+        {
+            get => InnerElement.style.background;
+            set => InnerElement.style.background = value;
+        }
+
+        /// <summary>Gets or sets the foreground color.</summary>
+        public string Foreground
+        {
+            get => InnerElement.style.color;
+            set => InnerElement.style.color = value;
+        }
+
+        /// <summary>
+        /// Sets the placeholder text.
+        /// </summary>
+        /// <param name="placeholder">The placeholder text.</param>
+        /// <returns>The current instance.</returns>
+        public TextBox SetPlaceholder(string placeholder)
+        {
+            Placeholder = placeholder;
+            return this;
+        }
+
+        /// <summary>
+        /// Shows <paramref name="html"/> in the empty field as its initial value, until the user first edits it. A minimal subset of
+        /// HTML is drawn: <c>&lt;b&gt;</c>/<c>&lt;strong&gt;</c>, <c>&lt;i&gt;</c>/<c>&lt;em&gt;</c>, <c>&lt;br&gt;</c> and colour (<c>&lt;span style="color:crimson"&gt;</c> or
+        /// <c>&lt;font color="#0a7"&gt;</c>); anything else is reduced to its text. It is not the field's <c>Text</c> (which stays empty),
+        /// and typing, pasting, or setting <c>Text</c> from code removes it for good.
+        /// </summary>
+        /// <param name="html">The formatted initial value.</param>
+        public TextBox InitialValue(string html)
+        {
+            if (_initialValue is null)
+            {
+                _initialValue = new InitialRichText(Render(), InnerElement, false);
+                InitialValueAssigned = () => _initialValue.Remove();
+            }
+
+            _initialValue.Set(html);
+            return this;
+        }
+
+        private InitialRichText _initialValue;
+
+        /// <summary>Sets the text box as read-only.</summary>
+        public TextBox ReadOnly()
+        {
+            IsReadOnly = true;
+            return this;
+        }
+
+        /// <summary>Sets the text box to password mode.</summary>
+        public TextBox Password()
+        {
+            IsPassword = true;
+            return this;
+        }
+
+        /// <summary>Sets the text box input type to <c>email</c>.</summary>
+        public TextBox Email()
+        {
+            InnerElement.type = "email";
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the <c>name</c> attribute on the underlying input. Password managers and
+        /// browser autofill heuristics use this to identify the field's role (e.g. <c>username</c>,
+        /// <c>password</c>, <c>email</c>) and to scope saved credentials to the current origin.
+        /// </summary>
+        public TextBox Name(string name)
+        {
+            InnerElement.name = name ?? string.Empty;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the <c>autocomplete</c> attribute on the underlying input. Use values from the
+        /// WHATWG autofill spec (<c>username</c>, <c>email</c>, <c>current-password</c>,
+        /// <c>new-password</c>, <c>one-time-code</c>, <c>off</c>, ...). Password managers rely on
+        /// this hint to distinguish sign-in flows from password-creation flows.
+        /// </summary>
+        public TextBox AutoComplete(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                InnerElement.removeAttribute("autocomplete");
+            }
+            else
+            {
+                InnerElement.setAttribute("autocomplete", value);
+            }
+            return this;
+        }
+
+        /// <summary>Removes the border from the text box, in every state: no hover edge and no focus edge, for an input set inside a box that draws its own.</summary>
+        public TextBox NoBorder()
+        {
+            InnerElement.classList.add("tss-textbox-noborder");
+            return this;
+        }
+
+        /// <summary>Removes the default minimum width.</summary>
+        public TextBox NoMinWidth()
+        {
+            InnerElement.size = 1; //Remove the input min-width derived from the size attribute, see https://stackoverflow.com/questions/29470676/why-doesnt-the-input-element-respect-min-width
+            return this;
+        }
+
+        /// <summary>Unlocks the height restriction.</summary>
+        public TextBox UnlockHeight()
+        {
+            InnerElement.classList.add("tss-textbox-h100");
+            return this;
+        }
+
+        /// <summary>
+        /// Marks the field as holding what a model wrote (the AI tint and an accent edge; a spinner shown by <see cref="SpinWhileAsync(Func{Task})"/> takes the AI arc), optionally with an <c>AI</c> badge inside the field. The text in the field when this is
+        /// called, and the text of every later <c>Text = …</c> / <c>SetText</c>, is taken as what the model wrote. While the field
+        /// still holds it the badge says <c>AI</c>; once the user edits it the badge stays and says <paramref name="editedText"/>
+        /// instead (and says <c>AI</c> again if they put the text back). The field keeps its AI look throughout; turn it off with
+        /// <c>AI(false)</c> if the value should stop being treated as the model's.
+        /// </summary>
+        /// <param name="value">Whether the AI look is on.</param>
+        /// <param name="strongEffect">Asks for the louder form of the AI styling (<c>tss-ai-strong</c>).</param>
+        /// <param name="badge">Shows the badge inside the field.</param>
+        /// <param name="editedText">What the badge says once the text was edited; <c>Edited</c> (translated) when null.</param>
+        public TextBox AI(bool value = true, bool strongEffect = false, bool badge = false, string editedText = null)
+        {
+            InnerElement.UpdateClassIf(value, "tss-ai");
+            InnerElement.UpdateClassIf(value && strongEffect, "tss-ai-strong");
+
+            if (value && badge)
+            {
+                if (_aiBadge is null)
+                {
+                    _aiBadge = new AIFieldBadge(Render(), () => Text);
+
+                    TextAssigned = () => _aiBadge?.Rebase();
+
+                    // Only the user's own input has an event; a change from code raises it with none, and has already rebased.
+                    SubscribeInputUpdated((_, e) =>
+                    {
+                        if (e is object) _aiBadge?.Refresh();
+                    });
+                }
+
+                _aiBadge.Enable(editedText, strongEffect);
+            }
+            else
+            {
+                _aiBadge?.Disable();
+            }
+
+            return this;
+        }
+
+        private AIFieldBadge _aiBadge;
+
+        /// <summary>Whether <see cref="AI"/> is on.</summary>
+        public bool IsAI => InnerElement.classList.contains("tss-ai");
+
+        private DictationController _dictation;
+        private DictationProvider _dictationProvider;
+
+        /// <summary>
+        /// Adds a microphone button at the end of the field, as an <see cref="OmniBox"/> has with
+        /// <see cref="OmniBox.Config.DictationButton"/>: pressing it dictates after the text already in the field, pressing it
+        /// again stops, and what was heard stays. The words come from <paramref name="provider"/>, else
+        /// <see cref="Tesserae.Dictation.Provider"/>, else the browser's speech recognition; the button is not shown when none is available.
+        /// </summary>
+        /// <param name="provider">The source of this field's dictation, instead of the application-wide one.</param>
+        public TextBox WithDictation(DictationProvider provider = null)
+        {
+            if (provider is object) _dictationProvider = provider;
+
+            GetDictation().AddButton();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets where this field's dictation gets its words from, instead of <see cref="Tesserae.Dictation.Provider"/>, without adding the
+        /// microphone button: for a field that is dictated into from elsewhere (see <see cref="DictationTargets"/>).
+        /// </summary>
+        public TextBox DictationSource(DictationProvider provider)
+        {
+            _dictationProvider = provider;
+            return this;
+        }
+
+        /// <summary>True while the microphone button is listening.</summary>
+        public bool IsDictating => _dictation?.IsDictating ?? false;
+
+        /// <summary>Starts dictating, as pressing the microphone button does. Does nothing when already dictating or when nothing can supply words, and works whether or not <see cref="WithDictation"/> was called.</summary>
+        public TextBox StartDictation()
+        {
+            GetDictation().Start();
+            return this;
+        }
+
+        /// <summary>Stops dictating; what was heard stays in the field.</summary>
+        public TextBox StopDictation()
+        {
+            _dictation?.Stop();
+            return this;
+        }
+
+        /// <summary>The dictation of this field, made on first use so a field that never dictates carries none.</summary>
+        private DictationController GetDictation()
+        {
+            if (_dictation is null) _dictation = new DictationController(Render(), InnerElement, () => Text, text => { if (_aiBadge is object) _aiBadge.AsUserEdit(() => Text = text); else Text = text; }, () => MaxLength, _dictationProvider);
+
+            _dictation.Provider = _dictationProvider;
+            return _dictation;
+        }
+
+        /// <inheritdoc />
+        public bool IsEditable => IsEnabled && !IsReadOnly;
+
+        /// <inheritdoc />
+        public bool CanDictate => Dictation.Resolve(_dictationProvider) is object;
+
+        void IDictationTarget.BeginDictation() => StartDictation();
+
+        void IDictationTarget.EndDictation() => StopDictation();
+
+        private int         _spinning;
+        private HTMLElement _spinnerHost;
+
+        /// <summary>
+        /// Shows a spinner inside the text box, at its end, while <paramref name="action"/> runs - the text box's
+        /// equivalent of <see cref="Button.OnClickSpinWhile(Func{Task}, string, Action{Button, Exception})"/>. The spinner
+        /// goes when the action ends, whether it finished or threw (the exception is not swallowed). Overlapping calls
+        /// share one spinner, which stays until the last of them ends. The field stays editable meanwhile.
+        /// </summary>
+        public async Task SpinWhileAsync(Func<Task> action)
+        {
+            StartSpinner();
+
+            try
+            {
+                await action();
+            }
+            finally
+            {
+                StopSpinner();
+            }
+        }
+
+        /// <summary>
+        /// <see cref="SpinWhileAsync(Func{Task})"/> for an action with a result, which is handed back.
+        /// </summary>
+        public async Task<T> SpinWhileAsync<T>(Func<Task<T>> action)
+        {
+            StartSpinner();
+
+            try
+            {
+                return await action();
+            }
+            finally
+            {
+                StopSpinner();
+            }
+        }
+
+        /// <summary>Whether a <see cref="SpinWhileAsync(Func{Task})"/> action is running.</summary>
+        public bool IsSpinning => _spinning > 0;
+
+        private void StartSpinner()
+        {
+            _spinning++;
+
+            if (_spinning > 1) return;
+
+            //Built per spin rather than kept, so it takes the AI arc only while the field is AI.
+            var spinner = Spinner().XSmall();
+
+            if (IsAI) spinner.AI();
+
+            _spinnerHost = Div(Att("tss-textbox-spinner"), spinner.Render());
+
+            var container = Render();
+
+            container.appendChild(_spinnerHost);
+            container.classList.add("tss-textbox-spinning");
+        }
+
+        private void StopSpinner()
+        {
+            if (_spinning == 0) return;
+
+            _spinning--;
+
+            if (_spinning > 0) return;
+
+            _spinnerHost?.remove();
+            _spinnerHost = null;
+
+            Render().classList.remove("tss-textbox-spinning");
+        }
+    }
+}

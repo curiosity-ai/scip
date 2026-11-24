@@ -1,0 +1,516 @@
+#include "infer/SigSuggestion.h"
+#include "common/common.h"
+#include "core/Loc.h"
+#include "core/TypeConstraint.h"
+#include "core/TypeErrorDiagnostics.h"
+#include "core/lsp/QueryResponse.h"
+#include <optional>
+
+using namespace std;
+
+namespace sorbet::infer {
+
+namespace {
+
+core::TypePtr extractArgType(core::Context ctx, cfg::Send &send, core::DispatchComponent &component,
+                             optional<core::NameRef> keyword, int argId) {
+    ENFORCE(component.method.exists());
+    const auto &params = component.method.data(ctx)->parameters;
+    if (argId >= params.size()) {
+        return nullptr;
+    }
+
+    core::TypePtr to = nullptr;
+    if (keyword.has_value()) {
+        auto name = *keyword;
+        for (auto &paramInfo : params) {
+            if (paramInfo.flags.isKeyword && paramInfo.name == name) {
+                to = paramInfo.type;
+                break;
+            }
+        }
+        if (to == nullptr) {
+            return nullptr;
+        }
+    } else {
+        auto &paramInfo = params[argId];
+        if (paramInfo.flags.isKeyword) {
+            // TODO(trevor) this is possibly due to the argument being a keyword args splat. Right now we ignore this
+            // case, but it would be great to give a hash or shape suggestion instead.
+            return nullptr;
+        }
+
+        to = paramInfo.type;
+    }
+
+    if (!to || !to.isFullyDefined()) {
+        return nullptr;
+    }
+
+    return to;
+}
+
+void extractSendArgumentKnowledge(core::Context ctx, cfg::CFG &cfg, core::LocOffsets bindLoc, cfg::Send *snd,
+                                  const UnorderedMap<cfg::LocalRef, InlinedVector<core::NameRef, 1>> &blockLocals,
+                                  UnorderedMap<core::NameRef, core::TypePtr> &blockArgRequirements,
+                                  const core::NameRef currentMethodName) {
+    InlinedVector<unique_ptr<core::TypeAndOrigins>, 2> typeAndOriginsOwner;
+    InlinedVector<const core::TypeAndOrigins *, 2> args;
+
+    auto argTypes = snd->argTypes();
+    args.reserve(argTypes.size());
+    for (core::TypePtr &arg : argTypes) {
+        auto &t = typeAndOriginsOwner.emplace_back(make_unique<core::TypeAndOrigins>());
+        t->type = arg;
+        t->origins.emplace_back(core::Loc::none());
+        args.emplace_back(t.get());
+    }
+
+    core::CallLocs locs{
+        ctx.file, bindLoc, snd->receiverLoc, snd->funLoc, snd->argLocs(),
+    };
+
+    auto numPosArgs = snd->numPosArgs;
+    auto numKwArgs = snd->argRefs().size() - numPosArgs;
+    bool hasKwSplat = numKwArgs % 2 == 1;
+
+    // Since this is a "fake" dispatch and we are not going to display the errors anyway,
+    // core::Loc::none() should be okay here.
+    auto originForUninitialized = core::Loc::none();
+    auto originForFullType = core::Loc::none();
+    auto suppressErrors = true;
+    core::TypeAndOrigins wrappedFullType{snd->recv.type, {originForFullType}};
+
+    core::DispatchArgs dispatchArgs{snd->fun,
+                                    locs,
+                                    numPosArgs,
+                                    args,
+                                    snd->recv.type,
+                                    wrappedFullType,
+                                    snd->recv.type,
+                                    snd->link.data(cfg).get(),
+                                    originForUninitialized,
+                                    snd->isPrivateOk,
+                                    suppressErrors,
+                                    currentMethodName};
+    auto dispatchInfo = snd->recv.type.dispatchCall(ctx, dispatchArgs);
+
+    // See if we can learn what types should they have
+    bool inKwArgs = false;
+    auto argRefs = snd->argRefs();
+    for (int i = 0, argIdx = 0; i < argRefs.size(); i++, argIdx++) {
+        inKwArgs = inKwArgs || (i >= numPosArgs && !hasKwSplat);
+
+        // extract the keyword argument name when the send contains inlined keyword arguments
+        optional<core::NameRef> keyword;
+        if (inKwArgs) {
+            if (core::isa_type<core::NamedLiteralType>(argTypes[i])) {
+                auto lit = core::cast_type_nonnull<core::NamedLiteralType>(argTypes[i]);
+                if (lit.kind == core::NamedLiteralType::Kind::Symbol) {
+                    keyword = lit.name;
+                }
+            }
+
+            // increment over the keyword argument symbol
+            i++;
+        }
+
+        auto var = argRefs[i];
+
+        // See if we can learn about what functions are expected to exist on arguments
+        auto fnd = blockLocals.find(var);
+        if (fnd == blockLocals.end()) {
+            continue;
+        }
+
+        core::TypePtr thisType;
+        auto iter = &dispatchInfo;
+        while (iter != nullptr) {
+            if (iter->main.method.exists()) {
+                auto argType = extractArgType(ctx, *snd, iter->main, keyword, argIdx);
+                if (argType && !argType.isUntyped()) {
+                    if (!thisType) {
+                        thisType = argType;
+                    } else {
+                        // 'or' together every dispatch component for _this_ usage site
+                        thisType = core::Types::lub(ctx, thisType, argType);
+                    }
+                }
+            }
+
+            iter = iter->secondary.get();
+        }
+        if (!thisType) {
+            continue;
+        }
+        for (auto argSym : fnd->second) {
+            auto &r = blockArgRequirements[argSym];
+            if (!r) {
+                r = thisType;
+            } else {
+                // 'and' this usage site against all the other usage sites
+                r = core::Types::glb(ctx, r, thisType);
+            }
+        }
+    }
+}
+
+UnorderedMap<core::NameRef, core::TypePtr> guessArgumentTypes(core::Context ctx, core::MethodRef methodSymbol,
+                                                              cfg::CFG &cfg) {
+    // What variables by the end of basic block could plausibly contain what arguments.
+    vector<UnorderedMap<cfg::LocalRef, InlinedVector<core::NameRef, 1>>> localsStoringArguments;
+    localsStoringArguments.resize(cfg.maxBasicBlockId);
+
+    // indicates what type should an argument have for basic block to execute
+    vector<UnorderedMap<core::NameRef, core::TypePtr>> argTypesForBBToPass;
+    argTypesForBBToPass.resize(cfg.maxBasicBlockId);
+
+    // This loop computes per-block requirements... Should be a method on its own
+    for (auto it = cfg.forwardsTopoSort.rbegin(); it != cfg.forwardsTopoSort.rend(); ++it) {
+        cfg::BasicBlock *bb = *it;
+        if (bb == cfg.deadBlock()) {
+            continue;
+        }
+        UnorderedMap<cfg::LocalRef, InlinedVector<core::NameRef, 1>> &blockLocals = localsStoringArguments[bb->id];
+        UnorderedMap<core::NameRef, core::TypePtr> &blockArgRequirements = argTypesForBBToPass[bb->id];
+
+        for (auto bbparent : bb->backEdges) {
+            for (auto kv : localsStoringArguments[bbparent->id]) {
+                for (auto argSym : kv.second) {
+                    if (!absl::c_linear_search(blockLocals[kv.first], argSym)) {
+                        blockLocals[kv.first].push_back(argSym);
+                    }
+                }
+            }
+        }
+
+        int i = 0;
+
+        for (cfg::Binding &bind : bb->exprs) {
+            i++;
+            if (bb->firstDeadInstructionIdx >= 0 && i >= bb->firstDeadInstructionIdx) {
+                break;
+            }
+            InlinedVector<core::NameRef, 1> newInsert;
+
+            if (auto load = cfg::cast_instruction<cfg::LoadArg>(bind.value)) {
+                newInsert.emplace_back(load->argument(ctx).name);
+            } else if (auto ident = cfg::cast_instruction<cfg::Ident>(bind.value)) {
+                auto fnd = blockLocals.find(ident->what);
+                if (fnd != blockLocals.end()) {
+                    newInsert.insert(newInsert.end(), fnd->second.begin(), fnd->second.end());
+                }
+            } else if (auto snd = cfg::cast_instruction<cfg::Send>(bind.value)) {
+                // see if we have at least a single call argument that is a method argument
+                bool shouldFindArgumentTypes = false;
+                for (auto &arg : snd->argRefs()) {
+                    auto fnd = blockLocals.find(arg);
+                    if (fnd != blockLocals.end() && !fnd->second.empty()) {
+                        shouldFindArgumentTypes = true;
+                        break;
+                    }
+                }
+
+                if (shouldFindArgumentTypes) {
+                    auto currentMethodName = cfg.symbol.data(ctx)->name;
+                    extractSendArgumentKnowledge(ctx, cfg, bind.loc, snd, blockLocals, blockArgRequirements,
+                                                 currentMethodName);
+                }
+            }
+
+            // publish changes
+
+            if (!newInsert.empty()) {
+                blockLocals[bind.bind.variable] = std::move(newInsert);
+            } else {
+                blockLocals.erase(bind.bind.variable);
+            }
+        }
+    }
+
+    // TODO: there's an assumption in the loop below that `core::Types::glb` for a given variable will converge after
+    // enough traversals of the CFG. That appears to be not true, so we bound argument guessing to 10 iterations over
+    // the CFG. The choice of 10 is arbitrary, and a more reasonable bound might be the maximum loop depth of the CFG,
+    // but 10 is probably good enough for most cases.
+    bool changed = true;
+    for (int attempt = 0; changed && attempt < 10; ++attempt) {
+        changed = false;
+        for (auto it = cfg.forwardsTopoSort.rbegin(); it != cfg.forwardsTopoSort.rend(); ++it) {
+            cfg::BasicBlock *bb = *it;
+            UnorderedMap<core::NameRef, core::TypePtr> entryRequirements;
+            for (auto bbparent : bb->backEdges) {
+                if (bbparent->firstDeadInstructionIdx >= 0 && bb != cfg.deadBlock()) {
+                    continue;
+                }
+                for (auto &kv : argTypesForBBToPass[bbparent->id]) {
+                    auto &cur = entryRequirements[kv.first];
+                    if (!cur) {
+                        cur = kv.second;
+                        continue;
+                    }
+                    cur = core::Types::lub(ctx, cur, kv.second);
+                }
+            }
+            auto &thisConstraints = argTypesForBBToPass[bb->id];
+            for (auto &kv : entryRequirements) {
+                auto &target = thisConstraints[kv.first];
+                if (!target) {
+                    target = kv.second;
+                }
+                auto newRequirement = core::Types::glb(ctx, target, kv.second);
+                if (newRequirement != target) {
+                    changed = true;
+                    target = newRequirement;
+                }
+            }
+        }
+    }
+
+    return argTypesForBBToPass[cfg.deadBlock()->id];
+}
+
+core::MethodRef closestOverriddenMethod(core::Context ctx, core::ClassOrModuleRef enclosingClassSymbol,
+                                        core::NameRef name) {
+    auto enclosingClass = enclosingClassSymbol.data(ctx);
+    ENFORCE(enclosingClass->flags.isLinearizationComputed, "Should have been linearized by resolver");
+
+    for (const auto &mixin : enclosingClass->mixins()) {
+        auto mixinMethod = mixin.data(ctx)->findMethod(ctx, name);
+        if (mixinMethod.exists()) {
+            return mixinMethod;
+        }
+    }
+
+    auto superClass = enclosingClass->superClass();
+    if (!superClass.exists()) {
+        return core::Symbols::noMethod();
+    }
+
+    auto superMethod = superClass.data(ctx)->findMethod(ctx, name);
+    if (superMethod.exists()) {
+        return superMethod;
+    } else {
+        return closestOverriddenMethod(ctx, superClass, name);
+    }
+}
+
+bool childNeedsOverride(core::Context ctx, core::MethodRef childSymbol, core::MethodRef parentSymbol) {
+    return
+        // We're overriding a method...
+        parentSymbol.exists() &&
+        // in a file which we can edit...
+        parentSymbol.data(ctx)->loc().file().exists() &&
+        // defined outside an RBI (because it might be codegen'd)...
+        !parentSymbol.data(ctx)->loc().file().data(ctx).isRBI() &&
+        // that isn't the constructor...
+        childSymbol.data(ctx)->name != core::Names::initialize() &&
+        // and wasn't Rewriter synthesized (because we can't change DSL'd sigs).
+        !parentSymbol.data(ctx)->flags.isRewriterSynthesized &&
+        // It has a sig...
+        parentSymbol.data(ctx)->resultType != nullptr &&
+        //  that is either overridable...
+        (parentSymbol.data(ctx)->flags.isOverridable ||
+         // or override...
+         parentSymbol.data(ctx)->flags.isOverride);
+}
+
+} // namespace
+
+optional<core::AutocorrectSuggestion> SigSuggestion::maybeSuggestSig(core::Context ctx, cfg::CFG &cfg,
+                                                                     const core::TypePtr &methodReturnType,
+                                                                     core::TypeConstraint &constr) {
+    core::MethodRef methodSymbol = cfg.symbol;
+
+    bool guessedSomethingUseful = false;
+
+    auto lspQueryMatches = ctx.state.lspQuery.matchesSuggestSig(methodSymbol);
+    if (lspQueryMatches) {
+        // Even a sig with no useful types is still useful interactively (saves on typing)
+        guessedSomethingUseful = true;
+    }
+
+    core::TypePtr guessedReturnType;
+    if (ctx.file.data(ctx).isRBI()) {
+        // We will always infer a return type of `NilClass` in an RBI file, because all RBI files
+        // have empty bodies. That's not useful--we'd rather infer `T.untyped` so that LSP
+        // replaces it with a tabstop the user can cycle through.
+        guessedReturnType = core::Types::untypedUntracked();
+
+    } else if (!constr.isEmpty()) {
+        if (!constr.solve(ctx)) {
+            return nullopt;
+        }
+
+        guessedReturnType = core::Types::widen(ctx, core::Types::instantiateTypeVars(ctx, methodReturnType, constr));
+
+        if (!guessedReturnType.isFullyDefined()) {
+            guessedReturnType = core::Types::untypedUntracked();
+        }
+
+        guessedSomethingUseful |= !guessedReturnType.isUntyped();
+    } else {
+        guessedReturnType = methodReturnType;
+    }
+
+    auto isBadParam = [&](const core::ParamInfo &param) -> bool {
+        return
+            // runtime does not support rest args and key-rest args
+            param.flags.isRepeated ||
+
+            // sometimes variable does not have a name e.g. `def initialize (*)`
+            param.name.shortName(ctx).empty();
+    };
+    bool hasBadParam = absl::c_any_of(methodSymbol.data(ctx)->parameters, isBadParam);
+    if (hasBadParam) {
+        return nullopt;
+    }
+
+    auto guessedArgumentTypes = guessArgumentTypes(ctx, methodSymbol, cfg);
+
+    auto enclosingClass = methodSymbol.data(ctx)->owner;
+    auto closestMethod = closestOverriddenMethod(ctx, enclosingClass, methodSymbol.data(ctx)->name);
+
+    fmt::memory_buffer ss;
+    if (closestMethod.exists()) {
+        auto closestReturnType = closestMethod.data(ctx)->resultType;
+        if (closestReturnType && !closestReturnType.isUntyped()) {
+            closestReturnType =
+                core::Types::resultTypeAsSeenFrom(ctx, closestReturnType, closestMethod.data(ctx)->owner,
+                                                  enclosingClass, enclosingClass.data(ctx)->selfTypeArgs(ctx));
+            // Only correct the guessed return type if the guess isn't subtype compatible (allow narrower guess),
+            // or if the guess is `NilClass`, because that makes it harder to add new, empty method
+            // implementations and rely on the autocorrect to copy the parent signature down.
+            if (guessedReturnType == core::Types::nilClass() ||
+                !core::Types::isSubType(ctx, guessedReturnType, closestReturnType)) {
+                guessedReturnType = closestReturnType;
+            }
+        }
+
+        for (const auto &param : closestMethod.data(ctx)->parameters) {
+            if (param.type && !param.type.isUntyped()) {
+                guessedArgumentTypes[param.name] = param.type;
+            }
+        }
+    }
+
+    auto loc = methodSymbol.data(ctx)->loc();
+    // Sometimes the methodSymbol we're looking at has been synthesized by a Rewriter pass, so no 'def' exists in the
+    // source
+    if (loc.file().data(ctx).source().substr(loc.beginPos(), 3) != "def") {
+        return nullopt;
+    }
+
+    fmt::format_to(std::back_inserter(ss), "sig");
+    if (enclosingClass.data(ctx)->flags.isFinal) {
+        fmt::format_to(std::back_inserter(ss), "(:final)");
+    }
+    fmt::format_to(std::back_inserter(ss), " {{ ");
+
+    ENFORCE(!methodSymbol.data(ctx)->parameters.empty(), "There should always be at least one arg (the block arg).");
+    bool onlyArgumentIsBlkArg = methodSymbol.data(ctx)->parameters.size() == 1 &&
+                                methodSymbol.data(ctx)->parameters[0].isSyntheticBlockParameter();
+
+    if (methodSymbol.data(ctx)->name != core::Names::initialize()) {
+        // Only need override / implementation if the parent has a sig
+        if (closestMethod.exists() && closestMethod.data(ctx)->resultType != nullptr) {
+            if (closestMethod.data(ctx)->flags.isAbstract || childNeedsOverride(ctx, methodSymbol, closestMethod)) {
+                fmt::format_to(std::back_inserter(ss), "override.");
+            }
+        }
+    }
+
+    if (!onlyArgumentIsBlkArg) {
+        fmt::format_to(std::back_inserter(ss), "params(");
+
+        bool first = true;
+        for (auto &paramInfo : methodSymbol.data(ctx)->parameters) {
+            // WARNING: This is doing raw string equality--don't cargo cult this!
+            // You almost certainly want to compare NameRef's for equality instead.
+            // We need to compare strings here because we're running with a frozen global state
+            // (and thus can't take the string that we get from `argumentName` and enter it as a name).
+            if (paramInfo.parameterName(ctx) == core::Names::blkArg().shortName(ctx)) {
+                // Never write "<blk>: ..." in the params of a generated sig, because this doesn't parse.
+                // (We add a block argument to every method if it doesn't mention one.)
+                continue;
+            }
+            if (!first) {
+                fmt::format_to(std::back_inserter(ss), ", ");
+            }
+            first = false;
+            auto argType = guessedArgumentTypes[paramInfo.name];
+            core::TypePtr chosenType;
+
+            auto oldType = paramInfo.type;
+            if (!oldType || oldType.isUntyped()) {
+                if (!argType || argType.isBottom()) {
+                    chosenType = core::Types::untypedUntracked();
+                } else {
+                    guessedSomethingUseful = true;
+                    chosenType = core::Types::widen(ctx, argType);
+                }
+            } else {
+                // TODO: maybe combine the old and new types in some way?
+                chosenType = oldType;
+            }
+            auto options = core::ShowOptions().withUseValidSyntax();
+            fmt::format_to(std::back_inserter(ss), "{}: {}", paramInfo.parameterName(ctx),
+                           chosenType.show(ctx, options));
+        }
+        fmt::format_to(std::back_inserter(ss), ").");
+    }
+    if (!guessedSomethingUseful && !ctx.state.suggestUnsafe.has_value()) {
+        // We don't want to condition people to start inserting a bunch of useless signatures filled
+        // with `T.untyped`, unless they've explicitly opted into the behavior with
+        // `--suggest-unsafe` (which usually suggests that they're doing some sort of codemod and
+        // they know what they're asking for).
+        return nullopt;
+    }
+
+    bool suggestsVoid =
+        methodSymbol.data(ctx)->name == core::Names::initialize() || (guessedReturnType.hasTopLevelVoid());
+
+    if (suggestsVoid) {
+        fmt::format_to(std::back_inserter(ss), "void }}");
+    } else {
+        auto options = core::ShowOptions().withUseValidSyntax();
+        fmt::format_to(std::back_inserter(ss), "returns({}) }}", guessedReturnType.show(ctx, options));
+    }
+
+    auto [replacementLoc, padding] = loc.findStartOfIndentation(ctx);
+    string spaces(padding, ' ');
+    bool hasExistingSig = methodSymbol.data(ctx)->resultType != nullptr;
+
+    if (!loc.file().exists()) {
+        return nullopt;
+    }
+
+    if (hasExistingSig) {
+        return nullopt;
+    }
+
+    vector<core::AutocorrectSuggestion::Edit> edits;
+
+    auto sig = to_string(ss);
+    auto replacementContents = fmt::format("{}\n{}", sig, spaces);
+    edits.emplace_back(core::AutocorrectSuggestion::Edit{replacementLoc, replacementContents});
+
+    if (lspQueryMatches) {
+        core::lsp::QueryResponse::pushQueryResponse(
+            ctx, core::lsp::EditResponse(replacementLoc, std::move(replacementContents)));
+    }
+
+    auto topAttachedClass = enclosingClass.data(ctx)->topAttachedClass(ctx);
+    if (auto edit = core::TypeErrorDiagnostics::editForDSLMethod(ctx, ctx.file, replacementLoc, topAttachedClass,
+                                                                 core::Symbols::T_Sig(), "")) {
+        if (edit->loc == edits.back().loc) {
+            // Merge edits if we need to insert the `extend T::Sig` at the same point as the `sig`,
+            edits.back().replacement = edit->replacement + edits.back().replacement;
+        } else {
+            edits.emplace_back(edit.value());
+        }
+    }
+
+    return core::AutocorrectSuggestion{fmt::format("Add `{}`", sig), edits};
+}
+
+} // namespace sorbet::infer

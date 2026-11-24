@@ -1,0 +1,6 @@
+<Project>
+  <!-- Every packable project ships the root README as its NuGet readme. -->
+  <ItemGroup Condition="'$(IsPackable)' != 'false'">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+</Project>

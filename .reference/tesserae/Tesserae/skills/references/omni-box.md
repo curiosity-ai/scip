@@ -1,0 +1,261 @@
+---
+name: omni-box
+description: A search/chat input that parses boolean operators (AND, OR, NOT, parentheses, quotes), supports inline filter chips, autocomplete suggestions and a chat mode with model selection. Use when building a unified search-and-chat bar in a Tesserae (C#/Transpose) app.
+---
+
+# OmniBox
+
+A configurable input that switches between a search interaction and a chat
+interaction. In search mode it parses and visually highlights logical operators
+(`AND`/`&&`, `OR`/`||`, `NOT`/`!`/`-`, parentheses, quotes) and supports inline
+filter chips plus async suggestions. Constructed from a `Config` object.
+
+## Create
+
+`OmniBox(OmniBox.Config config)` — pass a `new OmniBox.Config(Mode mode, Mode? initialMode = null)`
+where `Mode` is `Search`, `Chat` or `SearchAndChat`. Bring the factory into scope
+with `using static Tesserae.UI;`. (`UI.OmniBox(config)` is also available.)
+
+## Key configuration
+
+Config (set via object initializer):
+- `PlaceholderSearch` / `PlaceholderChat`, `ExpandOnFocus`, `TokenIgnoreCase`.
+- `SuggestionsFetcher = async input => OmniBoxSuggestionItem[]` — autocomplete source.
+- `IconSearch` / `IconChat` / `IconStop`, `SearchFooter` / `ChatFooter` (`FooterItems`).
+- `IconModeToggleChat` / `IconModeToggleSearch`, `TooltipModeToggleChat` / `TooltipModeToggleSearch`,
+  `TextModeToggleChat` / `TextModeToggleSearch` — the `SearchAndChat` mode selector in the footer (an
+  `IconToggle`, see `icon-toggle.md`). It is icon-only unless a text is set, and it takes the box's
+  roundness, so `.Rounded(BorderRadius.Full)` gives a pill-shaped selector.
+- `ChatHeader` (`IComponent`) — rendered inside the box above the chat input: what the message is being written against, e.g. a compact `ContextCards` group of the attached documents. Swap it later with `.SetChatHeader(component)`, or pass `null` to empty the slot — it takes up no space while empty. For individual cards *below* the input, use `.WithContextToAdd(...)`.
+- `GeneratingText` — label shown in the footer while generating (default `"Generating"`); the live elapsed time is appended, e.g. `"Generating, 1m 25s"`.
+- `MaxCharacters` (default `0`, no limit) — how long a chat message may be. The input stops taking text at the limit and a `"used / max"` counter appears in the footer next to the send button, in the secondary foreground colour. It only shows past half the budget; below that it is collapsed, so an ordinary message carries no number.
+- `CodeBlocks` (default `true`) — fenced code blocks in the chat input. See "Code blocks" below; `false` makes ``` plain text.
+- `DictationButton` (default `false`) — adds a microphone button that dictates into the active input; see "Dictation" below. `DictationProvider` replaces the words' source for this box.
+- `AllowSendWhileGenerating` (default `false`) — when set, typing a message while `IsGenerating` is true sends it (`OnChat` fires) instead of the trigger stopping the reply, so the host can queue it for the turn in flight. The trigger still shows the stop icon while the input is empty and turns back into the send icon as soon as there is text.
+
+OmniBox:
+- `.OnSearch((sender, SearchQuery) => ...)` — fires on search; `query.Tokens` hold the parsed tokens.
+- `.OnInput((sender, Event) => ...)` — fires on every change to the text: typing, the clear button, a deleted operator token, cut, and `SearchText` set in code (`Event` is null then). Search-as-you-type hangs off this.
+- `.OnChat((sender, ChatMessage) => ...)`, `.OnStop(...)`, `.OnModelChanged(...)`.
+- `.OnChatPaste((sender, ChatPaste) => ...)` — what was pasted into the chat input, for the things the input itself cannot take. `ChatPaste` carries `Files` (a pasted screenshot arrives here and nowhere else — it is not text, so the input drops it), `Text` (the plain text, empty when there is none) and `Handled`: set it to keep the paste out of the input, leave it and the paste happens as usual. A clipboard can carry both, so a handler that only wants pictures should check `Text` first — a cell copied out of a spreadsheet brings an image of itself along with the text the user meant to paste.
+- `.IsGenerating` (bool) — toggles the footer spinner + elapsed-time indicator and swaps the send button for a stop button. The send button is quiet while the input is empty and takes the primary colour once there is text; both changes, and the send/stop swap, animate briefly (off under `prefers-reduced-motion`). `.GeneratingText` (string) — read/write the indicator label; setting it updates the footer live. `.GeneratingStartedAt` (`DateTimeOffset`) — what the elapsed time counts from; setting `IsGenerating` starts it at now, so set it afterwards to backdate a generation already in progress (a reply that was running when the chat was opened). `.AllowSendWhileGenerating` (bool) — read/write the config flag above.
+- `.IsStopping` (bool) — the host asked for the stop and is waiting for the reply to actually end: the stop button becomes the button's own spinner (see `button.md`) and `OnStop` does not fire again, while a message typed meanwhile is still sent when `AllowSendWhileGenerating` is on. Cleared whenever `IsGenerating` changes. Set `GeneratingText` (e.g. `"Stopping"`) with it so the footer says so too.
+- `.SearchText` / `.ChatText` / `.SetSearchText(string)` — read/write input text. `ChatText` is Markdown: code boxes are composed back with their fences, and setting it parses fences into boxes.
+- `.StartDictation()` / `.StopDictation()` / `.IsDictating` — the microphone button's behaviour in code (see "Dictation").
+- `.MaxChatCharacters` (int) — read/write `Config.MaxCharacters` after construction; `0` lifts the limit.
+- `.ActiveMode` (`Mode`) — which half of a `SearchAndChat` box is showing. Setting it switches the box
+  and moves the box's own toggle with it. `.ActiveModeObservable` follows it, and `.NoModeToggle()`
+  takes the toggle out of the footer for a host that puts a mode control somewhere of its own (a page
+  header) — the box still switches through `.ActiveMode`.
+- `.SetChatHeader(IComponent)` — replace (or clear, with `null`) whatever sits above the chat input.
+- `.RegisterSnap(SnapHandler)` / `.RegisterFilterSnap(FilterSnapHandler)` — turn recognized input into inline filter chips (search modes only).
+- `.AddSnap(SnapHandler)` / `.AddFilterSnap(FilterSnapHandler, value, trigger = null)` / `.ClearSnaps()` — add or drop active snap and filter chips in code, to open the box already filtered (`AddSnap` skips a snap that is already active).
+- `.WithHistory(Func<Task<SearchQuery[]>>)` — enable the history button, listing what the fetcher returns
+- `.WithHistory(Func<Task<SearchQuery[]>>, Func<SearchQuery, Task> removeFromHistory)` — the same, with a remove button on every entry; the callback forgets the entry where the history is kept, and the entry leaves the list once it completes
+  (most recent first), and Up/Down history in the search input: Up in the empty box fetches the list and
+  puts the most recent search in the box, each further Up goes one further back, Down comes forward again
+  to the empty box. Searches made in the box are walked first (and not repeated) even before the fetcher
+  returns them. Without `WithHistory` the arrows keep their usual meaning in the search input.
+- `.WithChatHistory(IEnumerable<string> messages)` — the same Up/Down walk in the chat input, over the
+  user's earlier messages. Pass them oldest first (conversation order), typically gathered when a
+  conversation is opened; it replaces what was there. Every message sent from the box is added for you
+  (blank messages and a repeat of the latest are skipped), so a box with no `WithChatHistory` still
+  recalls what was sent from it. `.AddToChatHistory(string)` adds one sent some other way,
+  `.ClearChatHistory()` empties it, `.ChatHistory` reads it (oldest first).
+  In both inputs a walk lasts only while the box still shows what it recalled: typing or deleting
+  anything ends it and the arrows go back to moving the caret. Only plain Up/Down take part (Shift, Alt,
+  Ctrl and Cmd keep their text-field meanings), and a host `OnKeyDown` that calls `preventDefault()` on
+  the chat input keeps the key.
+- `.WithHelp(bool showSyntax = false)` — a `?` button opening a panel that lists the registered filter
+  snaps and snaps (with their example values); `showSyntax: true` also documents `AND` / `OR` / `NOT`,
+  grouping and quoting (search modes only).
+- `.InlineFilterChips` — observable list of `InlineFilterChip`s rendered at the head of the search
+  input, for filters the app owns rather than ones the user typed. A chip takes a text (with optional
+  background/foreground colors and an `onClick`) or an arbitrary `IComponent`.
+- `.SetSearchRightText(string)` — a label at the far end of the search input, e.g. a result count.
+- `.SetSearching(bool)` / `.IsSearching` — says a search is running: the magnifier gives its place to a
+  spinner, in the same spot, so the box keeps its shape while it runs. The two cross over only after
+  ~140ms, so a fast or cached answer never makes the button blink. (`CommandPalette` drives this for you
+  while its `OnSearch` is in flight — `command-palette.md`.)
+- `.Rounded(BorderRadius radius = BorderRadius.Full)` — rounds the box, and everything meeting its
+  outline follows: the search container, the buttons at its ends and the "Ask AI" button. `Full` makes
+  the single-row search box a pill — dropping the vertical dividers between its buttons and giving the
+  row a taller, roomier 48px (still overridable with `.Height(...)` / `.H(...)`); on the multi-row chat
+  layouts, where a stadium shape would curve through the input, it settles for a generously rounded
+  rectangle and pulls the footer clear of the corners.
+- `.WithAskAI(string text = "Ask AI", UIcons icon = UIcons.Beacon, Action<OmniBox> onClick = null)` — a
+  primary-styled button at the end of the search input (search modes only), following the box's
+  roundness. The handler gets the OmniBox, so it can read `.SearchText`. In `SearchAndChat` the button
+  sits at the end of the footer and hides itself while the box is in chat mode. Calling it again updates
+  the button that is there; a null or empty `text` hides it.
+- `.SetModels(params ModelOption[])` / `.LockModel(ModelOption)` / `.SetThinkingEffort(ThinkingEffort)`
+  — the chat footer's model selector; a locked model shows with a lock and stops opening the popover.
+- `.SetKeyboardShortcut(params string[] keys)` — e.g. `("Ctrl", "K")`: a document-level shortcut that
+  focuses the box, shown as a hint at the end of the search input (hidden while the input has focus,
+  shown again on blur).
+- `.SetSuggestedText(string text, Action<string> onAccepted = null)` / `.ClearSuggestedText()` — a
+  suggestion drawn in the empty search input in place of the placeholder, followed by a `Tab` keycap
+  (search modes only). Tab in the empty, focused input puts the text in as if typed (moving the caret to
+  its end and running the usual input/suggestion pipeline) and calls `onAccepted`; Shift+Tab still moves
+  focus. Typing hides the suggestion and emptying the box brings it back, until it is cleared — clearing
+  restores the placeholder and Tab's normal focus behaviour. `.SuggestedText` reads it, and
+  `.AcceptSuggestedText()` accepts it programmatically.
+- `.Disabled(bool value = true)` — keeps the content but stops taking input.
+- `.EnableChatMentions(ChatMention)` — turns typing `@` at a word boundary in the chat input into an
+  "@mention" style picker (chat/search-and-chat modes only). `ChatMention` is a set of UI-agnostic
+  callbacks (`OnShow(x, y)`, `OnQueryChanged(text)`, `OnMove(direction)`, `OnCommit()`, `OnHide()`,
+  `IsOpen()`) — wire them up to any anchored popup, e.g. a `ToolAgentSelector`'s
+  `ShowInlineAt`/`Filter`/`MoveHighlight`/`ActivateHighlighted`/`Hide`/`IsVisible` (see
+  `tool-agent-selector.md`). Arrow Up/Down, Enter/Tab and Escape are forwarded to the callbacks
+  while the picker is open; a `true` return from `OnCommit` removes the typed `@mention` text.
+- `.WithContextToAdd(params ContextCard[])` — the context that will go with the next message, rendered
+  as a wrapping row of `ContextCard`s **inside the box**, just below the input and above the footer
+  (chat/search-and-chat modes only; it hides itself while the box is in search mode, and the row is
+  invisible while empty). `.AddContext(card)` appends one, `.RemoveContext(card)` / `.ClearContext()`
+  take them out, `.ContextToAdd` (read-only list) and `.HasContextToAdd` read the current state. Each
+  card's (x) is wired to the row, so removing a card from the box needs no extra code — a handler the
+  caller registered with `ContextCard.OnRemove` still runs, which is where the underlying context gets
+  dropped. Cards survive sending: clear the row from `OnChat`. See `context-card.md`.
+- `.Focus()`.
+- `.CaretClientX()` — the viewport x of the text caret in whichever input is focused, clamped to that input's bounds, or `double.NaN` when there is nothing to measure. Used to point something at where the user is typing, e.g. the `PixelAvatar` companion walking over to the caret.
+- `OmniBox.ParseQuery(string, bool tokenIgnoreCase = false)` — static parser returning a `SearchQuery`.
+- `.CurrentSearchQuery` — what the box says right now, parsed: the same `SearchQuery` pressing Enter would
+  raise, chips included. For a host that answers as the query is typed rather than on Enter (a
+  `CommandPalette`, a search-as-you-type page).
+
+## Code blocks
+
+In chat mode, typing ``` at the start of a line opens a code box inside the input; the text after the caret moves
+below it. There can be any number of boxes. Inside a box Enter is a new line and Ctrl/Cmd+Enter sends; ``` typed on
+its last line, Escape, or the arrow keys at its edges leave it; Backspace in an empty box (or at the start of the
+text right after one) removes it and joins the text around it. Pasted text, `ChatText`/`SetChatText`, the history
+walk and dictation are parsed the same way, and a language after the opening fence is kept and shown on the box.
+
+What `OnChat` receives keeps the fences. Each box is fenced with one backtick more than the longest run of backticks
+in its content (never fewer than three), so a block holding ``` itself still renders as one block. Empty boxes are
+left out. The parser and composer are public, `OmniBox.ParseChatParts(text)` / `OmniBox.ComposeChatParts(parts)` /
+`OmniBox.FenceFor(code)`, for a host that wants the same split.
+
+```csharp
+OmniBox(new OmniBox.Config(OmniBox.Mode.Chat))
+    .SetChatText("Why does this fail?\n```csharp\nvar x = 42;\n```")   // opens with one box
+    .OnChat((s, m) => conversation.Add(MarkdownBlock(m.Text)));          // m.Text keeps the fences
+```
+
+## Dictation
+
+`Config.DictationButton = true` puts a microphone button in the footer (in the input row of a `Search`-only
+box). Pressed, it listens and shows the words in the active input after whatever was typed: interim results
+as they come, final ones kept. While it listens the microphone icon turns solid red and pulses (RetroOS and Graustufe, which have no red, add a corner dot) (`aria-pressed`
+is true), in every theme. Sending, switching mode, pressing it again or removing the box from the page stops
+it. On a phone the button stays in the row.
+
+The words come from, in order: `Config.DictationProvider` (this box), `Dictation.Provider` (every box),
+the browser's speech recognition (`Dictation.IsBrowserSupported`). With none of them the button is not shown.
+
+To use another source (a speech-to-text service, an on-device model) set a `DictationProvider` - a delegate that
+receives a `DictationSession` and returns the action that stops listening:
+
+```csharp
+Dictation.Provider = session =>
+{
+    var stream = MySpeechService.Start(
+        onWords: (text, isFinal) => session.SetTranscript(text, isFinal),   // the whole segment so far, not the delta
+        onEnded: () => session.End(),
+        onError: message => session.Fail(message));                          // shows a toast and stops
+    return () => stream.Stop();                                              // not called after End/Fail
+};
+```
+
+`session.StartText` is what was in the box. `SetTranscript` replaces the previous segment; `isFinal: true`
+keeps it and the next call starts a new one after it. After the stop action ran (the user pressed the button again) the session still takes `SetTranscript` for a few seconds, until you call `End()` - so a service that answers a moment after it was told to stop can deliver the last words. Sending the message ends it for good.
+
+An `OmniBox` with `Config.DictationButton` is also an `IDictationTarget`, so an application's own push-to-talk can find it with `DictationTargets.Current()` and start it with `BeginDictation()`: see `dictation-targets.md`.
+
+## On a phone
+
+While `Theme.IsMobileMode` is on, a `Chat` or `SearchAndChat` box is a single row:
+a **+** button, the input (growing upward as it wraps) and the send / search button.
+Everything else in the footer - the Chat/Search toggle, the model selector and every
+`ChatFooter` / `SearchFooter` item a host adds - opens in a `Drawer` from the **+**,
+one per row, and goes back to the footer when the sheet closes. Icon-only buttons are
+labelled there with their `Tooltip(string)` text (or `aria-label`), and the whole row
+presses them. Nothing to configure; the sheet closes itself when the mode changes.
+
+## Example
+
+```csharp
+using static Tesserae.UI;
+
+var config = new OmniBox.Config(OmniBox.Mode.SearchAndChat)
+{
+    PlaceholderSearch = "Search…",
+    PlaceholderChat   = "Ask anything…",
+    SuggestionsFetcher = async input => new[]
+    {
+        new OmniBox.OmniBoxSuggestionItem("recent: invoices"),
+        new OmniBox.OmniBoxSuggestionItem("recent: contracts"),
+    }
+};
+
+var omni = new OmniBox(config)
+    .OnSearch((s, q) => console.log($"Search: {q.Tokens.Count} tokens"))
+    .OnChat((s, m) => console.log("Chat sent"));
+```
+
+A pill-shaped search box with a result count and an "Ask AI" action:
+
+```csharp
+var omni = new OmniBox(new OmniBox.Config(OmniBox.Mode.Search) { PlaceholderSearch = "Search…" })
+    .Rounded()                                   // BorderRadius.Full — a pill
+    .SetSearchRightText("18 results · 0.21s")
+    .WithAskAI("Ask AI", UIcons.Beacon, box => AskAI(box.SearchText))
+    .OnSearch((s, q) => Search(q.RawQuery));
+```
+
+A composer that takes a pasted screenshot and stages it as a card:
+
+```csharp
+var omni = new OmniBox(new OmniBox.Config(OmniBox.Mode.Chat))
+    .OnChatPaste((s, paste) =>
+    {
+        // Text wins when the clipboard has any: the user meant to paste the text.
+        if (!string.IsNullOrEmpty(paste.Text) || paste.Files.Length == 0) return;
+
+        paste.Handled = true;                      // the input must not also receive it
+
+        foreach (var file in paste.Files)
+        {
+            UploadAsync(file).ContinueWith(t => s.AddContext(ContextCard(file.name, UIcons.Picture)));
+        }
+    })
+    .OnChat((s, m) => { Send(m.Text, s.ContextToAdd); s.ClearContext(); });
+```
+
+Context attached to the next message, shown inside the box below the input:
+
+```csharp
+var omni = new OmniBox(new OmniBox.Config(OmniBox.Mode.Chat))
+    .WithContextToAdd(
+        ContextCard("Kindersonnenschutzmittel-NEU.pdf", UIcons.FilePdf).SetSubLabel("PDF").IconBackground("#ef4444"))
+    .OnChat((s, m) =>
+    {
+        Send(m.Text, s.ContextToAdd.Select(c => c.Label));   // read it before clearing
+        s.ClearContext();                                    // the box keeps it until told otherwise
+    });
+
+// Later, e.g. from an attach button or a FileDropArea:
+omni.AddContext(ContextCard("Q3-forecast.xlsx", UIcons.FileExcel).SetSubLabel("Spreadsheet").IconBackground("#16a34a"));
+```
+
+## Related
+
+- Perching an animated pixel-art cat on top of the box — `pixel-avatar.md`
+
+- TextBox — `/tesserae/inputs/text-box`
+- SearchBox — `/tesserae/search/search-box`
+- ToolAgentSelector — the tool/agent picker `EnableChatMentions` is commonly wired to — `tool-agent-selector.md`
+- ContextCards — a compact row of pills naming the attached context, mounted in the box's `ChatHeader` slot — `context-cards.md`
+- ContextCard — the cards `WithContextToAdd` renders below the input — `context-card.md`
+- OmniResult — the search-result rows a query typed here is answered with — `omni-result.md`
+- Full docs & API: `/tesserae/search/omni-box`

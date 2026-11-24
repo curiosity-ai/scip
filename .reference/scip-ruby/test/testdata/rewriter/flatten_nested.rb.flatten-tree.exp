@@ -1,0 +1,67 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  class ::A<<C A>> < (::<todo sym>)
+    def outer_method(<blk>)
+      <runtime method definition of inner_method>
+    end
+
+    def inner_method(<blk>)
+      <self>.puts(<self>)
+    end
+
+    <runtime method definition of outer_method>
+  end
+
+  ::A.new().outer_method()
+
+  ::A.new().inner_method()
+
+  class ::B<<C B>> < (::<todo sym>)
+    def outer_method(<blk>)
+      <runtime method definition of self.inner_method>
+    end
+
+    def inner_method(<blk>)
+      <self>.puts(<self>)
+    end
+
+    <runtime method definition of outer_method>
+  end
+
+  b = ::B.new()
+
+  b.outer_method()
+
+  b.inner_method()
+
+  class ::C<<C C>> < (::<todo sym>)
+    def self.outer_method(<blk>)
+      <runtime method definition of inner_method>
+    end
+
+    def inner_method(<blk>)
+      <self>.puts(<self>)
+    end
+
+    <runtime method definition of self.outer_method>
+  end
+
+  ::C.outer_method()
+
+  ::C.new().inner_method()
+
+  class ::D<<C D>> < (::<todo sym>)
+    def self.outer_method(<blk>)
+      <runtime method definition of self.inner_method>
+    end
+
+    def self.inner_method(<blk>)
+      <self>.puts(<self>)
+    end
+
+    <runtime method definition of self.outer_method>
+  end
+
+  ::D.outer_method()
+
+  ::D.inner_method()
+end

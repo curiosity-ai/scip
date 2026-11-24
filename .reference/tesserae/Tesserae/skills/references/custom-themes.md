@@ -1,0 +1,210 @@
+---
+name: custom-themes
+description: Switch the whole look of a Tesserae app with a custom theme package (ICustomTheme) that is activated and deactivated at run time, loads its own stylesheet on first activation, and scopes every rule under a root class on the body. Use to apply a packaged design language (e.g. Tesserae.Themes.Curiosity), build a theme picker, or write a theme package of your own for a Tesserae (C#/Transpose) app.
+---
+
+# Custom themes (`ICustomTheme`)
+
+A custom theme is a NuGet package that restyles every Tesserae component while it is
+active. It works by exactly one mechanism: it owns a **root class name**, which
+activating adds to `document.body` and deactivating removes. Every rule in the theme's
+stylesheet is scoped under that class, so the stylesheet can stay loaded after the theme
+is switched off and simply stops matching. Because the class is on the body it also
+reaches layers (modals, panels, tooltips, menus), which mount on the body.
+
+The stylesheet is **not** linked from `index.html`: the package declares it with
+`"load": false` in its `tps.json`, so it is copied into the app's output and fetched the
+first time the theme is activated.
+
+## Use a theme
+
+```csharp
+using Tesserae;
+using Tesserae.Themes.Curiosity;   // PackageReference Tesserae.Themes.Curiosity
+
+await UI.Theme.SetCustomTheme(CuriosityTheme.Instance);   // activate (loads the CSS once)
+await UI.Theme.ClearCustomTheme();                         // back to the default look
+var current = UI.Theme.CustomTheme;                        // null when none is active
+```
+
+- `UI.Theme.SetCustomTheme(ICustomTheme theme)` — makes `theme` the one active custom
+  theme (or clears it when `null`). The new theme's stylesheet is loaded **before** the
+  previous one is removed, so switching never flashes the default look. Overlapping calls
+  resolve to the last one. Raises `UI.Theme.OnThemeChanged`.
+- `UI.Theme.ClearCustomTheme()` — same as `SetCustomTheme(null)`.
+- `UI.Theme.CustomTheme` — the theme currently selected.
+- Dark mode is orthogonal: `UI.Theme.Dark()` / `Light()` keep working, and a theme styles
+  both (`body.<root>.tss-dark-mode`).
+- Your own colours still win. A custom theme redefines the `--tss-*` variables on the body,
+  and `Theme.Build()…Apply()`, `Theme.SetPrimary(...)`, `SetBackground(...)` and
+  `SetHighlight(...)` restate what they set as `!important` under `body.tss-custom-theme`,
+  the marker class present while any custom theme is active — so an app can run a packaged
+  theme and still recolour its primary (`theme-builder.md`, `theme-colors.md`). Without a
+  custom theme the marker is absent and those setters behave exactly as before.
+
+To avoid painting the default look for a frame on first load, hide the body until the
+theme is in:
+
+```csharp
+document.body.style.visibility = "hidden";
+async Task ShowThemed()
+{
+    try     { await UI.Theme.SetCustomTheme(CuriosityTheme.Instance); }
+    finally { document.body.style.visibility = ""; }
+}
+ShowThemed().FireAndForget();
+```
+
+## The interface
+
+```csharp
+public interface ICustomTheme
+{
+    string Name { get; }            // for a picker
+    string RootClassName { get; }   // added to document.body while active
+    bool   IsActive { get; }        // the class is on the body
+    Task   Activate();              // load the CSS on first call, then add the class
+    void   Deactivate();            // remove the class; the CSS stays loaded
+}
+// UI.Theme.SetCustomTheme also adds UI.Theme.CustomThemeMarkerClass ("tss-custom-theme")
+// to the body while any theme is active; CustomTheme does the same when used directly.
+```
+
+`CustomTheme` (abstract) implements all of it: pass a name, the root class and the
+stylesheet URL(s). It also exposes `LoadAsync()` (fetch without activating, e.g. to warm
+a picker), `IsLoaded`, `Stylesheets`, and `OnActivated()` / `OnDeactivated()` hooks.
+
+## Write a theme package
+
+1. A Transpose library project referencing Tesserae (`<ProjectReference>` or
+   `<PackageReference Include="Tesserae" />`).
+2. One class:
+
+   ```csharp
+   public sealed class MyTheme : CustomTheme
+   {
+       public static MyTheme Instance { get; } = new MyTheme();
+       private MyTheme() : base("My Theme", "tss-theme-mine", "assets/css/tss-theme-mine.css") { }
+   }
+   ```
+
+3. CSS files named after the Tesserae stylesheet they restyle (`tss.button.css`,
+   `tss.dropdown.css`, …) plus a `tss.common.css` that redefines the `--tss-*`
+   variables. A few things a component would otherwise write inline read a variable a theme can
+   set instead: chart series without an explicit colour (`--tss-chart-series-1` … `-8`),
+   MarkHighlighter matches (`--tss-mark-color` / `--tss-mark-text-color`, the system Mark
+   colours when unset) and the focused one (`--tss-mark-focus-color`), and an initials-only
+   Avatar, which is drawn by `.tss-avatar.tss-avatar-generated` from `--tss-avatar-hue`.
+   Focus is a per-component state drawn on the component's own edge, inside the box, never
+   as an outline or an outer ring (a container that clips its content would cut those off).
+   Text boxes, search boxes, the annotated text editor and the OmniBox turn their border to
+   `--tss-primary-border-color` and double it with a 1px inset line (the OmniBox draws that
+   line on a `::after` overlay that inherits the box's border, so restyling the focused box's
+   border restyles it; `content: none` on the overlay drops it). Buttons draw an inset line of
+   `--tss-btn-focus-width` (2px) in `--tss-btn-focus-color` (the primary edge colour, or the
+   tone's text colour on a filled tone): set those two on `body.tss-theme-mine .tss-btn:focus-visible`
+   to recolour every button's focus, including pivot tabs, sidebar rows and IconToggle segments.
+   The old `--tss-ring-*` variables are still defined but no component reads them.
+   A surface filled with a quiet neutral (an empty rating star, an empty calendar day,
+   a drawer handle, a hovered icon button) reads `--tss-subtle-fill-color`, not the border colour.
+   `AI(strongEffect: true)` adds `tss-ai-strong` beside `tss-ai`: redefine the `--tss-ai-*`
+   variables under it for a louder AI form (the default theme has no rule for it).
+   Scope every selector under the root class: `body.tss-theme-mine .tss-btn`
+   (and `body.tss-theme-mine.tss-dark-mode …` for dark). Redefine a derived variable
+   together with its `-root` value (`--tss-x-color-root` **and**
+   `--tss-x-color: rgb(var(--tss-x-color-root))`): a derived value is resolved where it
+   is declared, so changing only the root on the body leaves the derived one as it was.
+4. Combine them in `tps.json` into one stylesheet that is not auto-linked:
+
+   ```json
+   "resources": [
+       { "name": "tss-theme-mine.css", "load": false, "output": "assets/css",
+         "files": [ "tps/assets/css/tss.common.css", "tps/assets/css/tss.button.css" ] },
+       { "name": "fonts", "files": [ "tps/assets/fonts/*" ], "output": "assets/fonts/mine/" }
+   ]
+   ```
+
+   The URL passed to `CustomTheme` is `output` + `/` + `name`. Fonts referenced from the
+   CSS use paths relative to it (`url("../fonts/mine/x.woff2")`).
+
+## Available themes
+
+- **Tesserae.Themes.Curiosity** — `CuriosityTheme.Instance`, root class
+  `tss-theme-curiosity`. Paper and ink, the deep call blue for primary actions and
+  selection, the electric-blue Signal as highlight, 1px hairlines instead of shadows,
+  radius 0 (inputs included) with pill buttons, a square toggle, hairline-rail scrollbars
+  (a 1px rule for the track and a square 6px thumb that widens on hover in Chrome,
+  Edge and Safari; a thin bar in Firefox, which only supports `scrollbar-color`). Like
+  Tesserae's own scrollbar they are quiet at rest (a ghost thumb, no rail) and come up grey with
+  the rail while the pointer is over the scroller; the thumb itself goes solid (ink on paper,
+  paper on ink in dark) under the pointer and Signal blue while dragged (Firefox cannot hover the thumb, so
+  it stops at grey). It is all CSS, with no
+  script managing scrollbars, so scrollers in your own app need nothing declared; a theme should
+  do the same. Schibsted Grotesk
+  for text and Geist Mono (small, uppercase) for labels, headers, numbers and code. Fonts
+  are bundled (OFL). A modal is inset 12px from its ring by its header, content and footer (not by its own box), so `NoContentPadding()` / `NoPadding()`, which set padding inline, still run to the border; `Dialog`, `ModalStack` sheets and a modal in a drawer are left alone.
+  The package also ships the website's signature elements as components (namespace
+  `Tesserae.Themes.Curiosity`, usable with or without the theme active): `PixelIntro`
+  (the first-load animation, `PlayOnce()`), `FlowField` (the hero's dash field, its pixel
+  following the pointer), `PixelGlyph` (the animated 4 by 4 glyphs, `PixelGlyphKind` plus
+  custom cells, palettes and a compact frame notation) `DashMosaic` (the animated dash
+  tiles, four schemes) and `GeneratingImage` (the pixel placeholder for an image being made: an aspect
+  ratio, half the parent's width, an optional `Progress(percent)` badge). The package README has the API.
+- **Tesserae.Themes.Stratus** — `StratusTheme.Instance`, root class `tss-theme-stratus`. An
+  aerospace design language: deep navy accent, cool greys, filled inputs with a bottom rule,
+  3px/6px/8px radii, a tiered elevation scale, Inter and Roboto Mono, a 2px blue focus ring.
+- **Tesserae.Themes.RetroOS** — `RetroOSTheme.Instance`, root class `tss-theme-retroos`. The
+  1984 Macintosh: one bit of colour, dithered greys, pinstriped title bars, hard 1px/2px
+  shadows, inverted selection and pixel fonts; dark mode is reverse video.
+- **Tesserae.Themes.Rechenwerk** — `RechenwerkTheme.Instance`, root class
+  `tss-theme-rechenwerk`. After Kraftwerk's record sleeves: light is *Die Mensch-Maschine*
+  (cream paper, black ink, signal red), dark is *Computerwelt* (a black screen with a faint
+  raster, cream type, terminal yellow). Square corners, 2px ink rules, hard offset shadows,
+  buttons that press into their shadow like calculator keys, chrome in tracked capitals,
+  headlines in Big Shoulders Display, numbers in the dot-matrix Doto, code in Space Mono, text
+  in Jost (all bundled, OFL). Selection is a solid yellow block with black type in both modes,
+  the sidebar is a black terminal in both modes (the dark tokens restated on `.tss-sidebar`),
+  window-like surfaces carry a title band (black with a red square on paper, yellow on the
+  terminal), and warnings use black-and-yellow hazard stripes. Its tokens are `--tss-rw-*` in
+  its `tss.common.css`; the package README states the design rules.
+- **Tesserae.Themes.Weniger** — `WenigerTheme.Instance`, root class `tss-theme-weniger`. A
+  skeuomorphic theme after West German industrial design of the 1950s to 80s ("less, but
+  better"): warm light-grey plastic panels with an inset hairline groove, brushed and turned
+  aluminium for knobs, thumbs, slider caps and the sidebar plate, buttons as extruded slabs with
+  their side wall showing, pushed in when pressed (IconToggle: the slab cut into welded keys with
+  engraved icons, the chosen one pushed in and orange), recessed wells for fields, signal orange as the one accent, LED lamps for state, and metrics
+  on a grey-green LCD in 7-segment figures. Dark mode is the charcoal edition. Hanken Grotesk,
+  DSEG7/DSEG14 and JetBrains Mono are bundled (OFL). Its tokens are `--tss-wg-*` in its
+  `tss.common.css`; the package README states the design rules.
+
+Nine more follow the same pattern: an `Instance`, a root class `tss-theme-<id>`, tokens in the package's
+`tss.common.css`, bundled OFL fonts, and a README with the design rules.
+
+- **Tesserae.Themes.Zeitung** — `ZeitungTheme.Instance`, `tss-theme-zeitung`. A broadsheet newspaper:
+  newsprint (night edition: dark stock), one spot red, a serif with real small caps and old-style figures,
+  double rules instead of shadows, small-caps buttons, market-listing tables, drop caps in Markdown.
+- **Tesserae.Themes.Blaupause** — `BlaupauseTheme.Instance`, `tss-theme-blaupause`. Engineering drawings:
+  cyanotype blueprint (dark) and whiteprint (light) with a drafting grid, no shadows, registration ticks,
+  dimension-line separators, graduated sliders, red-pencil focus, highlighter selection.
+- **Tesserae.Themes.Phosphor** — `PhosphorTheme.Instance`, `tss-theme-phosphor`. A character terminal: green
+  phosphor CRT with glow and scanlines (dark), green-bar line-printer paper (light), box-drawing frames,
+  inverse-video focus and selection, `[ OK ]` buttons.
+- **Tesserae.Themes.Glas** — `GlasTheme.Instance`, `tss-theme-glas`. Refractive liquid glass over a colour
+  field; overlays blur and, in Chromium, refract the page; glossy tinted controls.
+- **Tesserae.Themes.Kristall** — `KristallTheme.Instance`, `tss-theme-kristall`. After the translucent macOS
+  desktop look: wallpaper, frosted sidebar, glass menus, sheet modals, capsule buttons, segmented controls;
+  opaque under `prefers-reduced-transparency`.
+- **Tesserae.Themes.Kontrast** — `KontrastTheme.Instance`, `tss-theme-kontrast`. Accessibility first: 7:1 text,
+  a two-tone focus ring that is never removed, state shown by shape as well as colour, larger targets,
+  `forced-colors` and `prefers-contrast` handled.
+- **Tesserae.Themes.Memphis** — `MemphisTheme.Instance`, `tss-theme-memphis`. After the 1980s Memphis movement:
+  six bright fills, thick outlines, hard offset shadows in a second colour, confetti and squiggle patterns.
+- **Tesserae.Themes.Washi** — `WashiTheme.Instance`, `tss-theme-washi`. Japanese paper and ink: a vermilion seal
+  stamp for what is chosen, brush-stroke rules, a shoji lattice sidebar; dark mode is urushi lacquer.
+- **Tesserae.Themes.Graustufe** — `GraustufeTheme.Instance`, `tss-theme-graustufe`. An e-paper display: greys
+  only (every colour, including inline ones, is mapped onto a 16-level ramp), dithered edges, and no motion.
+
+## Related
+
+`theme-builder.md` (palette variables), `theme-colors.md` (`SetPrimary` & co.),
+`styling.md`, `custom-styles.md`, `colors.md`.

@@ -1,0 +1,28 @@
+﻿<Project Sdk="Transpose.Build.Target/26.9.4870">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Transpose.BCL" Version="26.9.5840" />
+    <PackageReference Include="Transpose.Core" Version="26.10.6989" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tesserae\Tesserae.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Curiosity\Tesserae.Themes.Curiosity.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Stratus\Tesserae.Themes.Stratus.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.RetroOS\Tesserae.Themes.RetroOS.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Rechenwerk\Tesserae.Themes.Rechenwerk.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Weniger\Tesserae.Themes.Weniger.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Zeitung\Tesserae.Themes.Zeitung.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Blaupause\Tesserae.Themes.Blaupause.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Phosphor\Tesserae.Themes.Phosphor.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Glas\Tesserae.Themes.Glas.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Kontrast\Tesserae.Themes.Kontrast.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Memphis\Tesserae.Themes.Memphis.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Washi\Tesserae.Themes.Washi.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Graustufe\Tesserae.Themes.Graustufe.csproj" />
+    <ProjectReference Include="..\Tesserae.Themes.Kristall\Tesserae.Themes.Kristall.csproj" />
+  </ItemGroup>
+</Project>

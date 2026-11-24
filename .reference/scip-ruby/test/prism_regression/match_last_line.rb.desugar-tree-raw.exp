@@ -1,0 +1,80 @@
+ClassDef{
+  kind = class
+  name = EmptyTree
+  symbol = <C <U <root>>>
+  ancestors = [ConstantLit{
+      symbol = (class ::<todo sym>)
+      orig = nullptr
+    }]
+  rhs = [
+    If{
+      cond = ConstantLit{
+        symbol = (static-field ::<ErrorNode>)
+        orig = nullptr
+      }
+      thenp = EmptyTree
+      elsep = EmptyTree
+    }
+
+    If{
+      cond = ConstantLit{
+        symbol = (static-field ::<ErrorNode>)
+        orig = nullptr
+      }
+      thenp = InsSeq{
+        stats = [
+          Literal{ value = "This is _not_ a truthiness test of a Regexp literal," }
+        ],
+        expr = Literal{ value = "but a special syntax implicitly match against the last line read by an IO object." }
+      }
+      elsep = EmptyTree
+    }
+
+    If{
+      cond = ConstantLit{
+        symbol = (static-field ::<ErrorNode>)
+        orig = nullptr
+      }
+      thenp = Literal{ value = "This one uses an interpolated regexp" }
+      elsep = EmptyTree
+    }
+
+    Assign{
+      lhs = UnresolvedIdent{
+        kind = Local
+        name = <U b>
+      }
+      rhs = Send{
+        flags = {}
+        recv = ConstantLit{
+          symbol = (static-field ::<ErrorNode>)
+          orig = nullptr
+        }
+        fun = <U !>
+        block = nullptr
+        pos_args = 0
+        args = [
+        ]
+      }
+    }
+
+    Assign{
+      lhs = UnresolvedIdent{
+        kind = Local
+        name = <U b>
+      }
+      rhs = Send{
+        flags = {}
+        recv = ConstantLit{
+          symbol = (static-field ::<ErrorNode>)
+          orig = nullptr
+        }
+        fun = <U !>
+        block = nullptr
+        pos_args = 0
+        args = [
+        ]
+      }
+    }
+  ]
+}

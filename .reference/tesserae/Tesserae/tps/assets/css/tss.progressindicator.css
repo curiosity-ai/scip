@@ -1,0 +1,39 @@
+/* Progress Indicator */
+.tss-progressindicator {
+    position: relative;
+    height: 8px;
+    border-radius:8px;
+    padding-right: 0px;
+    padding-left: 0px;
+    overflow: hidden;
+    width: 100%;
+    background-color: var(--tss-progress-background-color);
+}
+
+    .tss-progressindicator > .tss-progressindicator-bar {
+        background: linear-gradient(90deg, color-mix(in hsl, rgb(var(--tss-primary-foreground-color-root)) 20%, rgb(var(--tss-primary-background-color-root))), rgb(var(--tss-primary-background-color-root)));
+        height: 100%;
+        border-radius: 8px;
+        position: absolute;
+        width: 0px;
+    }
+
+    .tss-progressindicator > .tss-progressindicator-bar-indeterminate {
+        height: 100%;
+        position: absolute;
+        width: 0px;
+        min-width: 25%;
+        transition: width 0.3s ease 0s;
+        background: linear-gradient(to right, var(--tss-progress-background-color) 0%, var(--tss-primary-background-color) 50%, var(--tss-progress-background-color) 100%);
+        animation: 2.5s ease 0s infinite normal none running progressLeftToRight;
+    }
+
+@keyframes progressLeftToRight {
+    from {
+        transform:translateX(-100%);
+    }
+
+    to {
+        transform:translateX(100%);
+    }
+}

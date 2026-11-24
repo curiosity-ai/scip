@@ -1,0 +1,42 @@
+[package]
+name = "tt"
+version = "0.0.0"
+repository.workspace = true
+description = "A `TokenTree` data structure for rust-analyzer."
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+arrayvec.workspace = true
+text-size = { workspace = true, optional = true }
+rustc-hash = { workspace = true, optional = true }
+
+span = { path = "../span", version = "0.0", default-features = false, optional = true }
+stdx.workspace = true
+intern.workspace = true
+ra-ap-rustc_lexer.workspace = true
+
+[features]
+default = ["in-ra"]
+in-rust-tree = []
+# Inside rust-analyzer and not the proc macro server. Being in the proc macro server disables everything but the TokenTree types.
+in-ra = [
+    "dep:text-size",
+    "dep:rustc-hash",
+    "dep:span",
+]
+
+[lints]
+workspace = true
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[package.metadata.cargo-machete]
+ignored = ["ra-ap-rustc_lexer"]

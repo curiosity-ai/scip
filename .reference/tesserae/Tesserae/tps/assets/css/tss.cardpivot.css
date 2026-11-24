@@ -1,0 +1,64 @@
+.tss-cardpivot {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.tss-cardpivot-titlebar {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-radius: var(--tss-border-radius-lg);
+    background: var(--tss-default-background-color);
+    box-shadow: var(--tss-shadow-sm);
+    border: 1px solid var(--tss-border-color);
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.tss-cardpivot-tab {
+    flex: 1;
+    min-width: min-content;
+    border-right: 1px solid var(--tss-border-color);
+    cursor: pointer;
+    background: var(--tss-default-background-color);
+    transition: background-color 0.2s;
+    border-bottom: 3px solid transparent;
+    padding: 4px 12px;    
+}
+
+.tss-cardpivot-tab:last-child {
+    border-right: none;
+}
+
+.tss-cardpivot-tab:hover {
+    background-color: var(--tss-default-background-hover-color);
+}
+
+.tss-cardpivot-tab.tss-cardpivot-selected {
+    border-bottom: 3px solid var(--tss-primary-background-color);
+}
+
+.tss-cardpivot-content {
+    flex-grow: 1;
+    overflow: auto;
+    /* The pane scrolls, so it clips whatever a flush child draws outside its box (a focus ring, a shadow). Room to
+       draw it: padded by --tss-focus-ring-room and pulled back by as much, so the content does not move. */
+    padding: var(--tss-focus-ring-room);
+    margin: calc(-1 * var(--tss-focus-ring-room));
+    /* Lay the active tab's content out like a Stack with a single child, so
+       panel-filling content expands to the available height whether it fills
+       via .S()/.HS(), .Grow(), or its own height:100%. */
+    display: flex;
+    flex-direction: column;
+}
+
+    /* Keep fixed/intrinsic-height content at its natural size (it scrolls via the
+       pane's overflow:auto) instead of being squeezed by flexbox's default shrink. */
+    .tss-cardpivot-content > * {
+        flex-shrink: 0;
+    }
+
+.tss-cardpivot-cached-hidden {
+    display: none !important;
+}

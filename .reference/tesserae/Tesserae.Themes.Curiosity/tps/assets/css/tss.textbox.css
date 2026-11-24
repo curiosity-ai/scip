@@ -1,0 +1,141 @@
+/* ==========================================================================
+   Curiosity theme - TextBox
+   --------------------------------------------------------------------------
+   A single line input is square, like every other box in the theme, edged in
+   mute, which clears the 3:1 a control boundary needs; hover and focus take
+   it to ink. --tss-cur-input-radius is the one radius every input shares
+   (search box, dropdown, picker, tags, omnibox), so they stay alike.
+   ========================================================================== */
+
+body.tss-theme-curiosity {
+    --tss-cur-input-radius: 0px;
+    --tss-cur-input-border: var(--tss-cur-mute);
+}
+
+body.tss-theme-curiosity.tss-dark-mode {
+    --tss-cur-input-border: var(--tss-dark-border-color);
+}
+
+body.tss-theme-curiosity .tss-textbox {
+    border-color: var(--tss-cur-input-border);
+    border-radius: var(--tss-cur-input-radius);
+    box-shadow: none;
+    padding: 0 16px;
+    transition: border-color .15s linear, background-color .15s linear;
+}
+
+body.tss-theme-curiosity .tss-textbox::placeholder {
+    color: var(--tss-secondary-foreground-color) !important;
+    opacity: 1;
+}
+
+body.tss-theme-curiosity .tss-textbox:hover {
+    border-color: var(--tss-default-foreground-color);
+    box-shadow: none;
+}
+
+/* Focus: ink edge plus a 1px ink ring inside it, so the edge reads 2px without moving the text. */
+body.tss-theme-curiosity .tss-textbox:focus {
+    border-color: var(--tss-default-foreground-color);
+    box-shadow: inset 0 0 0 1px var(--tss-default-foreground-color);
+}
+
+body.tss-theme-curiosity .tss-textbox.tss-disabled,
+body.tss-theme-curiosity .tss-textbox:disabled {
+    border-color: var(--tss-default-border-color);
+    background-color: var(--tss-disabled-background-color);
+}
+
+body.tss-theme-curiosity .tss-textbox[readonly]:not(.tss-disabled) {
+    border-style: dashed;
+}
+
+/* No edge in any state: the host draws it, and the focus ring would be a second box inside the host's. */
+body.tss-theme-curiosity .tss-textbox.tss-textbox-noborder,
+body.tss-theme-curiosity .tss-textbox.tss-textbox-noborder:hover,
+body.tss-theme-curiosity .tss-textbox.tss-textbox-noborder:focus {
+    border-color: transparent;
+    box-shadow: none;
+}
+
+body.tss-theme-curiosity .tss-textbox-container.tss-invalid .tss-textbox {
+    border-color: var(--tss-invalid-border-color);
+    box-shadow: inset 0 0 0 1px var(--tss-invalid-border-color);
+}
+
+/* The message under an input speaks in the label voice: mono, small, uppercase. */
+body.tss-theme-curiosity .tss-textbox-error {
+    padding-left: 16px;
+    font-family: var(--tss-monospace-font-family);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+body.tss-theme-curiosity .tss-textbox-container.tss-rounded-md .tss-textbox {
+    padding: 0 12px;
+}
+
+/* A table in rendered text is a hairline grid with a mono header, as the brand draws its tables. */
+body.tss-theme-curiosity .tss-textblock table {
+    border: 1px solid var(--tss-default-border-color);
+    box-shadow: none;
+    background-color: transparent;
+}
+
+body.tss-theme-curiosity .tss-textblock table thead {
+    background-color: transparent;
+}
+
+body.tss-theme-curiosity .tss-textblock table th {
+    font-family: var(--tss-monospace-font-family);
+    font-size: var(--tss-font-size-xsmall);
+    font-weight: var(--tss-font-weight-regular);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--tss-secondary-foreground-color);
+    border-bottom: 1px solid var(--tss-default-foreground-color);
+}
+
+/* Native parts of an input (the number spinner, the date and time pickers' calendar and clock
+   glyphs, their popups) follow the page's scheme, so they are not drawn light on the ink canvas. */
+body.tss-theme-curiosity .tss-textbox {
+    color-scheme: light;
+}
+
+body.tss-theme-curiosity.tss-dark-mode .tss-textbox {
+    color-scheme: dark;
+}
+
+/* A color input is a text box too. The text padding would squeeze its swatch to a stripe, so it
+   takes a small even inset and the swatch fills the box. */
+body.tss-theme-curiosity .tss-textbox[type="color"] {
+    padding: 3px;
+    cursor: pointer;
+}
+
+body.tss-theme-curiosity .tss-textbox[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+body.tss-theme-curiosity .tss-textbox[type="color"]::-webkit-color-swatch {
+    border: none;
+}
+
+body.tss-theme-curiosity .tss-textbox[type="color"]::-moz-color-swatch {
+    border: none;
+}
+
+body.tss-theme-curiosity .tss-textbox[type="color"].tss-disabled {
+    cursor: default;
+    opacity: .5;
+}
+
+/* The native calendar and clock glyphs sit back until the box is hovered. */
+body.tss-theme-curiosity .tss-textbox::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: .7;
+}
+
+body.tss-theme-curiosity .tss-textbox:hover::-webkit-calendar-picker-indicator {
+    opacity: 1;
+}

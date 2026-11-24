@@ -1,0 +1,25 @@
+#ifndef RUBY_TYPER_LSP_REQUESTS_REFERENCES_H
+#define RUBY_TYPER_LSP_REQUESTS_REFERENCES_H
+
+#include "main/lsp/LSPTask.h"
+
+namespace sorbet::realmain::lsp {
+class ReferenceParams;
+class ReferencesTask final : public LSPRequestTask {
+    std::unique_ptr<ReferenceParams> params;
+    bool hierarchyReferences;
+
+public:
+    ReferencesTask(const LSPConfiguration &config, MessageId id, std::unique_ptr<ReferenceParams> params,
+                   bool hierarchyReferences);
+
+    std::unique_ptr<ResponseMessage> runRequest(LSPTypecheckerDelegate &typechecker) override;
+
+    bool canPreempt(const LSPIndexer &indexer) const override;
+
+    core::packages::Stratum preemptionStratum(FileStratumMapping info) const override;
+};
+
+} // namespace sorbet::realmain::lsp
+
+#endif

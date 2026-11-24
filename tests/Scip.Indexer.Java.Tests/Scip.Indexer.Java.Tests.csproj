@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\Indexers\Scip.Indexer.Java\Scip.Indexer.Java.csproj" />
+  </ItemGroup>
+</Project>

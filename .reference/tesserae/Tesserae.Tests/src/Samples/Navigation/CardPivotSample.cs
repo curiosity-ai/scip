@@ -1,0 +1,41 @@
+﻿using static Transpose.Core.dom;
+using static Tesserae.UI;
+using static Tesserae.Tests.Samples.SamplesHelper;
+
+namespace Tesserae.Tests.Samples
+{
+    [SampleDetails(Group = SampleGroup.Navigation, Order = 80, Icon = UIcons.CreditCard, Description = "Tabs drawn as selectable cards")]
+    public class CardPivotSample : IComponent, ISample
+    {
+        private readonly IComponent content;
+
+        public CardPivotSample()
+        {
+            content = SectionStack().Secondary()
+               .SampleTitle(typeof(CardPivotSample), UIcons.Apps, "A pivot using cards")
+               .FlatSection(Stack().Children(
+                    Card(VStack().WS().Children(
+                    TextBlock("A CardPivot is a tabbed interface where the tabs are presented as connected cards with a shared border. It is useful for displaying selectable metrics that control the view below them."))).SetTitle("Overview")))
+               .FlatSection(Stack().Children(
+                    Card(VStack().WS().Children(
+                    SampleSubTitle("Basic Usage"),
+                    CardPivot()
+                        .CardPivot("tab1", () => Metric("Requests", "1.1k").Change(TextBlock("").SmallPlus().Foreground(Theme.Colors.Neutral600)), () => Card(TextBlock("Content for Requests").P(32)))
+                        .CardPivot("tab2", () => Metric("Tokens", "196.97k"), () => Card(TextBlock("Content for Tokens").P(32)))
+                        .CardPivot("tab3", () => Metric("Cost", "$0.09"), () => Card(TextBlock("Content for Cost").P(32)))
+                        .CardPivot("tab4", () => Metric("Errors", "194"), () => Card(TextBlock("Content for Errors").P(32)))
+                        .CardPivot("tab5", () => Metric("Cached", "408"), () => Card(TextBlock("Content for Cached").P(32))),
+                    SampleSubTitle("Focus rings are not clipped by the pane"),
+                    CardPivot()
+                        .CardPivot("f1", () => Metric("Controls", "3"), () => FocusRingProbe())
+                        .CardPivot("f2", () => Metric("Other", "0"),    () => TextBlock("Other content"))
+               )).SetTitle("Usage")))
+               .SeeAlso(typeof(PivotSample), typeof(SegmentedPivotSample), typeof(PivotSelectorSample), typeof(CardSample), typeof(TabbedModalSample));
+        }
+
+        public HTMLElement Render()
+        {
+            return content.Render();
+        }
+    }
+}

@@ -1,0 +1,7 @@
+s(:block,
+  s(:send,
+    s(:resolved_const, "Kernel"), :lambda),
+  s(:params,
+    s(:param, :a),
+    s(:shadowarg, :foo),
+    s(:shadowarg, :bar)), nil)

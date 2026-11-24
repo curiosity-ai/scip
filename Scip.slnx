@@ -1,0 +1,33 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Scip/Scip.csproj" />
+    <Project Path="src/Scip.Indexing/Scip.Indexing.csproj" />
+    <Project Path="src/Scip.Cli/Scip.Cli.csproj" />
+    <Project Path="src/Scip.Reprolang/Scip.Reprolang.csproj" />
+  </Folder>
+  <Folder Name="/src/Indexers/">
+    <Project Path="src/Indexers/Scip.Indexer.Clang/Scip.Indexer.Clang.csproj" />
+    <Project Path="src/Indexers/Scip.Indexer.Dart/Scip.Indexer.Dart.csproj" />
+    <Project Path="src/Indexers/Scip.Indexer.DotNet/Scip.Indexer.DotNet.csproj" />
+    <Project Path="src/Indexers/Scip.Indexer.Java/Scip.Indexer.Java.csproj" />
+    <Project Path="src/Indexers/Scip.Indexer.Php/Scip.Indexer.Php.csproj" />
+    <Project Path="src/Indexers/Scip.Indexer.Python/Scip.Indexer.Python.csproj" />
+    <Project Path="src/Indexers/Scip.Indexer.Ruby/Scip.Indexer.Ruby.csproj" />
+    <Project Path="src/Indexers/Scip.Indexer.Rust/Scip.Indexer.Rust.csproj" />
+    <Project Path="src/Indexers/Scip.Indexer.TypeScript/Scip.Indexer.TypeScript.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Scip.Tests/Scip.Tests.csproj" />
+    <Project Path="tests/Scip.Cli.Tests/Scip.Cli.Tests.csproj" />
+    <Project Path="tests/Scip.Reprolang.Tests/Scip.Reprolang.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Dart.Tests/Scip.Indexer.Dart.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.DotNet.Tests/Scip.Indexer.DotNet.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Ruby.Tests/Scip.Indexer.Ruby.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Rust.Tests/Scip.Indexer.Rust.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Clang.Tests/Scip.Indexer.Clang.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Php.Tests/Scip.Indexer.Php.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Python.Tests/Scip.Indexer.Python.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.TypeScript.Tests/Scip.Indexer.TypeScript.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Java.Tests/Scip.Indexer.Java.Tests.csproj" />
+  </Folder>
+</Solution>

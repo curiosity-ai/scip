@@ -1,0 +1,171 @@
+#ifndef SORBET_CORE_PACKAGES_PACKAGEDB_H
+#define SORBET_CORE_PACKAGES_PACKAGEDB_H
+
+#include "absl/types/span.h"
+
+#include "common/common.h"
+#include "core/Files.h"
+#include "core/Names.h"
+#include "core/packages/Condensation.h"
+#include "core/packages/PackageInfo.h"
+
+namespace sorbet::core::packages {
+
+class PackageDB;
+
+enum class GenPackagesMode : uint8_t {
+    Disabled,
+    Normal,
+    Strict,
+};
+
+class UnfreezePackages final {
+public:
+    PackageDB &db;
+
+    UnfreezePackages(PackageDB &);
+    ~UnfreezePackages();
+};
+
+class PackageDB final {
+    friend class core::GlobalState;
+    friend class UnfreezePackages;
+
+public:
+    static constexpr NameRef TEST_NAMESPACE = core::Names::Constants::Test();
+
+    MangledName enterPackage(std::unique_ptr<PackageInfo> pkg);
+
+    // Fetch the mangled package name for a file, returning a MangledName that doesn't exist if there is no
+    // associated package for the file.
+    const MangledName getPackageNameForFile(FileRef file) const;
+
+    // Set the associated package for the file.
+    void setPackageNameForFile(FileRef file, MangledName mangledName);
+
+    MangledName findPackageByPath(const core::GlobalState &gs, core::FileRef file) const;
+    MangledName findPackageByPath(const core::GlobalState &gs, const core::File &fileData) const;
+
+    const PackageInfo &getPackageInfo(MangledName mangledName) const;
+    PackageInfo *getPackageInfoNonConst(MangledName mangledName);
+
+    // Get the mangled name of the next package up in the hierarchy from `pkg`, if one exists.
+    MangledName getParentPackage(const core::GlobalState &gs, MangledName pkg) const;
+
+    // Get mangled names for all packages.
+    // Packages are ordered lexicographically with respect to the NameRef's that make up their
+    // namespaces.
+    absl::Span<const MangledName> packages() const;
+
+    PackageDB deepCopy() const;
+
+    UnfreezePackages unfreeze();
+
+    PackageDB() = default;
+    PackageDB(const PackageDB &) = delete;
+    PackageDB(PackageDB &&) = default;
+    PackageDB &operator=(const PackageDB &) = delete;
+    PackageDB &operator=(PackageDB &&) = default;
+
+    // Whether the --sorbet-packages mode is active.
+    bool enabled() const {
+        return this->enabled_;
+    }
+
+    // Whether the --experimental-test-packages mode is active. This controls whether all packages are treated as having
+    // been migrated to `test!` packages; if this returns `false` there still may be test packages present.
+    bool testPackages() const {
+        return this->testPackages_;
+    }
+
+    GenPackagesMode genPackagesMode() const {
+        return this->genPackagesMode_;
+    }
+
+    // Whether --gen-packages-allow-relaxing-test-visibility is active.
+    bool allowRelaxingTestVisibility() const {
+        return this->allowRelaxingTestVisibility_;
+    }
+
+    // Whether to attribute errors to a package in the command line error output
+    bool packageAttributedErrors() const {
+        return this->packageAttributedErrors_;
+    }
+
+    absl::Span<const std::string> extraPackageFilesDirectoryUnderscorePrefixes() const;
+    absl::Span<const std::string> extraPackageFilesDirectorySlashDeprecatedPrefixes() const;
+    absl::Span<const std::string> extraPackageFilesDirectorySlashPrefixes() const;
+    absl::Span<const std::string> skipRBIExportEnforcementDirs() const;
+    // Possible layers for packages to be in. The layers are ordered lowest to highest.
+    // Ie. {'util', 'app'} means that code in `app` can call code in `util`, but code in `util` cannot call code in
+    // `app`.
+    absl::Span<const core::NameRef> layers() const;
+    const int layerIndex(core::NameRef layer) const;
+    // TODO(neil): this is more than just layering, also checks for strict dependencies. Maybe rename?
+    const bool enforceLayering() const;
+
+    const std::string_view errorHint() const;
+
+    // Expects to be called after packages have been defined, so that string package names provided
+    // at the command line can be resolved to actual packages.
+    void resolvePackagesWithRelaxedChecks(GlobalState &gs);
+    void resolvePackagesToUpdateVisibilityFor(GlobalState &gs);
+
+    bool allowRelaxedPackagerChecksFor(const MangledName mangledName) const;
+    bool updateVisibilityFor(const MangledName mangledName) const;
+    bool anyUpdateVisibilityFor() const;
+
+    // Overwrite the condensation graph for the current package set. This method is only meant to be used from
+    // `ComputePackageSCCs::run`.
+    //
+    // WARNING: Modifying the contents of the package DB after this operation will cause the condensation to go out of
+    // date.
+    void setCondensation(Condensation &&condensation);
+
+    // Fetch the condensation graph for queries.
+    const Condensation &condensation() const;
+
+    // Uses symbolsReferencedByFile to compute which symbols are no exported, and returns them in a map indexed by their
+    // owning package.
+    static UnorderedMap<core::packages::MangledName, std::vector<core::SymbolRef>>
+    exportsByPackage(const core::GlobalState &gs);
+
+    // Returns an autocorrect that will insert an export for every symbol referenced in fref that is not already
+    // exported.
+    static std::optional<core::AutocorrectSuggestion> aggregateMissingExportsForFile(const core::GlobalState &gs,
+                                                                                     const core::FileRef fref);
+
+private:
+    bool enabled_ = false;
+    GenPackagesMode genPackagesMode_ = GenPackagesMode::Disabled;
+    bool allowRelaxingTestVisibility_ = false;
+    bool packageAttributedErrors_ = false;
+    std::vector<std::string> extraPackageFilesDirectoryUnderscorePrefixes_;
+    std::vector<std::string> extraPackageFilesDirectorySlashDeprecatedPrefixes_;
+    std::vector<std::string> extraPackageFilesDirectorySlashPrefixes_;
+    std::string errorHint_;
+    std::vector<std::string> skipRBIExportEnforcementDirs_;
+    std::vector<std::string> allowRelaxedPackagerChecksFor_;
+    UnorderedSet<MangledName> packagesWithRelaxedChecks_;
+    std::vector<std::string> updateVisibilityFor_;
+    UnorderedSet<MangledName> packagesToUpdateVisibilityFor_;
+    std::vector<core::NameRef> layers_;
+
+    // This vector is kept in sync with the size of the file table in the global state by `setPackageNameForFile`.
+    // A `FileRef` being out of bounds in this vector is treated as the file having no associated package.
+    std::vector<MangledName> packageForFile_;
+
+    UnorderedMap<MangledName, std::unique_ptr<packages::PackageInfo>> packages_;
+    UnorderedMap<std::string, MangledName> packagesByPathPrefix;
+    std::vector<MangledName> mangledNames;
+
+    bool frozen = true;
+    std::thread::id writerThread;
+
+    bool testPackages_ = false;
+
+    Condensation condensation_;
+};
+
+} // namespace sorbet::core::packages
+#endif // SORBET_CORE_PACKAGES_PACKAGEDB_H

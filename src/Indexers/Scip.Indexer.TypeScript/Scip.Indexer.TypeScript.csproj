@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Scip.Indexer.TypeScript</RootNamespace>
+    <NoWarn>$(NoWarn);CA2016;CA1822;CA1051;CA1720;CA1865;CA1866;CA1859;CA1861;CA1860;CA1851;CA1854;CA1869;CA1305;CA1310;CA1311;CA1304</NoWarn>
+    <Description>SCIP indexer for TypeScript, JavaScript (native C# port of scip-typescript: parser, binder and resolver; no Node.js).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Lib\lib.*.d.ts" LogicalName="tslib/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

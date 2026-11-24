@@ -1,0 +1,281 @@
+.tss-pixelavatar {
+    /* Several palettes contain pure white (White, SpottedGrey, SpottedOrange) and several
+       contain near-black (Black, Tuxedo, Siamese), so on their own they wash out against one
+       theme or the other. A hairline halo in the opposite direction keeps every design legible
+       on every background without touching the artwork's colors. */
+    --tss-pxav-outline: rgba(0, 0, 0, 0.5);
+    /* The props the cat handles - the laptop in Work / WorkIdle - are drawn from the three sprite
+       indices above the coat palette, so they are the same object whichever design the cat wears
+       and whichever theme the page is in. A palette describes a cat; a laptop is not part of one.
+       PixelAvatar.PropColors overrides these per avatar. The tones are the website's laptop
+       (curiosity-ai/website js/sudo-sheet.js): ash, ink-2 and slate on a light page. */
+    --tss-pxav-prop: #8A9099;
+    --tss-pxav-prop-lit: #C5C9CE;
+    --tss-pxav-prop-shadow: #2A2F38;
+    --tss-pxav-turn: 320ms;
+    /* Written by the component from the rendered width, so the amount of foreshortening during a
+       turn looks the same whether the avatar is 20px or 120px wide. */
+    --tss-pxav-perspective: 160px;
+    position: relative;
+    display: inline-block;
+    flex: 0 0 auto;
+    line-height: 0;
+    /* The sprite is drawn on a hard pixel grid, so nothing here should be smoothed or clipped. */
+    overflow: visible;
+    perspective: var(--tss-pxav-perspective);
+}
+
+.tss-dark-mode .tss-pixelavatar {
+    --tss-pxav-outline: rgba(255, 255, 255, 0.5);
+    /* On a dark page the laptop keeps its tones, one step lighter where slate would vanish into
+       the ground - as the website draws it under a dark section. */
+    --tss-pxav-prop: #6B7280;
+    --tss-pxav-prop-shadow: #8A9099;
+}
+
+.tss-pixelavatar-canvas {
+    position: absolute;
+    inset: 0;
+    transform-origin: center;
+    /* Four hard 1px shadows rather than a blur, so the halo stays a crisp outline that suits
+       pixel art at every scale. */
+    filter:
+        drop-shadow(1px 0 0 var(--tss-pxav-outline))
+        drop-shadow(-1px 0 0 var(--tss-pxav-outline))
+        drop-shadow(0 1px 0 var(--tss-pxav-outline))
+        drop-shadow(0 -1px 0 var(--tss-pxav-outline));
+}
+
+.tss-pixelavatar-flat > .tss-pixelavatar-canvas {
+    filter: none;
+}
+
+/* Facing left is a half turn about the vertical axis rather than scaleX(-1). For a flat plane
+   the two are identical at rest, but the rotation is what makes an animated turn read as the
+   sprite physically pivoting instead of its pixels sliding through each other. */
+.tss-pixelavatar-mirrored {
+    transform: rotateY(180deg);
+}
+
+/* Only present while Turn() is animating; Facing() strips it so direction changes stay instant. */
+.tss-pixelavatar-turning {
+    transition: transform var(--tss-pxav-turn) ease-in-out;
+}
+
+.tss-pixelavatar-pixel {
+    position: absolute;
+    pointer-events: none;
+}
+
+/* --- attaching an avatar to another component ---------------------------------------------
+   By default the host reserves room for the avatar as padding on the anchored side and the
+   avatar is positioned inside that padding, so the avatar never sticks out of its container
+   and cannot be clipped by a scrolling ancestor. Adding tss-pixelavatar-overlap drops the
+   padding and hangs the avatar outside the host's box instead.
+   --tss-pxav-reserve is written by PixelAvatarAttachment and tracks the avatar's size. */
+
+.tss-pixelavatar-host {
+    --tss-pxav-dx: 0px;
+    --tss-pxav-dy: 0px;
+    --tss-pxav-reserve: 0px;
+    position: relative;
+    display: inline-block;
+}
+
+.tss-pixelavatar-host > .tss-pixelavatar,
+.tss-pixelavatar-adopted > .tss-pixelavatar {
+    position: absolute;
+    z-index: 1;
+    translate: var(--tss-pxav-dx) var(--tss-pxav-dy);
+}
+
+.tss-pixelavatar-anchor-topleft,
+.tss-pixelavatar-anchor-topcenter,
+.tss-pixelavatar-anchor-topright {
+    padding-top: var(--tss-pxav-reserve);
+}
+
+.tss-pixelavatar-anchor-bottomleft,
+.tss-pixelavatar-anchor-bottomcenter,
+.tss-pixelavatar-anchor-bottomright {
+    padding-bottom: var(--tss-pxav-reserve);
+}
+
+.tss-pixelavatar-anchor-leftcenter {
+    padding-left: var(--tss-pxav-reserve);
+}
+
+.tss-pixelavatar-anchor-rightcenter {
+    padding-right: var(--tss-pxav-reserve);
+}
+
+.tss-pixelavatar-anchor-topleft > .tss-pixelavatar {
+    top: 0;
+    left: 6px;
+}
+
+.tss-pixelavatar-anchor-topcenter > .tss-pixelavatar {
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.tss-pixelavatar-anchor-topright > .tss-pixelavatar {
+    top: 0;
+    right: 6px;
+}
+
+.tss-pixelavatar-anchor-bottomleft > .tss-pixelavatar {
+    bottom: 0;
+    left: 6px;
+}
+
+.tss-pixelavatar-anchor-bottomcenter > .tss-pixelavatar {
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.tss-pixelavatar-anchor-bottomright > .tss-pixelavatar {
+    bottom: 0;
+    right: 6px;
+}
+
+.tss-pixelavatar-anchor-leftcenter > .tss-pixelavatar {
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.tss-pixelavatar-anchor-rightcenter > .tss-pixelavatar {
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* --- adopting a target's own box ------------------------------------------------------------
+   A modal centers itself inside a full-screen container and is put on screen by Show(), so a
+   wrapper around it would simply be dropped. It lends its own box instead: the same reserve and
+   anchor rules apply, written onto the modal element itself. The two-class selectors below are
+   what lets the reserved room win over the modal's own `padding: 0`, and nothing here touches
+   `position` or `display` since .tss-modal is already a relatively positioned flex column. */
+
+.tss-pixelavatar-adopted {
+    --tss-pxav-dx: 0px;
+    --tss-pxav-dy: 0px;
+    --tss-pxav-reserve: 0px;
+}
+
+.tss-pixelavatar-adopted.tss-pixelavatar-anchor-topleft,
+.tss-pixelavatar-adopted.tss-pixelavatar-anchor-topcenter,
+.tss-pixelavatar-adopted.tss-pixelavatar-anchor-topright {
+    padding-top: var(--tss-pxav-reserve);
+}
+
+.tss-pixelavatar-adopted.tss-pixelavatar-anchor-bottomleft,
+.tss-pixelavatar-adopted.tss-pixelavatar-anchor-bottomcenter,
+.tss-pixelavatar-adopted.tss-pixelavatar-anchor-bottomright {
+    padding-bottom: var(--tss-pxav-reserve);
+}
+
+.tss-pixelavatar-adopted.tss-pixelavatar-anchor-leftcenter {
+    padding-left: var(--tss-pxav-reserve);
+}
+
+.tss-pixelavatar-adopted.tss-pixelavatar-anchor-rightcenter {
+    padding-right: var(--tss-pxav-reserve);
+}
+
+/* An adopted modal perches its cat on the outside, which the modal's own `overflow-y: auto`
+   would otherwise clip away. Dropping it is safe: .tss-modal-content is itself a scroll
+   container inside the same flex column, so it is what actually scrolls long content, and the
+   modal-level scrollbar is a fallback that never appears in practice. The rounded corners are
+   the one thing the clipping was doing visually - the header and footer paint the modal's own
+   background over them - so they are handed to those two directly. */
+
+.tss-pixelavatar-adopted.tss-pixelavatar-overlap {
+    /* Two classes, so this beats the reserve rules above at the same specificity by coming later
+       - .tss-pixelavatar-overlap's own single-class `padding: 0` would lose to them. */
+    padding: 0;
+    overflow: visible;
+}
+
+.tss-pixelavatar-adopted.tss-pixelavatar-overlap > .tss-modal-header {
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+}
+
+.tss-pixelavatar-adopted.tss-pixelavatar-overlap > .tss-modal-footer {
+    border-bottom-left-radius: inherit;
+    border-bottom-right-radius: inherit;
+}
+
+/* Roaming: the companion drives `left` itself, so the anchor's own horizontal placement is
+   cleared out of the way. --tss-pxav-walk is the length of the current walk, set to 0ms when the
+   cat is placed rather than walking. */
+
+.tss-pixelavatar-roaming > .tss-pixelavatar {
+    left: 0;
+    right: auto;
+    transform: none;
+    transition: left var(--tss-pxav-walk, 0ms) linear;
+}
+
+/* Overlap mode: no reserved room, the avatar hangs outside the host's box.
+   The 1px gaps are the outline halo, not padding: .tss-pixelavatar-canvas draws it with four hard
+   1px drop-shadows, which paint one pixel outside the avatar's own box on every side. Flush against
+   the host (`bottom: 100%`) that pixel lands on the host and reads as the cat overlapping it, so
+   each edge backs off by exactly the halo. */
+
+.tss-pixelavatar-overlap {
+    padding: 0;
+}
+
+.tss-pixelavatar-overlap.tss-pixelavatar-anchor-topleft > .tss-pixelavatar,
+.tss-pixelavatar-overlap.tss-pixelavatar-anchor-topcenter > .tss-pixelavatar,
+.tss-pixelavatar-overlap.tss-pixelavatar-anchor-topright > .tss-pixelavatar {
+    top: auto;
+    bottom: calc(100% + 1px);
+}
+
+.tss-pixelavatar-overlap.tss-pixelavatar-anchor-bottomleft > .tss-pixelavatar,
+.tss-pixelavatar-overlap.tss-pixelavatar-anchor-bottomcenter > .tss-pixelavatar,
+.tss-pixelavatar-overlap.tss-pixelavatar-anchor-bottomright > .tss-pixelavatar {
+    bottom: auto;
+    top: calc(100% + 1px);
+}
+
+.tss-pixelavatar-overlap.tss-pixelavatar-anchor-leftcenter > .tss-pixelavatar {
+    left: auto;
+    right: 100%;
+    margin-right: 4px;
+}
+
+.tss-pixelavatar-overlap.tss-pixelavatar-anchor-rightcenter > .tss-pixelavatar {
+    right: auto;
+    left: 100%;
+    margin-left: 4px;
+}
+
+/* --- badge: a pixel avatar dressed as a round profile picture ------------------------------ */
+
+.tss-pixelavatar-badge {
+    position: relative;
+    display: inline-block;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+/* Placed by the component, which centers the pose's ink rather than its frame box. */
+.tss-pixelavatar-badge > .tss-pixelavatar {
+    position: absolute;
+}
+
+/* An extra half-size pixel laid over each ear tip, for designs whose palette carries an accent.
+   Positioned by the component, since the ear tips move from frame to frame. */
+.tss-pixelavatar-accent {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+}

@@ -1,0 +1,1933 @@
+﻿using Transpose;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A select-style form input for picking one or many values from a list, with filtering, async loading and rich
+    /// item rendering.
+    /// </summary>
+    [Transpose.Name("tss.Dropdown")]
+    public sealed class Dropdown : Layer<Dropdown>, ICanValidate<Dropdown>, IObservableListComponent<Dropdown.Item>, ITabIndex, IRoundedStyle
+    {
+        private HTMLElement _firstItem;
+
+        private readonly HTMLElement          _childContainer;
+        private readonly HTMLDivElement       _container;
+        private readonly HTMLSpanElement      _noItemsSpan;
+        private readonly HTMLSpanElement      _searchSpan;
+        private readonly HTMLSpanElement      _errorSpan;
+        private readonly HTMLElement          _iconContainer;
+        private readonly ObservableList<Item> _selectedChildren;
+        private          IComponent           _placeholder;
+
+        private HTMLDivElement           _spinner;
+        private bool                     _isChanged;
+        private bool                     _isClearingOtherSelections;
+        private bool                     _callSelectOnChangingItemSelections;
+        private bool                     _fitContent = false;
+        private Func<Task<Item[]>>       _itemsSource;
+        private ReadOnlyArray<Item>      _lastRenderedItems;
+        private HTMLDivElement           _popupDiv;
+        private string                   _search = string.Empty;
+        private SearchBox                _searchBox;
+        private int                      _latestRequestID;
+        private Func<Item[], IComponent> _customRenderer;
+
+        private Func<string, Task<Item[]>> _asyncSearcher;
+        private int                        _asyncSearchDebounce;
+        private double                     _asyncSearchTimeout;
+        private int                        _latestAsyncSearchID;
+
+        private readonly Action<Event> _onWindowClickAction;
+        private readonly Action<Event> _onPopupKeyDownAction;
+
+        /// <summary>
+        /// Static configuration of the icon shown on the dropdown chevron, applied globally to every <see cref="Dropdown"/> instance.
+        /// </summary>
+        public static UIcons GlobalCustomIcon = UIcons.AngleDown;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Dropdown(HTMLSpanElement noItemsSpan = null)
+        {
+            _onWindowClickAction  = (ev) => OnWindowClick(ev);
+            _onPopupKeyDownAction = (ev) => OnPopupKeyDown(ev);
+
+            _noItemsSpan = noItemsSpan ?? Span(Att(text: "There are no options available"));
+            _searchSpan  = Span(Att("tss-dropdown-search-term"));
+
+            InnerElement = Div(Att("tss-dropdown", role: "combobox"), _noItemsSpan);
+            InnerElement.setAttribute("aria-haspopup", "listbox");
+            InnerElement.setAttribute("aria-expanded", "false");
+
+            _errorSpan = Span(Att("tss-dropdown-error"));
+            _iconContainer  = I(Att("tss-dropdown-icon"));
+
+            _container = Div(Att("tss-dropdown-container"), InnerElement, _errorSpan, _iconContainer);
+
+            _childContainer = Div(Att("tss-dropdown-items"));
+
+            // The pointer moves the keyboard's row, in one place for every row: with a search box the
+            // row is only marked, so the box keeps the focus and the keystrokes; without one it is
+            // focused. Either way it becomes the row Enter picks - a row's own focus() used to steal
+            // the caret from the search box and leave Enter on whatever the arrows last visited.
+            _childContainer.addEventListener("mouseover", (e) =>
+            {
+                var row = RowOf(e.srcElement as HTMLElement);
+
+                if (row is object && IsSelectableRow(row) && row != _firstItem)
+                {
+                    _firstItem = row;
+                    FocusOnItem(row, scroll: false);
+                }
+            });
+
+            // The closed box is a focusable combobox: Tab reaches it and the keys that open a native select open it.
+            InnerElement.tabIndex = 0;
+            InnerElement.addEventListener("keydown", (e) =>
+            {
+                var ev = (KeyboardEvent)e;
+
+                if (IsVisible || !IsEnabled || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+
+                if (ev.key == "Enter" || ev.key == " " || ev.key == "ArrowDown" || ev.key == "ArrowUp")
+                {
+                    StopEvent(e);
+                    Show();
+                }
+            });
+
+            InnerElement.onclick = (e) =>
+            {
+                StopEvent(e);
+
+                if (!IsVisible && IsEnabled)
+                    Show();
+            };
+
+            _container.onclick = (e) =>
+            {
+                StopEvent(e);
+
+                if (!IsVisible && IsEnabled)
+                    Show();
+            };
+
+            _callSelectOnChangingItemSelections = true;
+            _selectedChildren                   = new ObservableList<Item>();
+
+            _latestRequestID = 0;
+
+            SetArrowIcon(GlobalCustomIcon);
+        }
+
+        /// <summary>
+        /// Configures the component to not fire selection-changed callbacks while selections are being mutated in bulk.
+        /// </summary>
+        public Dropdown SuppressSelectedOnChangingItemSelections()
+        {
+            _callSelectOnChangingItemSelections = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Sizes the component to fit its content.
+        /// </summary>
+        public Dropdown FitContent()
+        {
+            _fitContent = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the keyboard tab order of the component.
+        /// </summary>
+        public int TabIndex
+        {
+            set
+            {
+                InnerElement.tabIndex = value;
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the operating mode of the component.
+        /// </summary>
+        public SelectMode Mode
+        {
+            get => _childContainer.classList.contains("tss-dropdown-multi") ? SelectMode.Multi : SelectMode.Single;
+            set
+            {
+                if (value == SelectMode.Single)
+                {
+                    _childContainer.classList.remove("tss-dropdown-multi");
+                }
+                else
+                {
+                    _childContainer.classList.add("tss-dropdown-multi");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the currently selected items.
+        /// </summary>
+        public Item[] SelectedItems => _selectedChildren.ToArray();
+
+        /// <summary>
+        /// Gets the text of the currently selected item.
+        /// </summary>
+        public string SelectedText
+        {
+            get
+            {
+                return string.Join(", ", _selectedChildren.Select(x => x.Text));
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the validation error message displayed beneath the component.
+        /// </summary>
+        public string Error
+        {
+            get => _errorSpan.innerText;
+            set
+            {
+                _errorSpan.innerText = value;
+                _errorSpan.title     = value ?? ""; // The reserved line is one line and ellipsizes, so the full message stays reachable
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the component has a visible border.
+        /// </summary>
+        public bool HasBorder
+        {
+            get => !_container.classList.contains("tss-noborder");
+            set
+            {
+                if (value)
+                {
+                    _container.classList.remove("tss-noborder");
+                }
+                else
+                {
+                    _container.classList.add("tss-noborder");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the component is currently in an invalid state.
+        /// </summary>
+        public bool IsInvalid
+        {
+            get => _container.classList.contains("tss-invalid");
+            set
+            {
+                if (value)
+                {
+                    _container.classList.add("tss-invalid");
+                }
+                else
+                {
+                    _container.classList.remove("tss-invalid");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the component is interactive (enabled).
+        /// </summary>
+        public bool IsEnabled
+        {
+            get => !_container.classList.contains("tss-disabled");
+            set
+            {
+                if (value)
+                {
+                    _container.classList.remove("tss-disabled");
+                }
+                else
+                {
+                    _container.classList.add("tss-disabled");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the component is required for form submission.
+        /// </summary>
+        public bool IsRequired
+        {
+            get => _container.classList.contains("tss-required");
+            set
+            {
+                if (value)
+                {
+                    _container.classList.add("tss-required");
+                }
+                else
+                {
+                    _container.classList.remove("tss-required");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public override HTMLElement Render()
+        {
+            DomObserver.WhenMounted(_container, () =>
+            {
+                DomObserver.WhenRemoved(_container, () =>
+                {
+                    Hide();
+                });
+            });
+            return _container;
+        }
+
+        /// <summary>
+        /// Moves keyboard focus to the component.
+        /// </summary>
+        public Dropdown Focus()
+        {
+            // 2020-12-29 DWR: Seems like this setTimeout is required then the element is rendered within a container that uses "simplebar" scrolling - without the delay, if the element getting focus is out of view then it will not be
+            // scrolled into view (even though it has successfully received focus)
+            DomObserver.WhenMounted(InnerElement, () =>
+            {
+                try
+                {
+                    InnerElement.scrollIntoViewIfNeeded();
+                }
+                catch
+                {
+                    InnerElement.scrollIntoView();
+                }
+                InnerElement.focus();
+            });
+            return this;
+        }
+
+        /// <summary>
+        /// This will initiate the last async data retrieval specified via a call to the Items method overload that takes a Func-of-Task-of-array-of-T. If there has not been call to that method (or if LoadItemsAsync has already been called after
+        /// it was called) then this will throw an InvalidOperationException. If another async data retrieval had already been initiated but has not completed yet, its results will be ignored when it DOES complete because this call came after it
+        /// and it is presumed that this data will be more current).
+        /// </summary>
+        public async Task LoadItemsAsync()
+        {
+            if (_itemsSource is null)
+                throw new InvalidOperationException("Only valid with async items");
+
+            // Each request (whether sync or async) will get a unique and incrementing ID - if requests overlap then the results of requests that were initiated later are preferred as they are going to be the results of interactions that User
+            // performed since the earlier requests started
+            var currentRequestID = ++_latestRequestID;
+
+            var itemsSourceLocal = _itemsSource;
+            _itemsSource = null; // Clear so we don't call this twice
+
+            // Ensure that the loading (aka spinner) state is being shown to indicate work in the background - if this async task runs to completion and no other request (either sync or async) is made then this state will be removed when the
+            // synchronous Items method is called. If another retrieval supercedes this one (by starting after it and thus having a larger currentRequestID value) then that retrieval will call the synchronous Items method (unless it, too, is
+            // superceded) and the loading visual state will be removed then.
+            EnsureAsyncLoadingStateEnabled();
+
+            var items = await itemsSourceLocal();
+
+            if (currentRequestID != _latestRequestID)
+            {
+                // If another (async-)Items/LoadItemsAsync or synchronous Items call was made after the retrieving of this data began then presume that it is more recent and we should ignore this data (it will be the responsibility of the
+                // later request that 'wins' to update the items and disable any loading state)
+                return;
+            }
+
+            Items(items);
+        }
+
+        /// <summary>
+        /// Shows the component.
+        /// </summary>
+        public override Dropdown Show()
+        {
+            if (_contentHtml == null)
+            {
+                if (_searchBox != null)
+                {
+                    _searchBox.Render().classList.add("tss-dropdown-searchbox");
+                    _popupDiv = Div(Att("tss-dropdown-popup", role: "listbox"), _searchBox.Render(), _childContainer);
+                }
+                else
+                {
+                    _popupDiv = Div(Att("tss-dropdown-popup", role: "listbox"), _childContainer);
+                }
+                _contentHtml = Div(Att("tss-dropdown-layer"), _popupDiv);
+
+                _contentHtml.addEventListener("click",       _onWindowClickAction);
+                _contentHtml.addEventListener("dblclick",    _onWindowClickAction);
+                _contentHtml.addEventListener("contextmenu", _onWindowClickAction);
+                // OnWindowClick doesn't preventDefault, so mark the wheel listener
+                // passive to avoid blocking scroll and silence the browser warning.
+                _contentHtml.addEventListener("wheel",       _onWindowClickAction, new AddEventListenerOptions { passive = true });
+
+                if (_itemsSource is object)
+                {
+                    LoadItemsAsync().ContinueWith(t => Show()).FireAndForget();
+                    return this;
+                }
+            }
+
+            _popupDiv.style.height = "unset";
+            _popupDiv.style.left   = "-1000px";
+            _popupDiv.style.top    = "-1000px";
+
+            EnforceSingleSelection();
+
+            base.Show();
+            InnerElement.setAttribute("aria-expanded", "true");
+
+            _isChanged = false;
+
+            // Enter picks the current row, so the current row has to be one the User can see. Without a search
+            // box the selection takes the focus when the popup opens, which is what marks it; with one nothing
+            // is marked until the arrows, the pointer or typing say where the User is, so Enter has no row yet
+            // (it used to pick a row nobody had pointed at - or, in a multi-select, un-pick the last selection).
+            _firstItem = _searchBox is null && _selectedChildren.Count > 0 ? _selectedChildren[_selectedChildren.Count - 1].Render() : null;
+
+            if (!_popupDiv.classList.contains("tss-no-focus")) _popupDiv.classList.add("tss-no-focus");
+
+            RecomputePopupPosition();
+
+            DomObserver.WhenMounted(_popupDiv, () =>
+            {
+                document.addEventListener("keydown", _onPopupKeyDownAction);
+
+                if (_searchBox != null)
+                {
+                    _searchBox.Focus();
+
+                    // The search box keeps the focus, so nothing scrolls the list by itself: open a
+                    // long dropdown on what is already selected rather than on its first row.
+                    if (_selectedChildren.Count > 0)
+                    {
+                        ScrollItemIntoView(_selectedChildren[_selectedChildren.Count - 1].Render());
+                    }
+                }
+                else if (_selectedChildren.Count > 0)
+                {
+                    _selectedChildren[_selectedChildren.Count - 1].Render().focus();
+                }
+            });
+
+            return this;
+        }
+
+        private void RecomputePopupPosition()
+        {
+            if (!string.IsNullOrEmpty(_search) && _searchBox is null)
+            {
+                if (!_searchSpan.isConnected)
+                {
+                    InnerElement.insertBefore(_searchSpan, InnerElement.children[0]);
+                }
+                _searchSpan.innerText = _search;
+                InnerElement.classList.add("tss-dropdown-searching");
+            }
+            else if (_searchBox is null)
+            {
+                InnerElement.classList.remove("tss-dropdown-searching");
+
+                if (_searchSpan.isConnected)
+                {
+                    _searchSpan.remove();
+                }
+            }
+
+            var items        = GetItems();
+            var visibleItems = items.Where(i => i.item.style.display != "none").Select(i => (item: i.item, height: i.item.getBoundingClientRect().As<DOMRect>().height)).ToArray();
+
+            // Everything in the popup that is not a row: its own border and padding, and - when there
+            // is one - the search box plus the gap under it. Measured rather than assumed, and
+            // measured with the constraints lifted, because a min/max height left over from the last
+            // call would otherwise be counted as part of the chrome.
+            _popupDiv.style.minHeight = "0px";
+            _popupDiv.style.maxHeight = "none";
+
+            var listHeight = _childContainer.getBoundingClientRect().As<DOMRect>().height;
+
+            var chrome = _popupDiv.getBoundingClientRect().As<DOMRect>().height - listHeight;
+
+            // The popup is exactly as tall as the rows it shows, and never shorter than the first five
+            // of them, so that filtering down to one row does not collapse it to a sliver. Both bounds
+            // have to carry the chrome: leaving it out of the maximum is what used to put a scrollbar
+            // on a list that fits, and the minimum used to add 16px per row for a gap between rows
+            // that does not exist, which is where the empty space below the last row came from.
+            var rows        = visibleItems.Sum(h => h.height);
+            var atLeastRows = visibleItems.Take(5).Sum(h => h.height);
+
+            // The list is what scrolls now, so its own padding - the gap under the search box - is
+            // part of what has to fit. Counting only the rows left the list eight pixels short of its
+            // content and put a scrollbar on a list that fits.
+            var listPadding = Math.Max(0, listHeight - rows);
+
+            rows        += listPadding;
+            atLeastRows += listPadding;
+
+            var maxHeight = visibleItems.Length > 0 ? rows + chrome + "px" : "80vh";
+            var minHeight = (visibleItems.Length > 0 ? atLeastRows + chrome : 0) + "px";
+
+            _popupDiv.style.minHeight = minHeight;
+            _popupDiv.style.maxHeight = maxHeight;
+
+            var rect        = _container.getBoundingClientRect().As<DOMRect>();
+            var contentRect = _popupDiv.getBoundingClientRect().As<DOMRect>();
+            _popupDiv.style.top      = rect.bottom - 1 + "px";
+            _popupDiv.style.minWidth = rect.width      + "px";
+            var finalLeft = rect.left;
+
+            if (rect.left + contentRect.width + 1 > window.innerWidth)
+            {
+                finalLeft = window.innerWidth - contentRect.width - 1;
+            }
+
+            _popupDiv.style.left = finalLeft + "px";
+
+            if (window.innerHeight - rect.bottom - 1 < contentRect.height)
+            {
+                var top = rect.top - contentRect.height;
+
+                if (top < 0)
+                {
+                    if (rect.top > window.innerHeight - rect.bottom - 1)
+                    {
+                        _popupDiv.style.top    = "1px";
+                        _popupDiv.style.height = rect.top - 1 + "px";
+                    }
+                    else
+                    {
+                        _popupDiv.style.height = window.innerHeight - rect.bottom - 1 + "px";
+                    }
+
+                    // There is not enough room on either side for the whole list, so the height set
+                    // just above is the real constraint - the five-row floor has to yield to it or the
+                    // popup runs off the screen instead of scrolling.
+                    _popupDiv.style.minHeight = "0px";
+                }
+                else
+                {
+                    _popupDiv.style.top = top + "px";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Hides the component.
+        /// </summary>
+        public override void Hide(Action onHidden = null)
+        {
+            ClearSearch();
+            ResetSearchItems();
+            InnerElement.setAttribute("aria-expanded", "false");
+            // The click/dblclick/contextmenu/wheel listeners are attached once to
+            // _contentHtml when it's first created (see Show) and intentionally live
+            // for the dropdown's lifetime, so they're not removed here.
+            document.removeEventListener("keydown", _onPopupKeyDownAction);
+            window.clearTimeout(_asyncSearchTimeout);
+
+            var wasVisible = IsVisible;
+            var hadFocus   = wasVisible && _popupDiv is object && document.activeElement is object && (_popupDiv.contains(document.activeElement) || document.activeElement == document.body);
+
+            base.Hide(onHidden);
+
+            // Whoever was in the popup goes back to the box, so a keyboard user does not land on the body.
+            if (hadFocus) InnerElement.focus();
+
+            if (_isChanged)
+            {
+                // Reported once: a later Hide - the dropdown leaving the DOM, Items() emptying it - is not another change.
+                _isChanged = false;
+                RaiseOnChange(ev: null);
+            }
+        }
+
+        // The row element an event inside the list belongs to, or null outside any row.
+        private HTMLElement RowOf(HTMLElement target)
+        {
+            while (target is object && target != _childContainer)
+            {
+                if (target.parentElement == _childContainer) return target;
+                target = target.parentElement;
+            }
+
+            return null;
+        }
+
+        // An option the keyboard may land on: not a header, not a divider, not disabled.
+        private static bool IsSelectableRow(HTMLElement row) => row is object && row.classList.contains("tss-dropdown-item") && row.tabIndex != -1;
+
+        // A single-select dropdown shows one selection; if the items came in with more than one marked
+        // (Selected() on several), the first wins and the rest are unmarked without firing anything.
+        private void EnforceSingleSelection()
+        {
+            if (Mode != SelectMode.Single || _lastRenderedItems is null) return;
+
+            var seen    = false;
+            var changed = false;
+
+            foreach (var item in _lastRenderedItems)
+            {
+                if (!item.IsSelected) continue;
+
+                if (seen)
+                {
+                    item.SetSelectedSilently(false);
+                    changed = true;
+                }
+
+                seen = true;
+            }
+
+            if (changed) UpdateStateBasedUponCurrentSelections();
+        }
+
+        /// <summary>
+        /// Attaches a handler to the component's value-changed event.
+        /// </summary>
+        public void Attach(ComponentEventHandler<Dropdown> handler)
+        {
+            SubscribeInputUpdated((s, _) => handler(this));
+        }
+
+        /// <summary>
+        /// Switches the component to single-selection mode.
+        /// </summary>
+        public Dropdown Single()
+        {
+            Mode = SelectMode.Single;
+            return this;
+        }
+
+        /// <summary>
+        /// Switches the component to multi-selection mode.
+        /// </summary>
+        public Dropdown Multi()
+        {
+            Mode = SelectMode.Multi;
+            return this;
+        }
+
+
+        /// <summary>
+        /// Enables a built-in search box on the component.
+        /// </summary>
+        public Dropdown Searchable(string placeholder = "Search")
+        {
+            _searchBox = new SearchBox(placeholder).SearchAsYouType().OnSearch((s, e) =>
+            {
+                _search = e;
+                SearchItems();
+                RecomputePopupPosition();
+                QueueAsyncSearch();
+            });
+            return this;
+        }
+
+        /// <summary>
+        /// Turns the built-in search box into a lazy loader, for option lists too large to load up
+        /// front. Whatever the User types is handed to <paramref name="searcher"/> (debounced), and
+        /// the items it returns are <b>added</b> to the ones already rendered rather than replacing
+        /// them - so the seed items, and above all the current selection, survive every lookup.
+        /// Items whose <see cref="Item.Key"/> is already listed are dropped, so a lookup that
+        /// returns options the dropdown already knows about does not duplicate them. The normal
+        /// client-side filter still runs on top, so the list stays narrowed to the search term.
+        /// <para>
+        /// Seed the dropdown with <see cref="Items(Item[])"/> as usual (the first page of options,
+        /// plus whatever has to be selectable without searching), and let this fill in the rest.
+        /// This also enables the search box, so <see cref="Searchable"/> does not need to be called
+        /// as well.
+        /// </para>
+        /// </summary>
+        /// <param name="searcher">Looks up the options matching a search term. Called with an empty string when the User clears the box.</param>
+        /// <param name="placeholder">Placeholder of the search box.</param>
+        /// <param name="debounceMilliseconds">How long typing has to pause before a lookup is issued.</param>
+        public Dropdown SearchAsync(Func<string, Task<Item[]>> searcher, string placeholder = "Search", int debounceMilliseconds = 250)
+        {
+            _asyncSearcher              = searcher ?? throw new ArgumentNullException(nameof(searcher));
+            _asyncSearchDebounce        = debounceMilliseconds;
+
+            // Options arrive through the search box, so an empty seed list is not "no options available":
+            // keep the box enabled (it is how the User reaches the search) and the message hidden.
+            Disabled(false);
+            _noItemsSpan.style.display = "none";
+
+            // With no seed Items() call nothing has drawn the selected-items bar yet, so the placeholder would never show.
+            RefreshPlaceholder();
+
+            return Searchable(placeholder);
+        }
+
+        private void QueueAsyncSearch()
+        {
+            if (_asyncSearcher is null) return;
+
+            window.clearTimeout(_asyncSearchTimeout);
+
+            _asyncSearchTimeout = window.setTimeout(_ => RunAsyncSearchAsync(_search).FireAndForget(), _asyncSearchDebounce);
+        }
+
+        private async Task RunAsyncSearchAsync(string searchTerm)
+        {
+            var searcher = _asyncSearcher;
+
+            if (searcher is null) return;
+
+            // Terms typed while a lookup is in flight supersede it - only the newest one gets to add its items.
+            var currentRequestID = ++_latestAsyncSearchID;
+
+            SetAsyncSearchBusy(true);
+
+            try
+            {
+                var found = await searcher(searchTerm ?? string.Empty);
+
+                if (currentRequestID != _latestAsyncSearchID) return;
+
+                if (found is object && found.Length > 0)
+                {
+                    AddItems(found);
+
+                    // The items that just arrived have never been through the filter for the term they were fetched for.
+                    if (_searchBox is object) SearchItems();
+                }
+
+                if (IsVisible) RecomputePopupPosition();
+            }
+            finally
+            {
+                if (currentRequestID == _latestAsyncSearchID) SetAsyncSearchBusy(false);
+            }
+        }
+
+        private void SetAsyncSearchBusy(bool isBusy)
+        {
+            if (_searchBox is null) return;
+
+            if (isBusy) _searchBox.Render().classList.add("tss-dropdown-searchbox-busy");
+            else _searchBox.Render().classList.remove("tss-dropdown-searchbox-busy");
+        }
+
+        /// <summary>
+        /// Removes / disables the arrow on the component.
+        /// </summary>
+        public Dropdown NoArrow()
+        {
+            InnerElement.classList.add("tss-dropdown-noarrow");
+            InnerElement.classList.remove("tss-dropdown-custom-icon");
+            _iconContainer.style.display = "none";
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the arrow icon of the component.
+        /// </summary>
+        public Dropdown SetArrowIcon(UIcons icon, TextSize size = TextSize.Tiny, UIconsWeight weight = UIconsWeight.Regular)
+        {
+            InnerElement.classList.remove("tss-dropdown-noarrow");
+            InnerElement.classList.add("tss-dropdown-custom-icon");
+            _iconContainer.className  = $"tss-dropdown-icon {Tesserae.Icon.Transform(icon, weight)} {size}";
+
+            return this;
+        }
+
+        /// <summary>
+        /// This will set items to the available options, replacing any that are already rendered (and meaning that any async data retrievals that have started but not completed yet will be ignored when they DO complete because this call came
+        /// after it and it is presumed that this data will be more current)
+        /// </summary>
+        public Dropdown Items(params Item[] children)
+        {
+            // 2020-06-17 DWR: Whenever new items are presented to render, remove any previous ones - there used to be a distinct "Clear" method that did this that would be automatically called when loading items async but NOT when calling this
+            // method directly to synchronously update items, which was both inconsistent and surprising behaviour. I checked the code base here and where we use this library and we only called Clear from within this class and once in external
+            // code.. just before adding new items via this method, so by incorporating it here it makes everything simpler.
+            // - IMPORTANT: If we went back to having a distinct "Clear" method that could be called externally then it would need to incorporate similar logic to that found here; it should increment the "latestRequestID" value (because an items
+            //              update is effectively being said to take place that should supercede any async requests that have started but not completed and the loading state, current-selections-bar state and no-items state all would need to be
+            //              maintained correctly). If we ever wanted to add a Clear method for some reason then the best implementation be for it to call this method directly with an empty children array, which probably begs the question WHY
+            //              you would ever want it in the first place if calling this method automatically replaces any existing items.
+            ClearChildren(_childContainer);
+
+            // 2020-06-11 DWR: We need to do this, otherwise the entries in there will relate to drop down items that are no longer rendered - it's fine, since we'll be rebuilding the items (including selected states) if we've just called clear
+            // TODO [2020-07-01 DWR]: It doesn't LOOK to me like this is required any more since we will always call it in UpdateStateBasedUponCurrentSelections a little further below.. but I want to test with it removed before I'm fully confident
+            _selectedChildren.Clear();
+
+            // Each request (whether sync or async) will get a unique and incrementing ID - if requests overlap then the results of requests that were initiated later are preferred as they are going to be the results of interactions that User
+            // performed since the earlier requests started (since this code is browser-based, and so single-threaded, it's only possible for async requests to overlap - synchronous requests never can - but it's important to increment the
+            // "latestRequestID" value here to ensure that if a synchronous Items call is made after an async retrieval is initiated (but before it completes) that the later-made synchronous call "wins".
+            _latestRequestID++;
+
+            // 2020-06-13 DWR: When the items are replaced in an already-existing instance (eg. if a Dropdown instance has already been initialised with items but then the Items are updated - either directly by calling this method or by calling
+            // the method overload that takes a Task and then calling LoadItemsAsync.. we still end up here), the selected children data will be taken from the IsSelected values on the children items provided here. That means that if the User
+            // had selected two items and then the available items got updated, if it is desirable for those two items to remain selected then the caller has to ensure that it sets IsSelected to true on those two Dropdown.Item instances.
+            // - Note: The OnItemSelected would call RaiseOnInput if any items were provided here that were had IsSelected set to true and if the _callSelectOnChangingItemSelections setting is set to true but we might as well hold off on that
+            //   and call RaiseOnInput ONCE after ALL of the item changes have been applied. To do that, we'll set _callSelectOnChangingItemSelections to false while we 
+            _lastRenderedItems = children;
+
+            children.ForEach(component =>
+            {
+                _childContainer.appendChild(component.Render());
+                component.SelectedItem -= OnItemSelected; //Ensure OnItemSelected is only hooked once
+                component.SelectedItem += OnItemSelected;
+            });
+
+            EnsureAsyncLoadingStateDisabled(); // If we got here because an async request completed OR while one was in flight but a synchronous call to this method came in after it started but before finishing then ensure to remove its loading state
+
+            UpdateStateBasedUponCurrentSelections();
+
+            // A dropdown with an async searcher is never out of options - the next lookup may find some -
+            // so an empty list must not disable it or claim there is nothing to pick.
+            if (children.Any() || _asyncSearcher is object)
+            {
+                Disabled(false);
+                _noItemsSpan.style.display = "none";
+            }
+            else
+            {
+                Hide();
+                Disabled(true);
+                _noItemsSpan.style.display = "";
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Appends options to the ones already rendered, instead of replacing them the way
+        /// <see cref="Items(Item[])"/> does - so the current selection is untouched. Items whose
+        /// <see cref="Item.Key"/> matches one that is already listed are skipped, which is what lets
+        /// a <see cref="SearchAsync"/> lookup return options the dropdown already knows about
+        /// without duplicating them.
+        /// </summary>
+        public Dropdown AddItems(params Item[] children)
+        {
+            if (children is null || children.Length == 0) return this;
+
+            var existing = new List<Item>(_lastRenderedItems ?? new Item[0]);
+            var known    = new HashSet<string>();
+
+            foreach (var item in existing)
+            {
+                var key = item.Key;
+
+                if (!string.IsNullOrEmpty(key)) known.Add(key);
+            }
+
+            var added = 0;
+
+            foreach (var child in children)
+            {
+                var key = child.Key;
+
+                if (!string.IsNullOrEmpty(key) && !known.Add(key)) continue;
+
+                _childContainer.appendChild(child.Render());
+                child.SelectedItem -= OnItemSelected; //Ensure OnItemSelected is only hooked once
+                child.SelectedItem += OnItemSelected;
+
+                existing.Add(child);
+                added++;
+            }
+
+            if (added == 0) return this;
+
+            _lastRenderedItems = existing.ToArray();
+
+            EnsureAsyncLoadingStateDisabled();
+
+            UpdateStateBasedUponCurrentSelections();
+
+            Disabled(false);
+            _noItemsSpan.style.display = "none";
+
+            return this;
+        }
+
+        /// <summary>
+        /// This will specify an asynchronous callback that describes how to get available options - note that they will not be retrieved until LoadItemsAsync is called (when that successfully gets new item data, any existing items will be
+        /// removed first and the list will be completely replace with the new data). LoadItemsAsync may be called explicitly (and immediately after setting this) - if not, it will be called automatically when the User clicks to open the dropdown.
+        /// </summary>
+        public Dropdown Items(Func<Task<Item[]>> itemsSource)
+        {
+            // 2020-06-30 DWR: We should only show the no-items message if we KNOW that there are no options to select and if we've just specified an async retrieval then we won't know whether there are any items or not until it completes - so we'll
+            // ensure that the message is hidden here and then it will be displayed/hidden as appropriate when the async retrieval completes (the non-async Items method will be called and that updates the display state of the no-items message)
+            _noItemsSpan.style.display = "none";
+            _itemsSource               = itemsSource;
+            return this;
+        }
+
+        /// <summary>
+        /// Disables the component.
+        /// </summary>
+        public Dropdown Disabled(bool value = true)
+        {
+            IsEnabled = !value;
+            return this;
+        }
+
+        /// <summary>
+        /// Removes / disables the border on the component.
+        /// </summary>
+        public Dropdown NoBorder()
+        {
+            HasBorder = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Removes / disables the background on the component.
+        /// </summary>
+        public Dropdown NoBackground()
+        {
+            _container.classList.add("tss-dropdown-nobg");
+            return this;
+        }
+
+        /// <summary>
+        /// Marks the component as required.
+        /// </summary>
+        public Dropdown Required()
+        {
+            IsRequired = true;
+            return this;
+        }
+
+
+        /// <summary>
+        /// Sets the message shown on the box when there are no options to pick from
+        /// (by default "There are no options available"). It is never shown on a dropdown
+        /// configured with <see cref="SearchAsync"/>, since a lookup may still find options.
+        /// </summary>
+        public Dropdown NoItemsText(string text)
+        {
+            _noItemsSpan.textContent = text ?? string.Empty;
+            return this;
+        }
+
+        /// <summary>
+        /// Gets or sets the placeholder text shown when the component is empty.
+        /// </summary>
+        public Dropdown Placeholder(string text)
+        {
+            _placeholder = TextBlock(text).Secondary();
+            RefreshPlaceholder();
+            return this;
+        }
+
+        /// <summary>
+        /// Gets or sets the placeholder text shown when the component is empty.
+        /// </summary>
+        public Dropdown Placeholder(IComponent placeholder)
+        {
+            _placeholder = placeholder;
+            RefreshPlaceholder();
+            return this;
+        }
+
+        /// <summary>
+        /// The selected-items bar is only redrawn when the items or the selection change, so a placeholder set afterwards
+        /// (or on a dropdown whose options all arrive through <see cref="SearchAsync"/>, which may never be given a seed list)
+        /// has to ask for the redraw itself. A dropdown that is out of options keeps showing the no-items message instead.
+        /// </summary>
+        private void RefreshPlaceholder()
+        {
+            if (_lastRenderedItems is object || _asyncSearcher is object)
+            {
+                RenderSelected();
+            }
+        }
+
+
+        private void OnWindowClick(Event e)
+        {
+            // Anything inside the popup - a row, the search box, the gap under it - is the dropdown's own;
+            // the wheel over an unfocused search box used to count as outside and close it.
+            if (_popupDiv is object && (e.srcElement == _popupDiv || _popupDiv.contains(e.srcElement))) return;
+
+            Hide();
+        }
+
+        private void UpdateStateBasedUponCurrentSelections()
+        {
+            // 2020-06-14 DWR: Whenever redrawing the items in the selected-items bar (after the User has added or removed an option or after the Items data has changed), it's better to clear the list out completely and then add in ALL of the
+            // now-selected items because this will list them in the same order in the selected-items bar as they do in the dropdown. This doesn't sound like a huge deal (there could even be an argument for having them appear in the "selected"
+            // bar in the order in which the User selected them) but it IS a big problem if the consumer of this component replaces the Items data because it is the responsibility of the caller to know which of the new items should appear as
+            // selected - based on the items that were selected here before the update. This is because THIS component only deals with Dropdown.Item instances and NOT the source values and it can't be 100% sure that if an item with text "ABC"
+            // was selected before and then new items arrive that any item with text "ABC" should still be selected - only the caller knows strongly-typed values that these dropdown items relate to.
+            // ^ This is less of an issue with single-select configurations since they can only show zero or one selections and so ordering is not important
+            _selectedChildren.Clear();
+            _selectedChildren.AddRange(_lastRenderedItems.Where(item => item.IsSelected).Take(Mode == SelectMode.Single ? 1 : int.MaxValue));
+            RenderSelected();
+        }
+
+        private void OnItemSelected(Item sender)
+        {
+            if (Mode == SelectMode.Single)
+            {
+                if (sender.IsSelected)
+                {
+                    // For single select drop downs, when one item is selected then we need to ensure here that any other are UN-selected ("there can be only one")
+                    _isClearingOtherSelections = true;
+
+                    try
+                    {
+                        foreach (var item in _lastRenderedItems)
+                        {
+                            if (item != sender)
+                            {
+                                item.IsSelected = false;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        _isClearingOtherSelections = false;
+                    }
+
+                    // Same as the multi-select branch below: the selection moved, and Hide is what reports it (which for a single-select dropdown is right here, since picking an option closes the popup)
+                    _isChanged = true;
+
+                    Hide();
+                }
+                else
+                {
+                    // If this is an item getting unselected by the "item.IsSelected = false" loop just above then we can ignore it since we're already processing the OnItemSelected logic for the item that IS being selected
+                    if (_isClearingOtherSelections) return;
+
+                    // Otherwise the caller deselected the item itself (the UI can't - clicking an option in a single-select dropdown always selects it), which still has to
+                    // refresh the selected-items bar below and is a change like any other. Not a Hide, though - closing the popup on the User is not this caller's intent.
+                    _isChanged = true;
+                }
+            }
+            else
+            {
+                _isChanged = true;
+
+                int count = _lastRenderedItems.Count(v => v.IsSelected);
+
+                if (count > 1)
+                {
+                    _childContainer.classList.add("tss-dropdown-has-multi");
+                }
+                else
+                {
+                    _childContainer.classList.remove("tss-dropdown-has-multi");
+                }
+            }
+
+            UpdateStateBasedUponCurrentSelections();
+
+            if (_callSelectOnChangingItemSelections)
+            {
+                RaiseOnInput(ev: null);
+            }
+        }
+
+        /// <summary>
+        /// Returns the component configured with the given custom selection render.
+        /// </summary>
+        public Dropdown WithCustomSelectionRender(Func<Item[], IComponent> renderSelectedItems)
+        {
+            _customRenderer = renderSelectedItems;
+            return this;
+        }
+
+        private void RenderSelected()
+        {
+            ClearChildren(InnerElement);
+
+            if (SelectedItems.Any())
+            {
+                if (_customRenderer is object)
+                {
+                    InnerElement.appendChild(_customRenderer(SelectedItems).Render());
+                }
+                else
+                {
+                    for (var i = 0; i < SelectedItems.Length; i++)
+                    {
+                        var onBox = SelectedItems[i].RenderSelected();
+
+                        if (_fitContent)
+                        {
+                            onBox.classList.add("tss-dropdown-fit-content");
+                        }
+
+                        KeepOutOfTabOrder(onBox);
+                        InnerElement.appendChild(onBox);
+                    }
+                }
+            }
+            else
+            {
+                if (_placeholder is object)
+                {
+                    var rendered = _placeholder.Render();
+                    rendered.classList.add("tss-dropdown-item-on-box");
+
+                    if (_fitContent)
+                    {
+                        rendered.classList.add("tss-dropdown-fit-content");
+                    }
+                    InnerElement.appendChild(rendered);
+                }
+            }
+
+            // 2020-06-30 DWR: This may or may not be visible right now, it doesn't matter - we just need to ensure that we add it back in after clearing InnerElement
+            // - Note: Put it at the end of the list because there is a styling rule for selections within InnerElement that sayas to add a comma before the item if it's not the first one and that styling will see the no-items element as the first item otherwise :(
+            InnerElement.appendChild(_noItemsSpan);
+        }
+
+        // The copy of a selected option in the box is a picture of the selection, and the box itself is the one
+        // Tab stop: the option's own content is often a Button (Item(string) builds one), and that button kept
+        // its place in the tab order, so every closed dropdown took two Tabs - the second onto a control the
+        // box clips, ring and all. Only taken out of the tab order, not hidden: its text is what a screen
+        // reader announces as the combobox's value. A custom selection render is left as it was built.
+        private static void KeepOutOfTabOrder(HTMLElement onBox)
+        {
+            onBox.tabIndex = -1;
+
+            var focusable = onBox.querySelectorAll("a[href], button, input, select, textarea, [tabindex]");
+
+            for (uint i = 0; i < focusable.length; i++)
+            {
+                ((HTMLElement)focusable[i]).tabIndex = -1;
+            }
+        }
+
+        private void OnPopupKeyDown(Event e)
+        {
+            var ev = e as KeyboardEvent;
+
+            if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+
+            if (ev.key == "ArrowUp")
+            {
+                var visibleItems = _childContainer.children.Where(he => ((HTMLElement)he).style.display != "none").ToArray();
+
+                if (_popupDiv.classList.contains("tss-no-focus")) _popupDiv.classList.remove("tss-no-focus");
+
+                if (document.activeElement != null && (_childContainer.contains(document.activeElement) || (_searchBox is object && _searchBox.IsFocused)))
+                {
+                    if (visibleItems.TakeWhile(x => !IsFocused(x)).LastOrDefault(x => (x as HTMLElement).tabIndex != -1) is HTMLElement el)
+                    {
+                        _firstItem = el;
+                    }
+                    else
+                    {
+                        _firstItem = visibleItems.LastOrDefault(x => (x as HTMLElement).tabIndex != -1) as HTMLElement;
+                    }
+                }
+                else
+                {
+                    _firstItem = visibleItems.LastOrDefault(x => (x as HTMLElement).tabIndex != -1) as HTMLElement;
+                }
+
+                if (_firstItem is object)
+                {
+                    FocusOnItem(_firstItem);
+                }
+            }
+            else if (ev.key == "ArrowDown")
+            {
+                var visibleItems = _childContainer.children.Where(he => ((HTMLElement)he).style.display != "none").ToArray();
+
+                if (_popupDiv.classList.contains("tss-no-focus")) _popupDiv.classList.remove("tss-no-focus");
+
+                if (document.activeElement != null && (_childContainer.contains(document.activeElement) || (_searchBox is object && _searchBox.IsFocused)))
+                {
+                    if (visibleItems.SkipWhile(x => !IsFocused(x)).Skip(1).FirstOrDefault(x => (x as HTMLElement).tabIndex != -1) is HTMLElement el)
+                    {
+                        _firstItem = el;
+                    }
+                    else
+                    {
+                        _firstItem = visibleItems.FirstOrDefault(x => (x as HTMLElement).tabIndex != -1) as HTMLElement;
+                    }
+                }
+                else
+                {
+                    _firstItem = visibleItems.FirstOrDefault(x => (x as HTMLElement).tabIndex != -1) as HTMLElement;
+                }
+
+                if (_firstItem is object)
+                {
+                    FocusOnItem(_firstItem);
+                }
+            }
+            else if (_searchBox == null)
+            {
+                UpdateSearch(ev);
+            }
+            else if (ev.key == "Escape" || ev.key == "Enter")
+            {
+                UpdateSearch(ev);
+            }
+        }
+
+        private bool IsFocused(Element x)
+        {
+            if (x.Equals(document.activeElement)) return true;
+            else if (_searchBox is object && x.As<HTMLElement>().classList.contains("tss-dropdown-item-focus")) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Returns the component's state as a(n) observable.
+        /// </summary>
+        public IObservable<IReadOnlyList<Item>> AsObservable()
+        {
+            return _selectedChildren;
+        }
+
+        public enum SelectMode
+        {
+            Single,
+            Multi
+        }
+
+        [Enum(Emit.StringName)] //Don't change the emit type without updating the FromClassList method
+        public enum ItemType
+        {
+            [Name("tss-dropdown-item")]    Item,
+            [Name("tss-dropdown-header")]  Header,
+            [Name("tss-dropdown-divider")] Divider
+        }
+
+        private void UpdateSearch(KeyboardEvent e)
+        {
+            StopEvent(e);
+
+            if (e.key == "Backspace")
+            {
+                if (!string.IsNullOrWhiteSpace(_search))
+                {
+                    _search = _search.Substring(0, _search.Length - 1);
+                    SearchItems();
+                }
+            }
+            else if (e.key == "Enter")
+            {
+                _firstItem?.click();
+            }
+            else if (e.key == "Escape")
+            {
+                ClearSearch();
+                ResetSearchItems();
+                Hide();
+            }
+            else if (e.key.Length == 1)
+            {
+                // Any printable character, not only ASCII: the options are in whatever language the application is.
+                _search += e.key;
+                SearchItems();
+            }
+
+            if (string.IsNullOrWhiteSpace(_search))
+            {
+                ResetSearchItems();
+            }
+
+            RecomputePopupPosition();
+        }
+
+        private void ResetSearchItems(IEnumerable<(HTMLElement item, string textContent)> itemsToReset = null)
+        {
+            itemsToReset = itemsToReset ?? GetItems();
+
+            foreach (var item in itemsToReset)
+            {
+                item.item.style.display = "block";
+                RecursiveUnhighlight(item.item);
+            }
+        }
+
+        private void ClearSearch()
+        {
+            _search = string.Empty;
+            InnerElement.classList.remove("tss-dropdown-searching");
+
+            if (_searchSpan.isConnected)
+            {
+                _searchSpan.remove();
+            }
+
+            if (_searchBox != null)
+            {
+                _searchBox.Text = string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// When a LoadItemsAsync call starts, there should be a spinner to indicate that something is happening in the background - but if a further async request comes in before the previous one has completed then there is no
+        /// need to change anything as the spinner state will already be enabled. When multiple async requests overlap, which was started later will take precedence and the results of the earlier-started one will be ignored -
+        /// when the 'winning' request completes, it will call the synchronous Items method and that will ensure that any loading state is disabled.
+        /// </summary>
+        private void EnsureAsyncLoadingStateEnabled()
+        {
+            if (_spinner is object)
+                return;
+
+            _spinner = Div(Att("tss-spinner"));
+            _container.appendChild(_spinner);
+            _container.style.pointerEvents = "none";
+        }
+
+        /// <summary>
+        /// When data is successfully retrieved from a LoadItemsAsync call, it will call the synchronous Items method that will call this and ensure that any spinner state is disabled. This happens in the simple case where
+        /// there is only that single async retrieval and it runs to completion and it also happens if it is superceded by a more recent LoadItemsAsync call or by a separate synchronous Items call. 
+        /// </summary>
+        private void EnsureAsyncLoadingStateDisabled()
+        {
+            if (_spinner is null)
+                return;
+
+            _spinner.remove();
+            _container.style.pointerEvents = "unset";
+        }
+
+        private (HTMLElement item, string textContent)[] GetItems() => _childContainer.children.Select(child => ((HTMLElement)child, child.textContent)).ToArray();
+
+        private void SearchItems()
+        {
+            var searchTerms = _search.Trim().ToLower().Split(new []{' '});
+
+            var items         = GetItems();
+            var itemsToRemove = items.Where(item => (searchTerms.Any(t => !item.textContent.ToLower().Contains(t))));
+            var itemsToReset  = items.Except(itemsToRemove);
+            
+            // Enter picks _firstItem, so it has to be an option: not the header that happens to match first.
+            if (!itemsToReset.Any(i => i.item == _firstItem) || !IsSelectableRow(_firstItem))
+            {
+                _firstItem = itemsToReset.Select(i => i.item).FirstOrDefault(IsSelectableRow);
+            }
+
+            ResetSearchItems(itemsToReset);
+
+            bool hasFocused = false;
+
+            foreach (var item in itemsToReset)
+            {
+                if (IsFocused(item.item))
+                {
+                    hasFocused = true; 
+                    break;
+                }
+            }
+
+            if (!hasFocused && _firstItem is object)
+            {
+                FocusOnItem(_firstItem);
+            }
+
+            foreach (var (item, textContent) in itemsToRemove)
+            {
+                item.style.display = "none";
+            }
+
+            var terms = searchTerms.Where(t => t.Length > 0).ToArray();
+
+            foreach (var (item, _) in itemsToReset)
+            {
+                RecursiveUnhighlight(item);
+
+                if (terms.Length > 0)
+                {
+                    RecursiveHighlight(item, terms);
+                }
+            }
+
+            // Filtering moves every remaining row, so whatever the list was scrolled to no longer
+            // means anything. Bring the focused row back into view once the rows that are leaving
+            // are hidden - doing it from FocusOnItem above would measure the pre-filter layout.
+            if (_firstItem is object && itemsToReset.Any(i => i.item == _firstItem))
+            {
+                ScrollItemIntoView(_firstItem);
+            }
+            else
+            {
+                _childContainer.scrollTop = 0;
+            }
+        }
+
+        private void FocusOnItem(HTMLElement item, bool scroll = true)
+        {
+            if (_searchBox is object)
+            {
+                foreach (var i in _popupDiv.querySelectorAll(".tss-dropdown-item-focus"))
+                {
+                    i.As<HTMLElement>().classList.remove("tss-dropdown-item-focus");
+                }
+
+                item.classList.add("tss-dropdown-item-focus");
+            }
+            else
+            {
+                // The pointer is already on the row: scrolling it fully into view would move the list under the pointer.
+                if (scroll) item.focus();
+                else Script.Write("{0}.focus({ preventScroll: true })", item);
+            }
+
+            if (scroll) ScrollItemIntoView(item);
+        }
+
+        /// <summary>
+        /// Scrolls the list so that <paramref name="item"/> is visible, moving it as little as
+        /// possible - the equivalent of <c>scrollIntoView({ block: "nearest" })</c>, done by hand so
+        /// that only the option list scrolls and never the page behind the popup. It is what keeps
+        /// the arrow keys usable with a search box: there the focused option is marked with a class
+        /// rather than really focused, so the browser scrolls nothing by itself.
+        /// </summary>
+        private void ScrollItemIntoView(HTMLElement item)
+        {
+            if (item is null || _childContainer is null) return;
+
+            var itemRect     = item.getBoundingClientRect().As<DOMRect>();
+            var scrollerRect = _childContainer.getBoundingClientRect().As<DOMRect>();
+
+            if (itemRect.top < scrollerRect.top)
+            {
+                _childContainer.scrollTop -= scrollerRect.top - itemRect.top;
+            }
+            else if (itemRect.bottom > scrollerRect.bottom)
+            {
+                _childContainer.scrollTop += itemRect.bottom - scrollerRect.bottom;
+            }
+        }
+
+        private static void RecursiveHighlight(HTMLElement baseElement, string[] terms)
+        {
+            if (baseElement.childElementCount > 0)
+            {
+                foreach (var e in baseElement.children)
+                {
+                    RecursiveHighlight((HTMLElement)e, terms);
+                }
+            }
+            else
+            {
+                HighlightLeaf(baseElement, terms);
+            }
+        }
+
+        // Wraps every occurrence of a term in a <mark>, built from text nodes: the option's text is
+        // whatever the application put there, and writing it back through innerHTML let it run as markup.
+        private static void HighlightLeaf(HTMLElement leaf, string[] terms)
+        {
+            var text  = leaf.textContent;
+            var lower = text.ToLower();
+
+            if (string.IsNullOrEmpty(text)) return;
+
+            var pieces = new List<(int start, int length)>();
+            var pos    = 0;
+
+            while (pos < text.Length)
+            {
+                var best    = -1;
+                var bestLen = 0;
+
+                foreach (var term in terms)
+                {
+                    var index = lower.IndexOf(term, pos);
+
+                    if (index >= 0 && (best < 0 || index < best || (index == best && term.Length > bestLen)))
+                    {
+                        best    = index;
+                        bestLen = term.Length;
+                    }
+                }
+
+                if (best < 0 || bestLen == 0) break;
+
+                pieces.Add((best, bestLen));
+                pos = best + bestLen;
+            }
+
+            if (pieces.Count == 0) return;
+
+            leaf.textContent = "";
+            pos              = 0;
+
+            foreach (var (start, length) in pieces)
+            {
+                if (start > pos) leaf.appendChild(document.createTextNode(text.Substring(pos, start - pos)));
+
+                var mark = document.createElement("mark");
+                mark.textContent = text.Substring(start, length);
+                leaf.appendChild(mark);
+
+                pos = start + length;
+            }
+
+            if (pos < text.Length) leaf.appendChild(document.createTextNode(text.Substring(pos)));
+        }
+
+        private static void RecursiveUnhighlight(HTMLElement baseElement)
+        {
+            if (baseElement.tagName == "MARK")
+            {
+                var newChild = document.createTextNode(baseElement.textContent);
+                baseElement.parentElement.replaceChild(newChild, baseElement);
+            }
+            else if (baseElement.childElementCount > 0)
+            {
+                foreach (var e in baseElement.children)
+                {
+                    RecursiveUnhighlight((HTMLElement)e);
+                }
+            }
+        }
+
+        public sealed class Item : IComponent
+        {
+            private readonly HTMLElement InnerElement;
+
+            // The recipe for what the box draws, not an instance of it. An element exists at exactly one
+            // place in the DOM, so the list and the box each need their own live component, and only the
+            // caller can produce a second one - which is why this is a factory. Copying the row instead,
+            // which is what this used to do, hands the box a dead picture: cloneNode carries attributes
+            // but not event listeners, not DomObserver's mount registration and not component identity,
+            // so a Defer in the copy never loaded and nothing in it ever reacted to anything.
+            //
+            // Null on the paths that still take that copy, kept working for code written before this was a
+            // factory: the obsolete single-component constructor, and a box component given as null or as
+            // the row's own instance - see CopyRowForBox.
+            private readonly Func<IComponent> _selectedContentFactory;
+
+            // Built the first time the box asks for it, so an option nobody selected costs nothing - which
+            // is what keeps a deferred option lazy until it is either listed or selected. The copy-the-row
+            // paths fill it in the constructor instead, since the copy has to be taken before anything else
+            // touches the row.
+            private HTMLElement _selectedElement;
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public Item(string text, string selectedText = null, UIcons? icon = null)
+                : this(GetContent(text, icon), () => GetContent(string.IsNullOrEmpty(selectedText) ? text : selectedText, icon))
+            {
+            }
+
+            private static IComponent GetContent(string text, UIcons? icon)
+            {
+                if (icon is null)
+                {
+                    return Button(text).NoPadding().TextLeft();
+                }
+                else
+                {
+                    return Button(text).NoPadding().TextLeft().SetIcon(icon.Value);
+                }
+            }
+
+            /// <summary>
+            /// Gets or sets the data.
+            /// </summary>
+            public T GetDataAs<T>() => Script.Write<T>("{0}._data", this);
+            private dynamic _data;
+
+            /// <summary>
+            /// Initializes a new instance of this class from a single component, which is drawn in the list
+            /// and <em>copied</em> into the closed box.
+            /// <para>
+            /// Obsolete because that copy is a dead picture: <c>cloneNode</c> carries attributes but not event
+            /// listeners, not DomObserver's mount registration and not component identity, so a
+            /// <see cref="UI.Defer(Func{Task{IComponent}})"/> inside it never loads and nothing in it ever
+            /// reacts. Use <see cref="Item(Func{IComponent}, Func{IComponent})"/> instead: one recipe, from
+            /// which the list and the box each get their own live component.
+            /// </para>
+            /// </summary>
+            [Obsolete("The box gets a copy of the row, which has no listeners and never loads a Defer. Pass a Func<IComponent> instead, so the box builds its own live component from the same recipe.")]
+            public Item(IComponent content) : this(content, (IComponent)null)
+            {
+            }
+
+            /// <summary>
+            /// Initializes a new instance of this class from two components the caller has already built: one
+            /// for the row in the list, one for the closed box. They must be different instances, because an
+            /// element exists at exactly one place in the DOM - there is no way to draw one component in both
+            /// places. To supply a single recipe and let the box build its own second instance from it, use
+            /// the <see cref="Item(Func{IComponent}, Func{IComponent})"/> overload, which also defers building
+            /// the box's one until the option is actually selected.
+            /// <para>
+            /// Passing <c>null</c> for <paramref name="selectedContent"/>, or the same instance twice, falls
+            /// back to the obsolete behaviour of copying the row into the box.
+            /// </para>
+            /// </summary>
+            public Item(IComponent content, IComponent selectedContent)
+            {
+                InnerElement = BuildRow(content);
+
+                // A null short form has always meant "copy the row into the box", and the same instance twice
+                // cannot draw twice - appending it to the box moves it out of the row, leaving the row empty -
+                // so that means the copy too. Both keep working, both are the obsolete behaviour: a copy is a
+                // picture, with no listeners, no mount registration and no identity.
+                if (selectedContent is null || selectedContent == content)
+                {
+                    CopyRowForBox();
+                }
+                else
+                {
+                    // Safe to hand this straight back as a factory: it is invoked exactly once, on the first
+                    // RenderSelected, which caches what it builds.
+                    _selectedContentFactory = () => selectedContent;
+                }
+
+                InnerElement.addEventListener("click",     OnItemClick);
+            }
+
+            // The pre-factory behaviour, kept so code written against it keeps working: the box shows a copy
+            // of the row - which has no event listeners and never loads a Defer, so [Obsolete] on the
+            // overloads that land here is where this is meant to be caught, at build time. Taken here rather
+            // than on the first RenderSelected so it is a copy of the option as it was built, before
+            // selection state or a filter's <mark> highlighting reached the row - which is what the old
+            // constructor, cloning before anything was selected, copied.
+            private void CopyRowForBox()
+            {
+                _selectedElement = (HTMLElement)InnerElement.cloneNode(true);
+
+                // Not a row: the box carries no role or aria-selected, is out of the tab order, and is styled
+                // as the box's own single clipped line.
+                _selectedElement.classList.remove("tss-dropdown-item");
+                _selectedElement.classList.remove("tss-selected");
+                _selectedElement.classList.add("tss-dropdown-item-on-box");
+                _selectedElement.removeAttribute("role");
+                _selectedElement.removeAttribute("aria-selected");
+                _selectedElement.tabIndex = -1;
+            }
+
+            /// <summary>
+            /// Initializes a new instance of this class from one recipe, which serves both places the option
+            /// is drawn - the row in the list and the closed box - since a component can only be in one of
+            /// them at a time. It is called now to build the row, and again the first time the box needs one,
+            /// so an option nobody selects only ever builds the row. This is the overload to reach for
+            /// whenever the row and the box should look the same; where the box wants a shorter form, give it
+            /// its own through <see cref="Item(IComponent, Func{IComponent})"/> or
+            /// <see cref="Item(IComponent, IComponent)"/>.
+            /// <para>
+            /// The two are independent instances, which is what makes the one in the box live: it mounts, so
+            /// a <see cref="UI.Defer(Func{Task{IComponent}})"/> in it loads, and it keeps its own state. An
+            /// option holding something interactive will therefore not share that state between the list and
+            /// the box - if that matters, give the box its own read-only short form.
+            /// </para>
+            /// <para>
+            /// The recipe running twice means whatever it does happens twice. Share expensive work by starting
+            /// it outside the recipe - one Task, awaited by both - rather than repeating it inside.
+            /// </para>
+            /// </summary>
+            public Item(Func<IComponent> content) : this(content is null ? null : content(), content ?? _emptyContent)
+            {
+            }
+
+            /// <summary>
+            /// Initializes a new instance of this class from a component for the row and a recipe for the box,
+            /// which is what defers the box's until the option is actually selected - so an option nobody
+            /// selects never builds one. The row cannot be deferred the same way: it is built here, because
+            /// this is where the item's element comes from.
+            /// <para>
+            /// Use this over <see cref="Item(IComponent, IComponent)"/> for a long list of options that each
+            /// want a shorter form in the box: the list pays for its rows either way, and this way it does not
+            /// also pay for a box component per option that only one of them will ever use.
+            /// </para>
+            /// </summary>
+            public Item(IComponent content, Func<IComponent> selectedContent)
+            {
+                InnerElement = BuildRow(content);
+
+                if (selectedContent is null)
+                {
+                    CopyRowForBox();
+                }
+                else
+                {
+                    _selectedContentFactory = selectedContent;
+                }
+
+                InnerElement.addEventListener("click",     OnItemClick);
+            }
+
+            // What a null content falls back to, so a broken option renders empty instead of taking the page
+            // down with it - and so the single-recipe overload still has a recipe to hand the box.
+            private static readonly Func<IComponent> _emptyContent = () => TextBlock("");
+
+            // The row's element, which is what Render returns - so it is built in the constructor whichever
+            // overload is used, and only the box's component can be deferred.
+            private static HTMLElement BuildRow(IComponent content)
+            {
+                // Nothing to draw and nothing to fall back to. Rendering empty beats throwing: a throw out
+                // of a component's constructor takes down the whole page it was being built into.
+                if (content is null)
+                {
+                    content = TextBlock("");
+                }
+
+                var row = Button(Att("tss-dropdown-item", role: "option"));
+                row.appendChild(content.Render());
+                return row;
+            }
+
+            private event  BeforeSelectEventHandler<Item> BeforeSelectedItem;
+            internal event ComponentEventHandler<Item>    SelectedItem;
+
+            /// <summary>
+            /// Gets or sets the type of the item.
+            /// </summary>
+            public ItemType Type
+            {
+                get
+                {
+                    if (InnerElement.classList.contains("tss-dropdown-item")) return ItemType.Item;
+                    if (InnerElement.classList.contains("tss-dropdown-header")) return ItemType.Header;
+                    return ItemType.Divider;
+                }
+                set
+                {
+                    InnerElement.classList.remove(Type.ToString());
+                    InnerElement.classList.add(value.ToString());
+
+                    if (value == ItemType.Item) InnerElement.tabIndex = 0;
+                    else InnerElement.tabIndex                        = -1;
+                }
+            }
+
+            /// <summary>
+            /// Gets or sets a value indicating whether the component is interactive (enabled).
+            /// </summary>
+            public bool IsEnabled
+            {
+                get => !InnerElement.classList.contains("tss-disabled");
+                set
+                {
+                    if (value)
+                    {
+                        InnerElement.classList.remove("tss-disabled");
+                        if (Type == ItemType.Item) InnerElement.tabIndex = 0;
+                    }
+                    else
+                    {
+                        InnerElement.classList.add("tss-disabled");
+                        InnerElement.tabIndex = -1;
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Gets or sets a value indicating whether the component is selected.
+            /// </summary>
+            public bool IsSelected
+            {
+                get => InnerElement.classList.contains("tss-selected");
+                set
+                {
+                    if (value && BeforeSelectedItem is object)
+                    {
+                        var shouldSelect = BeforeSelectedItem(this);
+
+                        if (!shouldSelect)
+                            return;
+                    }
+
+                    if (value)
+                    {
+                        InnerElement.classList.add("tss-selected");
+                        InnerElement.setAttribute("aria-selected", "true");
+                    }
+                    else
+                    {
+                        InnerElement.classList.remove("tss-selected");
+                        InnerElement.setAttribute("aria-selected", "false");
+                    }
+
+                    // 2020-06-11 DWR: We previously had a check here to only fire this even if the value had changed but that would mean that if you had a single-select drop down and you clicked on the option that was already selected
+                    // then nothing would happen (because the value hadn't changed and this callback wouldn't be made) because it's this callback that the parent class uses to hide the drop down list of options. I considered making
+                    // adding the logic to OnItemClick instead (because we want a way to say "hide the drop down list if the User clicked an option) but that bypasses  the _onBeforeSelected and that could be useful (we might want
+                    // to have a callback that prevents you from clicking the item if.. something). While I removed the was-changed check for single-select configurations, it does not harm for multi as well.
+                    SelectedItem?.Invoke(this);
+                }
+            }
+
+            // Changes the mark without telling anyone: for the dropdown putting a list into a consistent state,
+            // not for a selection anyone made.
+            internal void SetSelectedSilently(bool value)
+            {
+                if (value) InnerElement.classList.add("tss-selected");
+                else InnerElement.classList.remove("tss-selected");
+
+                InnerElement.setAttribute("aria-selected", value ? "true" : "false");
+            }
+
+            /// <summary>
+            /// Gets or sets the text shown in the component.
+            /// </summary>
+            public string Text
+            {
+                get => InnerElement.innerText;
+                set => InnerElement.innerText = value;
+            }
+
+            /// <summary>
+            /// A stable identity for this option, used to tell it apart from an option that merely
+            /// reads the same - <see cref="Dropdown.AddItems"/> drops an incoming item whose key is
+            /// already listed, which is how a <see cref="Dropdown.SearchAsync"/> lookup avoids
+            /// duplicating options that are already there. Defaults to the item's text, so give a
+            /// key whenever the text is not unique (two people with the same name, …).
+            /// </summary>
+            public string Key => string.IsNullOrEmpty(_key) ? InnerElement.textContent : _key;
+            private string _key;
+
+            /// <summary>
+            /// Sets the item's <see cref="Key"/>.
+            /// </summary>
+            public Item SetKey(string key)
+            {
+                _key = key;
+                return this;
+            }
+
+            /// <summary>
+            /// Renders the component's root HTML element.
+            /// </summary>
+            public HTMLElement Render()
+            {
+                return InnerElement;
+            }
+
+            /// <summary>
+            /// The element the dropdown's box shows for this item while it is selected: its own component,
+            /// built from the factory the item was given, so it is mounted and live in the box rather than a
+            /// copy of the row. Built once and reused. Where there was no second recipe to build from - the
+            /// obsolete single-component path - this is instead the copy of the row taken in the constructor.
+            /// </summary>
+            public HTMLElement RenderSelected()
+            {
+                if (_selectedElement is null)
+                {
+                    // Not a row: it carries no role or aria-selected, and nothing in the box is in the tab
+                    // order - the box is a picture of the selection, and the list is what you interact with.
+                    _selectedElement          = Button(Att("tss-dropdown-item-on-box"));
+                    _selectedElement.tabIndex = -1;
+                    _selectedElement.appendChild(_selectedContentFactory().Render());
+                }
+
+                return _selectedElement;
+            }
+
+            /// <summary>
+            /// Configures the component to header.
+            /// </summary>
+            public Item Header()
+            {
+                Type = ItemType.Header;
+                return this;
+            }
+
+            /// <summary>
+            /// Configures the component to divider.
+            /// </summary>
+            public Item Divider()
+            {
+                Type = ItemType.Divider;
+                return this;
+            }
+
+            /// <summary>
+            /// Disables the component.
+            /// </summary>
+            public Item Disabled(bool value = true)
+            {
+                IsEnabled = !value;
+                return this;
+            }
+
+            /// <summary>
+            /// Marks the component as selected.
+            /// </summary>
+            public Item Selected()
+            {
+                IsSelected = true;
+                return this;
+            }
+
+            /// <summary>
+            /// Configures the selected if on the component.
+            /// </summary>
+            public Item SelectedIf(bool shouldSelect)
+            {
+                if (shouldSelect)
+                {
+                    IsSelected = true;
+                }
+                return this;
+            }
+
+            /// <summary>
+            /// Sets the data of the component.
+            /// </summary>
+            public Item SetData<T>(T data)
+            {
+                _data = data;
+                return this;
+            }
+
+            /// <summary>
+            /// Registers a callback invoked when the selected event fires.
+            /// </summary>
+            public Item OnSelected(ComponentEventHandler<Item> whenSelected, ComponentEventHandler<Item> whenDeselected = null)
+            {
+                SelectedItem += sender =>
+                {
+                    if (sender.IsSelected)
+                    {
+                        whenSelected?.Invoke(sender);
+                    }
+                    else
+                    {
+                        whenDeselected?.Invoke(sender);
+                    }
+                };
+                return this;
+            }
+
+            /// <summary>
+            /// Registers a callback invoked when the before selected event fires.
+            /// </summary>
+            public Item OnBeforeSelected(BeforeSelectEventHandler<Item> onBeforeSelect)
+            {
+                BeforeSelectedItem += onBeforeSelect;
+                return this;
+            }
+
+            private void OnItemClick(Event e)
+            {
+                if (Type == ItemType.Item && IsEnabled)
+                {
+                    if (IsMountedWithinMultiSelectDropdown)
+                    {
+                        // If this is a multi-select dropdown then clicking an item should toggle its selection on or off
+                        IsSelected = !IsSelected;
+                    }
+                    else
+                    {
+                        // If this is a single-select dropdown then clciking it will ALWAYS set it to selected (and setting this property will fire off loads of other logic that will result in the dropdown's list of options being hidden)
+                        IsSelected = true;
+                    }
+                }
+            }
+
+            private bool IsMountedWithinMultiSelectDropdown => InnerElement.parentElement.classList.contains("tss-dropdown-multi");
+        }
+    }
+}

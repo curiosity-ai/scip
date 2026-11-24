@@ -1,0 +1,450 @@
+﻿using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A multi-line text input component.
+    /// </summary>
+    [Transpose.Name("tss.TextArea")]
+    public sealed class TextArea : ComponentBase<TextArea, HTMLTextAreaElement>, ICanValidate<TextArea>, IBindableComponent<string>, ITabIndex, IRoundedStyle, IDictationTarget
+    {
+        private readonly HTMLDivElement             _container;
+        private readonly HTMLSpanElement            _errorSpan;
+        private readonly SettableObservable<string> _observable;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TextArea"/> class.
+        /// </summary>
+        /// <param name="text">The initial text.</param>
+        public TextArea(string text = string.Empty)
+        {
+            // The initial text is the text area's default value - its text content - rather than its live
+            // value. A <textarea> has no value attribute, so text set only through the value property is in
+            // no markup: a form reset clears it, and DeltaComponent, which patches a re-render into the node
+            // already on screen through its attributes and children, keeps showing the old text. The live
+            // value follows the default until the user types or SetText is called.
+            InnerElement = UI.TextArea(Att("tss-textbox tss-textarea", defaultValue: text));
+            _errorSpan   = Span(Att("tss-textbox-error"));
+
+            // tss-textarea-container is a flex column of full height, so the text area fills whatever
+            // height the container gets from its parent (e.g. when Grow() stretches the stack item)
+            // while the error message keeps its own space. See tss.textarea.css.
+            _container = Div(Att("tss-textbox-container tss-textarea-container"), InnerElement, _errorSpan);
+
+            _observable = new SettableObservable<string>(text);
+            AttachChange();
+            AttachInput();
+            AttachKeys();
+            AttachFocus();
+            AttachBlur();
+
+            OnChange((_, __) => _observable.Value = Text);
+
+            OnInput((_, __) => _observable.Value = Text);
+
+            DictationTargets.Register(_container, this);
+        }
+
+        /// <summary>Gets or sets the tab index.</summary>
+        public int TabIndex
+        {
+            set
+            {
+                InnerElement.tabIndex = value;
+            }
+        }
+
+        /// <summary>Gets or sets whether the component is enabled.</summary>
+        public bool IsEnabled
+        {
+            get => !InnerElement.classList.contains("tss-disabled");
+            set
+            {
+                if (value)
+                {
+                    InnerElement.classList.remove("tss-disabled");
+                }
+                else
+                {
+                    InnerElement.classList.add("tss-disabled");
+                }
+            }
+        }
+
+        /// <summary>Gets or sets whether the component is read-only.</summary>
+        public bool IsReadOnly
+        {
+            get => InnerElement.hasAttribute("readonly");
+            set
+            {
+                if (value) InnerElement.setAttribute("readonly", "");
+                else InnerElement.removeAttribute("readonly");
+            }
+        }
+
+        /// <summary>Gets or sets the text in the text area.</summary>
+        public string Text
+        {
+            get => InnerElement.value;
+            set
+            {
+                InnerElement.value = value;
+                _observable.Value  = value;
+                _aiBadge?.Rebase();
+                if (!string.IsNullOrEmpty(value)) _initialValue?.Remove();
+                RaiseOnInput(null);
+            }
+        }
+
+        /// <summary>Gets or sets the placeholder text.</summary>
+        public string Placeholder
+        {
+            get => InnerElement.placeholder;
+            set => InnerElement.placeholder = value;
+        }
+
+        /// <summary>Gets or sets the error message.</summary>
+        public string Error
+        {
+            get => _errorSpan.innerText;
+            set
+            {
+                _errorSpan.innerText = value;
+                _errorSpan.title     = value ?? ""; // A validated field keeps its message to one line and ellipsizes it, so the full text stays reachable
+            }
+        }
+
+        /// <summary>Gets or sets the maximum length of the text.</summary>
+        public int MaxLength
+        {
+            get => InnerElement.maxLength;
+            set => InnerElement.maxLength = value;
+        }
+
+        /// <summary>Gets or sets whether the component is in an invalid state.</summary>
+        public bool IsInvalid
+        {
+            get => _container.classList.contains("tss-invalid");
+            set
+            {
+                if (value)
+                {
+                    _container.classList.add("tss-invalid");
+                }
+                else
+                {
+                    _container.classList.remove("tss-invalid");
+                }
+            }
+        }
+
+        /// <summary>Gets or sets whether the component is required.</summary>
+        public bool IsRequired
+        {
+            get => _container.classList.contains("tss-required");
+            set
+            {
+                if (value)
+                {
+                    _container.classList.add("tss-required");
+                }
+                else
+                {
+                    _container.classList.remove("tss-required");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Renders the component.
+        /// </summary>
+        /// <returns>The rendered HTML element.</returns>
+        public override HTMLElement Render()
+        {
+            return _container;
+        }
+
+        /// <summary>
+        /// Attaches a handler to the input updated event.
+        /// </summary>
+        /// <param name="handler">The handler.</param>
+        public void Attach(ComponentEventHandler<TextArea> handler)
+        {
+            SubscribeInputUpdated((s, _) => handler(s));
+        }
+
+        /// <summary>
+        /// Sets the text of the text area.
+        /// </summary>
+        /// <param name="text">The text.</param>
+        /// <returns>The current instance.</returns>
+        public TextArea SetText(string text)
+        {
+            Text = text;
+            return this;
+        }
+
+        /// <summary>
+        /// Clears the text.
+        /// </summary>
+        /// <returns>The current instance.</returns>
+        public TextArea ClearText()
+        {
+            SetText(string.Empty);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the placeholder text.
+        /// </summary>
+        /// <param name="placeholder">The placeholder text.</param>
+        /// <returns>The current instance.</returns>
+        public TextArea SetPlaceholder(string placeholder)
+        {
+            Placeholder = placeholder;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets whether the component is disabled.
+        /// </summary>
+        /// <param name="value">Whether it's disabled.</param>
+        /// <returns>The current instance.</returns>
+        public TextArea Disabled(bool value = true)
+        {
+            IsEnabled = !value;
+            return this;
+        }
+
+        /// <summary>
+        /// Shows <paramref name="html"/> in the empty field as its initial value, until the user first edits it. A minimal subset of
+        /// HTML is drawn: <c>&lt;b&gt;</c>/<c>&lt;strong&gt;</c>, <c>&lt;i&gt;</c>/<c>&lt;em&gt;</c>, <c>&lt;br&gt;</c> and colour (<c>&lt;span style="color:crimson"&gt;</c> or
+        /// <c>&lt;font color="#0a7"&gt;</c>); anything else is reduced to its text. It is not the field's <c>Text</c> (which stays empty),
+        /// and typing, pasting, or setting <c>Text</c> from code removes it for good.
+        /// </summary>
+        /// <param name="html">The formatted initial value.</param>
+        public TextArea InitialValue(string html)
+        {
+            if (_initialValue is null) _initialValue = new InitialRichText(_container, InnerElement, true);
+
+            _initialValue.Set(html);
+            return this;
+        }
+
+        private InitialRichText _initialValue;
+
+        /// <summary>Sets the component as read-only.</summary>
+        public TextArea ReadOnly()
+        {
+            IsReadOnly = true;
+            return this;
+        }
+
+        /// <summary>Disables spell check.</summary>
+        public TextArea NoSpellCheck()
+        {
+            InnerElement.spellcheck = false;
+            return this;
+        }
+
+        /// <summary>Sets the component as required.</summary>
+        public TextArea Required()
+        {
+            IsRequired = true;
+            return this;
+        }
+
+        private AIFieldBadge _aiBadge;
+
+        /// <summary>
+        /// Marks the field as holding what a model wrote (the AI tint and an accent edge), optionally with an <c>AI</c> badge inside the field, in its top corner. The text in the field
+        /// when this is called, and the text of every later <c>Text = …</c> / <c>SetText</c>, is taken as what the model wrote. While
+        /// the field still holds it the badge says <c>AI</c>; once the user edits it the badge stays and says
+        /// <paramref name="editedText"/> instead (and says <c>AI</c> again if they put the text back).
+        /// </summary>
+        /// <param name="value">Whether the AI look is on.</param>
+        /// <param name="strongEffect">Asks for the louder form of the AI styling (<c>tss-ai-strong</c>).</param>
+        /// <param name="badge">Shows the badge inside the field.</param>
+        /// <param name="editedText">What the badge says once the text was edited; <c>Edited</c> (translated) when null.</param>
+        public TextArea AI(bool value = true, bool strongEffect = false, bool badge = false, string editedText = null)
+        {
+            InnerElement.UpdateClassIf(value, "tss-ai");
+            InnerElement.UpdateClassIf(value && strongEffect, "tss-ai-strong");
+
+            if (value && badge)
+            {
+                if (_aiBadge is null)
+                {
+                    _aiBadge = new AIFieldBadge(_container, () => Text);
+
+                    // Only the user's own input has an event; a change from code raises it with none, and has already rebased.
+                    OnInput((_, e) =>
+                    {
+                        if (e is object) _aiBadge?.Refresh();
+                    });
+                }
+
+                _aiBadge.Enable(editedText, strongEffect);
+            }
+            else
+            {
+                _aiBadge?.Disable();
+            }
+
+            return this;
+        }
+
+        /// <summary>Whether <see cref="AI"/> is on.</summary>
+        public bool IsAI => InnerElement.classList.contains("tss-ai");
+
+        private DictationController _dictation;
+        private DictationProvider _dictationProvider;
+
+        /// <summary>
+        /// Adds a microphone button in the corner of the text area, as an <see cref="OmniBox"/> has with
+        /// <see cref="OmniBox.Config.DictationButton"/>: pressing it dictates after the text already in the field, pressing it
+        /// again stops, and what was heard stays. The words come from <paramref name="provider"/>, else
+        /// <see cref="Tesserae.Dictation.Provider"/>, else the browser's speech recognition; the button is not shown when none is available.
+        /// </summary>
+        /// <param name="provider">The source of this field's dictation, instead of the application-wide one.</param>
+        public TextArea WithDictation(DictationProvider provider = null)
+        {
+            if (provider is object) _dictationProvider = provider;
+
+            GetDictation().AddButton();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets where this field's dictation gets its words from, instead of <see cref="Tesserae.Dictation.Provider"/>, without adding the
+        /// microphone button: for a field that is dictated into from elsewhere (see <see cref="DictationTargets"/>).
+        /// </summary>
+        public TextArea DictationSource(DictationProvider provider)
+        {
+            _dictationProvider = provider;
+            return this;
+        }
+
+        /// <summary>True while the microphone button is listening.</summary>
+        public bool IsDictating => _dictation?.IsDictating ?? false;
+
+        /// <summary>Starts dictating, as pressing the microphone button does. Does nothing when already dictating or when nothing can supply words, and works whether or not <see cref="WithDictation"/> was called.</summary>
+        public TextArea StartDictation()
+        {
+            GetDictation().Start();
+            return this;
+        }
+
+        /// <summary>Stops dictating; what was heard stays in the text area.</summary>
+        public TextArea StopDictation()
+        {
+            _dictation?.Stop();
+            return this;
+        }
+
+        /// <summary>The dictation of this field, made on first use so a field that never dictates carries none.</summary>
+        private DictationController GetDictation()
+        {
+            if (_dictation is null) _dictation = new DictationController(_container, InnerElement, () => Text, text => { if (_aiBadge is object) _aiBadge.AsUserEdit(() => Text = text); else Text = text; }, () => MaxLength, _dictationProvider);
+
+            _dictation.Provider = _dictationProvider;
+            return _dictation;
+        }
+
+        /// <inheritdoc />
+        public bool IsEditable => IsEnabled && !IsReadOnly;
+
+        /// <inheritdoc />
+        public bool CanDictate => Dictation.Resolve(_dictationProvider) is object;
+
+        void IDictationTarget.BeginDictation() => StartDictation();
+
+        void IDictationTarget.EndDictation() => StopDictation();
+
+        /// <summary>Sets focus to the text area.</summary>
+        public TextArea Focus()
+        {
+            DomObserver.WhenMounted(InnerElement, () =>
+            {
+                try
+                {
+                    InnerElement.scrollIntoViewIfNeeded();
+                }
+                catch
+                {
+                    InnerElement.scrollIntoView();
+                }
+
+                InnerElement.focus();
+            });
+            return this;
+        }
+
+        /// <summary>Returns an observable of the text.</summary>
+        public IObservable<string> AsObservable() => _observable;
+
+        /// <summary>
+        /// Programmatically updates the text area as part of a two-way binding (DOM input event is not raised).
+        /// </summary>
+        public void SetBoundValue(string value)
+        {
+            InnerElement.value = value;
+            _observable.Value  = value;
+        }
+
+        /// <summary>
+        /// Enables auto-resizing of the text area as the user types, based on the scrollHeight.
+        /// </summary>
+        /// <param name="allowShrink">If false, the text area will not shrink below its initial size.</param>
+        /// <param name="minHeight">If set, specifies a minimum pixel height for the text area.</param>
+        /// <param name="maxHeight">If set, specifies a maximum pixel height for the text area. Content will scroll if it exceeds this height.</param>
+        /// <returns>The current instance.</returns>
+        public TextArea AutoResize(bool allowShrink = true, int? minHeight = null, int? maxHeight = null)
+        {
+            // Opts the text area out of filling the container's height, since here the height is driven by the content
+            InnerElement.classList.add("tss-textarea-autoresize");
+
+            if (minHeight.HasValue)
+            {
+                InnerElement.style.minHeight = minHeight.Value + "px";
+            }
+
+            if (maxHeight.HasValue)
+            {
+                InnerElement.style.maxHeight = maxHeight.Value + "px";
+            }
+
+            void Fit()
+            {
+                InnerElement.style.height = "auto";
+                InnerElement.style.height = InnerElement.scrollHeight + "px";
+            }
+
+            void Resize() => ContentHeight.FitWhenRendered(InnerElement, Fit);
+
+            if (!allowShrink)
+            {
+                // Measured once the text area has a box: mounted inside a hidden container it would read a 0px floor.
+                DomObserver.WhenMounted(InnerElement, () => ContentHeight.FitWhenRendered(InnerElement, () =>
+                {
+                    var rect = (DOMRect)InnerElement.getBoundingClientRect();
+                    // Do not override user-provided minHeight if it is greater
+                    if (!minHeight.HasValue || rect.height > minHeight.Value)
+                    {
+                        InnerElement.style.minHeight = rect.height + "px";
+                    }
+                    Fit();
+                }));
+            }
+            else
+            {
+                DomObserver.WhenMounted(InnerElement, () => Resize());
+            }
+
+            OnInput((_, __) => Resize());
+
+            return this;
+        }
+    }
+}

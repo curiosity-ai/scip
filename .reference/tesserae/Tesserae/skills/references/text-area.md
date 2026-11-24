@@ -1,0 +1,66 @@
+---
+name: text-area
+description: A multi-line text input with placeholder, validation, read-only/disabled states, and optional auto-resize. Use when collecting multi-line text (comments, descriptions) in a Tesserae (C#/Transpose) app.
+---
+
+# TextArea
+
+A multi-line text input (`<textarea>`). Supports placeholder, max length,
+required/invalid validation states, read-only/disabled, and grow-to-fit
+auto-resize. Exposes its text as an observable.
+
+## Create
+
+`UI.TextArea(string text = "")` (i.e. `TextArea()` / `TextArea("initial")`)
+returns a `TextArea`. Bring factories into scope with `using static Tesserae.UI;`.
+
+## Key configuration
+
+- `.SetText(text)` / `.Text` / `.ClearText()` — content.
+- `.SetPlaceholder(text)` / `.Placeholder` — placeholder.
+- `.InitialValue(string html)` — a formatted initial value drawn over the field until the user first edits it (typing, paste, or `Text = …` from code). The field's own glyphs are invisible while it shows; if the field also holds text, the overlay steps aside on focus and returns on blur. Supports `<b>`/`<strong>`, `<i>`/`<em>`, `<br>` and colour (`<span style="color:crimson">`, `<font color="#0a7">`); other markup is reduced to its text. It is not the field's `Text`.
+- `.OnInput((s, e) => ...)` / `.OnChange((s, e) => ...)` — change handlers.
+- `.AsObservable()` — `IObservable<string>` of the text.
+- `.Disabled(bool = true)` / `.ReadOnly()` — input state.
+- `.Required()` / `.IsInvalid` / `.Error(msg)` — validation display. With `.Validation(...)` the message line is reserved from the start, so a message appearing never moves the fields below.
+- `.MaxLength` — character cap.
+- `.AI(bool value = true, bool strongEffect = false, bool badge = false, string editedText = null)` / `.IsAI` — AI tint and accent edge; with `badge: true` an `AI` badge in the top corner that becomes `editedText` (default `Edited`) once the user edits the text. `Text = …` / `SetText` re-baselines (the new text is the model's again). See `ai-variants.md`.
+- `.NoSpellCheck()` — disable browser spellcheck.
+- `.AutoResize(bool allowShrink = true, int? minHeight = null, int? maxHeight = null)`
+- `.WithDictation(DictationProvider provider = null)` — adds a microphone button in the corner, the same as the OmniBox's (`Config.DictationButton`): press to dictate after the text already in the field, press again to stop, the words stay. Words come from `provider`, else `Dictation.Provider`, else the browser's speech recognition; hidden when none exists. `.StartDictation()` / `.StopDictation()` / `.IsDictating` drive it from code. See `omni-box.md` ("Dictation"). Every TextArea is also an `IDictationTarget`, found by `DictationTargets` and dictated into with `BeginDictation()` with or without the button (`.DictationSource(provider)` sets its source without adding one): see `dictation-targets.md`.
+  — grow with content; clamp with min/max pixel heights.
+- `.Focus()` — scroll into view and focus.
+
+## Sizing
+
+A `TextArea` fills whatever height it is given, so the usual sizing helpers work:
+`.Height(200)` for a fixed height, and `.Grow()` / `.HS()` inside a `Stack` to take
+the leftover space.
+
+```csharp
+VStack().H(220).Children(
+    TextBlock("Fixed header"),
+    TextArea().Grow().WS()   // fills the rest of the 220px
+);
+```
+
+`.AutoResize(...)` is the opposite mode — the height follows the content — so don't
+combine it with `.Grow()` / `.Height(...)`; use `minHeight`/`maxHeight` instead.
+
+## Example
+
+```csharp
+using static Tesserae.UI;
+
+var component = VStack().Children(
+    Label("Description").SetContent(
+        TextArea().SetPlaceholder("Enter a description…").AutoResize(maxHeight: 150)),
+    Label("Notes").Required().SetContent(
+        TextArea().OnInput((s, e) => console.log(s.Text)))
+);
+```
+
+## Related
+
+- TextBox (single line) — `/tesserae/inputs/text-box`
+- Full docs & API: `/tesserae/inputs/text-area`

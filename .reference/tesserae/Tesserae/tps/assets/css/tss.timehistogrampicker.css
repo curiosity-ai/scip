@@ -1,0 +1,197 @@
+﻿.tss-time-histogram-picker {
+    --tss-time-histogram-picker-horizontal-inset: 8px;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 220px;
+    position: relative;
+    padding: 8px 0;
+    box-sizing: border-box;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.tss-time-histogram-picker-bars {
+    flex: 1 1 120px;
+    min-height: 0;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    padding: 8px var(--tss-time-histogram-picker-horizontal-inset) 4px;
+    border-bottom: 1px solid var(--tss-default-border-color);
+    box-sizing: border-box;
+}
+
+.tss-time-histogram-picker-bar {
+    flex: 1 1 0;
+    min-width: 2px;
+    border-radius: 3px 3px 0 0;
+    background: var(--tss-slider-color);
+    opacity: 0.65;
+    transition: background-color 80ms ease, opacity 80ms ease;
+}
+
+.tss-time-histogram-picker-bar.tss-selected {
+    background: var(--tss-primary-background-color);
+    opacity: 1;
+}
+
+.tss-time-histogram-picker-tooltip {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tss-time-histogram-picker-tooltip-range {
+    color: var(--tss-tooltip-foreground-color);
+    font-size: var(--tss-font-size-small);
+    white-space: nowrap;
+}
+
+.tss-time-histogram-picker-tooltip-count {
+    color: var(--tss-tooltip-foreground-color);
+    font-size: var(--tss-font-size-small);
+    white-space: nowrap;
+}
+
+.tss-time-histogram-picker-track {
+    position: relative;
+    flex: 0 0 auto;
+    height: 28px;
+    margin: 8px var(--tss-time-histogram-picker-horizontal-inset) 0;
+}
+
+.tss-time-histogram-picker-track::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 11px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--tss-slider-active-color);
+}
+
+.tss-time-histogram-picker-selection {
+    position: absolute;
+    top: 11px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--tss-primary-background-color);
+}
+
+.tss-time-histogram-picker-thumb {
+    position: absolute;
+    top: 2px;
+    width: 16px;
+    height: 24px;
+    margin-left: -8px;
+    border-radius: 10px;
+    background: var(--tss-default-background-color);
+    border: 2px solid var(--tss-primary-background-color);
+    box-sizing: border-box;
+    cursor: ew-resize;
+    z-index: 1;
+}
+
+/* Keyboard focus thickens the thumb's own rim from 2px to 4px (an inset line inside the border), so the mark
+   stays inside the thumb rather than outside the strip that holds it. */
+.tss-time-histogram-picker-thumb:focus {
+    outline: none;
+    border-color: var(--tss-primary-border-color);
+    box-shadow: inset 0 0 0 2px var(--tss-primary-border-color);
+}
+
+/* The range being dragged, drawn over the bars: a band between the two thumbs and a label above it.
+   Hidden unless a thumb is held; the component positions both in px. */
+.tss-time-histogram-picker-drag-band,
+.tss-time-histogram-picker-drag-label {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+}
+
+.tss-time-histogram-picker-dragging .tss-time-histogram-picker-drag-band,
+.tss-time-histogram-picker-dragging .tss-time-histogram-picker-drag-label {
+    display: block;
+}
+
+.tss-time-histogram-picker-drag-band {
+    box-sizing: border-box;
+    border-left: 1px dashed var(--tss-primary-background-color);
+    border-right: 1px dashed var(--tss-primary-background-color);
+    background: color-mix(in srgb, var(--tss-primary-background-color) 8%, transparent);
+}
+
+.tss-time-histogram-picker-dragging .tss-time-histogram-picker-drag-label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    z-index: 2;
+    padding: 4px 10px;
+    background-color: var(--tss-tooltip-background-color);
+    color: var(--tss-tooltip-foreground-color);
+    font-size: var(--tss-font-size-small);
+    line-height: 16px;
+    border-radius: var(--tss-border-radius-md, 4px);
+    box-shadow: var(--tss-box-shadow);
+    white-space: nowrap;
+}
+
+.tss-time-histogram-picker-drag-label-count {
+    font-weight: var(--tss-font-weight-semibold, 600);
+    font-variant-numeric: tabular-nums;
+}
+
+.tss-time-histogram-picker-axis {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    line-height: 16px;
+    padding-top: 2px;
+}
+
+.tss-time-histogram-picker-axis-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tss-time-histogram-picker-empty {
+    display: none;
+    flex: 1 1 120px;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    color: var(--tss-secondary-foreground-color);
+    border: 1px dashed var(--tss-default-border-color);
+    border-radius: 4px;
+}
+
+.tss-time-histogram-picker-empty-state .tss-time-histogram-picker-bars,
+.tss-time-histogram-picker-empty-state .tss-time-histogram-picker-track,
+.tss-time-histogram-picker-empty-state .tss-time-histogram-picker-axis {
+    display: none;
+}
+
+.tss-time-histogram-picker-empty-state .tss-time-histogram-picker-empty {
+    display: flex;
+}
+
+.tss-time-histogram-picker.tss-disabled {
+    opacity: 0.65;
+}
+
+.tss-time-histogram-picker.tss-disabled .tss-time-histogram-picker-thumb {
+    cursor: default;
+    border-color: var(--tss-disabled-foreground-color);
+}
+
+.tss-time-histogram-picker.tss-disabled .tss-time-histogram-picker-selection,
+.tss-time-histogram-picker.tss-disabled .tss-time-histogram-picker-bar.tss-selected {
+    background: var(--tss-disabled-foreground-color);
+}

@@ -1,0 +1,4 @@
+The lib.*.d.ts files in this directory are copied unmodified from the `typescript` npm package (version 6.0.3),
+Copyright (c) Microsoft Corporation, licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+They model the built-in global declarations (the equivalent of the compiler's default library) so that references to
+`Array`, `Promise`, `PropertyDescriptor`, DOM types, ... resolve to the same symbols the TypeScript checker produces.
