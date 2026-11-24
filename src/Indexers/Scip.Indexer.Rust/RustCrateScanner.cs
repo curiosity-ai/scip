@@ -1,0 +1,1262 @@
+using System.Text;
+
+namespace Scip.Indexer.Rust;
+
+using Kind = SymbolInformation.Types.Kind;
+using Suffix = SymbolDescriptor.Types.Suffix;
+
+/// <summary>One emitted occurrence (byte offsets into the file).</summary>
+public sealed record OccurrenceRecord(int Start, int End, string Symbol, bool IsDefinition, (int Start, int End)? Enclosing);
+
+/// <summary>Everything the native scanner learned about one source file.</summary>
+public sealed class SourceFileResult(string path, byte[] bytes, List<RustToken> tokens)
+{
+    public string Path { get; } = path;
+
+    public byte[] Bytes { get; } = bytes;
+
+    public List<RustToken> Tokens { get; } = tokens;
+
+    public List<OccurrenceRecord> Occurrences { get; } = [];
+
+    public List<SymbolInformation> Symbols { get; } = [];
+
+    /// <summary>Indices of tokens already turned into occurrences.</summary>
+    public HashSet<int> Consumed { get; } = [];
+
+    public int LocalCount { get; set; }
+}
+
+internal enum AssocKind { None, Trait, Impl }
+
+internal sealed record ScanContext(
+    MonikerDescriptor[] Prefix,
+    MonikerDescriptor[] ModulePrefix,
+    string Dir,
+    AssocKind Assoc);
+
+/// <summary>
+/// Lightweight native Rust "analyzer": a token-level item scanner that walks the module tree of one cargo target and
+/// produces definitions and references using the rust-analyzer SCIP symbol scheme. It does <b>not</b> do name
+/// resolution or type inference; see README.md for exactly what is and is not covered.
+/// </summary>
+public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, ISet<string> seenFiles)
+{
+    private readonly Dictionary<string, List<(string Symbol, bool IsMacro)>> _itemsByName = [];
+
+    public List<SourceFileResult> Files { get; } = [];
+
+    public void Scan()
+    {
+        var root = Path.GetFullPath(target.SourcePath);
+        var prefix = RustMonikers.CrateDescriptors(target.Kind, target.Name).ToArray();
+        var ctx = new ScanContext(prefix, prefix, Path.GetDirectoryName(root)!, AssocKind.None);
+        ScanFile(root, ctx, rootModule: true);
+        AddReferences();
+    }
+
+    private void ScanFile(string path, ScanContext moduleCtx, bool rootModule)
+    {
+        if (!seenFiles.Add(path) || !File.Exists(path))
+        {
+            return;
+        }
+
+        var bytes = File.ReadAllBytes(path);
+        var file = new SourceFileResult(path, bytes, RustLexer.Lex(bytes));
+        Files.Add(file);
+        new FileScanner(this, file, rootModule).ScanModuleFile(moduleCtx);
+    }
+
+    private static readonly HashSet<string> Keywords =
+    [
+        "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn",
+        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self",
+        "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while",
+    ];
+
+    private void AddReferences()
+    {
+        foreach (var file in Files)
+        {
+            var t = file.Tokens;
+            for (var i = 0; i < t.Count; i++)
+            {
+                if (t[i].Kind != RustTokenKind.Ident || file.Consumed.Contains(i))
+                {
+                    continue;
+                }
+
+                var name = Utf8(file.Bytes, t[i]);
+                if (Keywords.Contains(name) || !_itemsByName.TryGetValue(name, out var defs) || defs.Count != 1)
+                {
+                    continue;
+                }
+
+                var prev = i > 0 ? Utf8(file.Bytes, t[i - 1]) : "";
+                var next = i + 1 < t.Count ? Utf8(file.Bytes, t[i + 1]) : "";
+                if (prev == "." || (next == ":" && prev is "{" or "," or "(") || (next == "!") != defs[0].IsMacro)
+                {
+                    continue;
+                }
+
+                file.Occurrences.Add(new(t[i].Start, t[i].End, defs[0].Symbol, false, null));
+                file.Consumed.Add(i);
+            }
+        }
+    }
+
+    internal static string Utf8(byte[] bytes, RustToken t) => Encoding.UTF8.GetString(bytes, t.Start, t.End - t.Start);
+
+    private sealed class FileScanner(RustCrateScanner owner, SourceFileResult file, bool rootModule)
+    {
+        private readonly List<RustToken> _t = file.Tokens;
+        private readonly byte[] _b = file.Bytes;
+        private int _i;
+        private readonly List<string> _moduleDocs = [];
+
+        private string Text(int i) => i >= 0 && i < _t.Count ? Utf8(_b, _t[i]) : "";
+
+        private bool Is(int i, string s) => i >= 0 && i < _t.Count && _t[i].Kind is RustTokenKind.Ident or RustTokenKind.Punct && Text(i) == s;
+
+        private bool IsKind(int i, RustTokenKind k) => i >= 0 && i < _t.Count && _t[i].Kind == k;
+
+        private static bool IsOpen(string s) => s is "(" or "[" or "{";
+
+        private static bool IsClose(string s) => s is ")" or "]" or "}";
+
+        /// <summary>Index just past the bracket matching the opener at <paramref name="i"/>.</summary>
+        private int SkipBalanced(int i)
+        {
+            var depth = 0;
+            for (; i < _t.Count; i++)
+            {
+                if (_t[i].Kind != RustTokenKind.Punct)
+                {
+                    continue;
+                }
+
+                var s = Text(i);
+                if (IsOpen(s))
+                {
+                    depth++;
+                }
+                else if (IsClose(s) && --depth == 0)
+                {
+                    return i + 1;
+                }
+            }
+
+            return _t.Count;
+        }
+
+        /// <summary>Skips <c>&lt;...&gt;</c> at <paramref name="i"/> (if present).</summary>
+        private int SkipGenerics(int i)
+        {
+            if (!Is(i, "<"))
+            {
+                return i;
+            }
+
+            var depth = 0;
+            while (i < _t.Count)
+            {
+                var s = _t[i].Kind == RustTokenKind.Punct ? Text(i) : "";
+                if (s == "<")
+                {
+                    depth++;
+                }
+                else if (s == ">" && --depth == 0)
+                {
+                    return i + 1;
+                }
+                else if (IsOpen(s))
+                {
+                    i = SkipBalanced(i);
+                    continue;
+                }
+
+                i++;
+            }
+
+            return i;
+        }
+
+        /// <summary>Advances to the next top-level <c>{</c> or <c>;</c> (not consumed).</summary>
+        private int FindHeaderEnd(int i)
+        {
+            while (i < _t.Count && !Is(i, "{") && !Is(i, ";"))
+            {
+                i = _t[i].Kind == RustTokenKind.Punct && IsOpen(Text(i)) ? SkipBalanced(i) : i + 1;
+            }
+
+            return i;
+        }
+
+        private string TypeText(int from, int to)
+        {
+            var sb = new StringBuilder();
+            for (var i = from; i < to; i++)
+            {
+                var s = Text(i);
+                if (sb.Length > 0 && IsWordChar(sb[^1]) && s.Length > 0 && IsWordChar(s[0]))
+                {
+                    sb.Append(' ');
+                }
+
+                sb.Append(s);
+            }
+
+            return sb.ToString();
+        }
+
+        private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '\'';
+
+        private static string DocText(string raw)
+        {
+            if (raw.StartsWith("///", StringComparison.Ordinal) || raw.StartsWith("//!", StringComparison.Ordinal))
+            {
+                var s = raw[3..];
+                return s.StartsWith(' ') ? s[1..] : s;
+            }
+
+            // /** ... */ or /*! ... */
+            var body = raw[3..];
+            if (body.EndsWith("*/", StringComparison.Ordinal))
+            {
+                body = body[..^2];
+            }
+
+            return string.Join('\n', body.Split('\n').Select(l => l.Trim().TrimStart('*').Trim())).Trim();
+        }
+
+        // ---- symbol helpers ------------------------------------------------------------------------------
+
+        internal SourceFileResult Out => file;
+
+        private string FormatSymbol(IReadOnlyList<MonikerDescriptor> descriptors) =>
+            RustMonikers.Format(new Moniker(owner.PackageInfo, descriptors));
+
+        private sealed class Def(string symbol, MonikerDescriptor[] descriptors)
+        {
+            public string Symbol { get; } = symbol;
+
+            public MonikerDescriptor[] Descriptors { get; } = descriptors;
+        }
+
+        private Def BeginDef(ScanContext ctx, string name, Suffix suffix) =>
+            Descriptor(ctx.Prefix, new MonikerDescriptor(name, suffix));
+
+        private Def Descriptor(MonikerDescriptor[] prefix, params MonikerDescriptor[] more)
+        {
+            MonikerDescriptor[] all = [.. prefix, .. more];
+            return new Def(FormatSymbol(all), all);
+        }
+
+        private void EndDef(Def d, int nameTok, Kind kind, int startTok, int endTokExclusive, List<string> docs, string? signature, string displayName)
+        {
+            var nt = _t[nameTok];
+            (int, int)? enclosing = (_t[startTok].Start, _t[Math.Max(startTok, endTokExclusive - 1)].End);
+            file.Occurrences.Add(new(nt.Start, nt.End, d.Symbol, true, enclosing));
+            file.Consumed.Add(nameTok);
+            var info = new SymbolInformation { Symbol = d.Symbol, Kind = kind, DisplayName = displayName };
+            if (docs.Count > 0)
+            {
+                info.Documentation.Add(string.Join('\n', docs));
+            }
+
+            if (signature is not null)
+            {
+                info.SignatureDocumentation = new Signature
+                {
+                    Language = "rust",
+                    Text = signature,
+                };
+            }
+
+            file.Symbols.Add(info);
+        }
+
+        private void RegisterItem(string name, string symbol, bool isMacro)
+        {
+            if (!owner._itemsByName.TryGetValue(name, out var list))
+            {
+                owner._itemsByName[name] = list = [];
+            }
+
+            list.Add((symbol, isMacro));
+        }
+
+        // ---- module files --------------------------------------------------------------------------------
+
+        public void ScanModuleFile(ScanContext moduleCtx)
+        {
+            // The module defined by a file has the whole file as its range.
+            var d = Descriptor(moduleCtx.Prefix);
+            var end = _b.Length;
+            var docs = new List<string>();
+            _i = 0;
+            ParseItems(moduleCtx, _t.Count, docs);
+            file.Occurrences.Add(new(0, end, d.Symbol, true, null));
+            var info = new SymbolInformation
+            {
+                Symbol = d.Symbol,
+                Kind = Kind.Module,
+                DisplayName = moduleCtx.Prefix.Length > 0 ? moduleCtx.Prefix[^1].Name : "",
+            };
+            if (_moduleDocs.Count > 0)
+            {
+                info.Documentation.Add(string.Join('\n', _moduleDocs));
+            }
+
+            file.Symbols.Add(info);
+            if (!rootModule)
+            {
+                owner.RegisterItemExternal(info.DisplayName, d.Symbol);
+            }
+        }
+
+        // ---- items ---------------------------------------------------------------------------------------
+
+        private void ParseItems(ScanContext ctx, int end, List<string> _)
+        {
+            while (_i < end)
+            {
+                var before = _i;
+                ParseItem(ctx);
+                if (_i <= before)
+                {
+                    _i = before + 1;
+                }
+            }
+        }
+
+        private void ParseItem(ScanContext ctx)
+        {
+            var start = _i;
+            List<string> docs = [];
+            string? pathAttr = null;
+            while (_i < _t.Count)
+            {
+                if (IsKind(_i, RustTokenKind.DocOuter))
+                {
+                    docs.Add(DocText(Text(_i)));
+                    _i++;
+                }
+                else if (IsKind(_i, RustTokenKind.DocInner))
+                {
+                    _moduleDocs.Add(DocText(Text(_i)));
+                    _i++;
+                    start = _i;
+                }
+                else if (Is(_i, "#"))
+                {
+                    var j = _i + 1;
+                    if (Is(j, "!"))
+                    {
+                        j++;
+                    }
+
+                    if (!Is(j, "["))
+                    {
+                        break;
+                    }
+
+                    var close = SkipBalanced(j);
+                    if (Is(j + 1, "path") && Is(j + 2, "=") && IsKind(j + 3, RustTokenKind.Str))
+                    {
+                        pathAttr = Text(j + 3).Trim('"');
+                    }
+
+                    _i = close;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (_i >= _t.Count)
+            {
+                return;
+            }
+
+            var itemStart = Math.Min(start, _t.Count - 1);
+            var sigStart = _i;
+            if (Is(_i, "pub"))
+            {
+                _i++;
+                if (Is(_i, "("))
+                {
+                    _i = SkipBalanced(_i);
+                }
+            }
+
+            // qualifiers
+            while (true)
+            {
+                if (Is(_i, "default") || Is(_i, "safe") || (Is(_i, "const") && (Is(_i + 1, "fn") || Is(_i + 1, "unsafe") || Is(_i + 1, "async") || Is(_i + 1, "extern")))
+                    || (Is(_i, "unsafe") && (Is(_i + 1, "fn") || Is(_i + 1, "impl") || Is(_i + 1, "trait") || Is(_i + 1, "extern") || Is(_i + 1, "auto")))
+                    || (Is(_i, "async") && (Is(_i + 1, "fn") || Is(_i + 1, "unsafe"))))
+                {
+                    _i++;
+                }
+                else if (Is(_i, "extern") && IsKind(_i + 1, RustTokenKind.Str) && (Is(_i + 2, "fn") || Is(_i + 2, "unsafe")))
+                {
+                    _i += 2;
+                }
+                else if (Is(_i, "auto") && Is(_i + 1, "trait"))
+                {
+                    _i++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            var kw = _t[_i].Kind == RustTokenKind.Ident ? Text(_i) : "";
+            switch (kw)
+            {
+                case "mod": ParseMod(ctx, itemStart, sigStart, docs, pathAttr); break;
+                case "fn": ParseFn(ctx, itemStart, sigStart, docs); break;
+                case "struct" or "union" when kw == "struct" || IsKind(_i + 1, RustTokenKind.Ident):
+                    ParseStruct(ctx, itemStart, sigStart, docs, kw == "union" ? Kind.Union : Kind.Struct);
+                    break;
+                case "enum": ParseEnum(ctx, itemStart, sigStart, docs); break;
+                case "trait": ParseTrait(ctx, itemStart, sigStart, docs); break;
+                case "impl": ParseImpl(ctx, itemStart, sigStart, docs); break;
+                case "const" or "static": ParseConstStatic(ctx, itemStart, sigStart, docs, kw); break;
+                case "type": ParseTypeAlias(ctx, itemStart, sigStart, docs); break;
+                case "macro_rules" when Is(_i + 1, "!"): ParseMacroRules(ctx, itemStart, docs); break;
+                case "extern" when Is(_i + 1, "crate") || Is(_i + 1, "\"") || IsKind(_i + 1, RustTokenKind.Str) && Is(_i + 2, "{"):
+                    ParseExtern(ctx);
+                    break;
+                case "use": SkipToSemicolon(); break;
+                default:
+                    if (_t[_i].Kind == RustTokenKind.Punct && IsOpen(Text(_i)))
+                    {
+                        _i = SkipBalanced(_i);
+                    }
+                    else
+                    {
+                        _i++;
+                    }
+
+                    break;
+            }
+        }
+
+        private void SkipToSemicolon()
+        {
+            while (_i < _t.Count && !Is(_i, ";"))
+            {
+                _i = _t[_i].Kind == RustTokenKind.Punct && IsOpen(Text(_i)) ? SkipBalanced(_i) : _i + 1;
+            }
+
+            _i++;
+        }
+
+        private void ParseExtern(ScanContext ctx)
+        {
+            // `extern crate x;` or `extern "C" { ... }` (items inside belong to the enclosing module)
+            if (Is(_i + 1, "crate"))
+            {
+                SkipToSemicolon();
+                return;
+            }
+
+            _i = FindHeaderEnd(_i);
+            if (Is(_i, "{"))
+            {
+                var end = SkipBalanced(_i);
+                _i++;
+                ParseItems(ctx, end - 1, []);
+                _i = end;
+            }
+        }
+
+        private void ParseMod(ScanContext ctx, int itemStart, int sigStart, List<string> docs, string? pathAttr)
+        {
+            var nameTok = _i + 1;
+            if (!IsKind(nameTok, RustTokenKind.Ident))
+            {
+                _i++;
+                return;
+            }
+
+            var name = Text(nameTok);
+            var def = BeginDef(ctx, name, Suffix.Namespace);
+            _i = nameTok + 1;
+            if (Is(_i, ";"))
+            {
+                _i++;
+                var fileDir = Path.GetDirectoryName(file.Path)!;
+                var dir = ctx.Dir;
+                string[] candidates = pathAttr is not null
+                    ? [Path.GetFullPath(Path.Combine(fileDir, pathAttr))]
+                    : [Path.Combine(dir, name + ".rs"), Path.Combine(dir, name, "mod.rs")];
+                var found = candidates.FirstOrDefault(File.Exists);
+                if (found is null)
+                {
+                    return;
+                }
+
+                file.Occurrences.Add(new(_t[nameTok].Start, _t[nameTok].End, def.Symbol, false, null));
+                file.Consumed.Add(nameTok);
+                var stem = Path.GetFileNameWithoutExtension(found);
+                var childDir = stem == "mod" ? Path.GetDirectoryName(found)! : Path.Combine(Path.GetDirectoryName(found)!, stem);
+                var childCtx = new ScanContext(def.Descriptors, def.Descriptors, childDir, AssocKind.None);
+                owner.ScanFile(Path.GetFullPath(found), childCtx, rootModule: false);
+                return;
+            }
+
+            if (!Is(_i, "{"))
+            {
+                return;
+            }
+
+            var close = SkipBalanced(_i);
+            var inner = new ScanContext(def.Descriptors, def.Descriptors, Path.Combine(ctx.Dir, name), AssocKind.None);
+            _i++;
+            ParseItems(inner, close - 1, []);
+            _i = close;
+            EndDef(def, nameTok, Kind.Module, itemStart, _i, docs, SigText(sigStart, nameTok + 1), name);
+            RegisterItem(name, def.Symbol, false);
+        }
+
+        private string SigText(int from, int to) => TypeText(from, to);
+
+        private void ParseFn(ScanContext ctx, int itemStart, int sigStart, List<string> docs)
+        {
+            var nameTok = _i + 1;
+            if (!IsKind(nameTok, RustTokenKind.Ident))
+            {
+                _i++;
+                return;
+            }
+
+            var name = Text(nameTok);
+            var def = BeginDef(ctx, name, Suffix.Method);
+            _i = SkipGenerics(nameTok + 1);
+            var paramsOpen = _i;
+            var paramsEnd = Is(paramsOpen, "(") ? SkipBalanced(paramsOpen) : paramsOpen;
+            _i = FindHeaderEnd(paramsEnd);
+            var headerEnd = _i;
+            var hasBody = Is(headerEnd, "{");
+            var hasSelf = false;
+            for (var k = paramsOpen + 1; k < paramsEnd - 1; k++)
+            {
+                if (Is(k, ":") || Is(k, ","))
+                {
+                    break;
+                }
+
+                hasSelf |= Is(k, "self");
+            }
+
+            var kind = ctx.Assoc == AssocKind.None
+                ? Kind.Function
+                : hasSelf ? (hasBody || ctx.Assoc == AssocKind.Impl ? Kind.Method : Kind.TraitMethod) : Kind.StaticMethod;
+
+            List<(string Name, string Symbol)> scope = [];
+            if (Is(paramsOpen, "("))
+            {
+                DeclareParameters(paramsOpen, paramsEnd, def.Symbol, scope);
+            }
+
+            if (hasBody)
+            {
+                var bodyEnd = SkipBalanced(headerEnd);
+                new BodyScanner(this, def.Symbol, ctx.ModulePrefix, ctx.Dir, scope).Run(headerEnd, bodyEnd);
+                _i = bodyEnd;
+            }
+            else
+            {
+                _i = Math.Min(_i + 1, _t.Count);
+            }
+
+            EndDef(def, nameTok, kind, itemStart, _i, docs, SigText(sigStart, headerEnd), name);
+            if (ctx.Assoc == AssocKind.None)
+            {
+                RegisterItem(name, def.Symbol, false);
+            }
+        }
+
+        private void DeclareParameters(int open, int end, string enclosing, List<(string Name, string Symbol)> scope)
+        {
+            var partStart = open + 1;
+            var depth = 0;
+            for (var k = open + 1; k <= end - 1; k++)
+            {
+                var s = _t[k].Kind == RustTokenKind.Punct ? Text(k) : "";
+                if (IsOpen(s) || s == "<")
+                {
+                    depth++;
+                }
+                else if (IsClose(s) || s == ">")
+                {
+                    depth--;
+                }
+
+                if (k == end - 1 || (s == "," && depth == 0))
+                {
+                    DeclareParam(partStart, k, enclosing, scope);
+                    partStart = k + 1;
+                }
+            }
+        }
+
+        private void DeclareParam(int from, int to, string enclosing, List<(string Name, string Symbol)> scope)
+        {
+            var colon = -1;
+            var depth = 0;
+            for (var k = from; k < to; k++)
+            {
+                var s = _t[k].Kind == RustTokenKind.Punct ? Text(k) : "";
+                if (IsOpen(s))
+                {
+                    depth++;
+                }
+                else if (IsClose(s))
+                {
+                    depth--;
+                }
+                else if (s == ":" && depth == 0)
+                {
+                    colon = k;
+                    break;
+                }
+            }
+
+            var patEnd = colon < 0 ? to : colon;
+            for (var k = from; k < patEnd; k++)
+            {
+                if (Is(k, "self"))
+                {
+                    scope.Add(("self", DeclareLocal(k, "self", Kind.SelfParameter, enclosing)));
+                    return;
+                }
+            }
+
+            foreach (var k in ExtractBindings(from, patEnd))
+            {
+                var n = Text(k);
+                scope.Add((n, DeclareLocal(k, n, Kind.Parameter, enclosing)));
+            }
+        }
+
+        private string DeclareLocal(int tok, string name, Kind kind, string enclosing)
+        {
+            var symbol = RustMonikers.LocalSymbol(file.LocalCount++);
+            file.Occurrences.Add(new(_t[tok].Start, _t[tok].End, symbol, true, null));
+            file.Consumed.Add(tok);
+            file.Symbols.Add(new SymbolInformation { Symbol = symbol, Kind = kind, DisplayName = name, EnclosingSymbol = enclosing });
+            return symbol;
+        }
+
+        private static readonly HashSet<string> PatternKeywords = ["mut", "ref", "box", "true", "false", "in", "if", "self", "_"];
+
+        /// <summary>Token indices of identifiers in a pattern that introduce bindings.</summary>
+        private List<int> ExtractBindings(int from, int to)
+        {
+            List<int> result = [];
+            var braces = 0;
+            for (var k = from; k < to; k++)
+            {
+                if (Is(k, "{"))
+                {
+                    braces++;
+                }
+                else if (Is(k, "}"))
+                {
+                    braces--;
+                }
+
+                if (_t[k].Kind != RustTokenKind.Ident)
+                {
+                    continue;
+                }
+
+                var s = Text(k);
+                if (PatternKeywords.Contains(s) || !(char.IsLower(s[0]) || (s[0] == '_' && s.Length > 1)) || Is(k - 1, "::")
+                    || Is(k + 1, "::") || Is(k + 1, "(") || Is(k + 1, "{") || Is(k + 1, "!") || (braces > 0 && Is(k + 1, ":")))
+                {
+                    continue;
+                }
+
+                result.Add(k);
+            }
+
+            return result;
+        }
+
+        private void ParseStruct(ScanContext ctx, int itemStart, int sigStart, List<string> docs, Kind kind)
+        {
+            var nameTok = _i + 1;
+            if (!IsKind(nameTok, RustTokenKind.Ident))
+            {
+                _i++;
+                return;
+            }
+
+            var name = Text(nameTok);
+            var def = BeginDef(ctx, name, Suffix.Type);
+            _i = SkipGenerics(nameTok + 1);
+            var headerEnd = _i;
+            if (Is(_i, "("))
+            {
+                _i = SkipBalanced(_i);
+                headerEnd = nameTok + 1;
+                SkipToSemicolon();
+            }
+            else
+            {
+                _i = FindHeaderEnd(_i);
+                if (Is(_i, "{"))
+                {
+                    ParseNamedFields(def, _i);
+                }
+                else
+                {
+                    _i++;
+                }
+            }
+
+            EndDef(def, nameTok, kind, itemStart, _i, docs, SigText(sigStart, headerEnd), name);
+            RegisterItem(name, def.Symbol, false);
+        }
+
+        /// <summary>Parses <c>{ a: T, b: U }</c> at <paramref name="open"/>; defines fields under <paramref name="parent"/>.</summary>
+        private void ParseNamedFields(Def parent, int open)
+        {
+            var close = SkipBalanced(open);
+            var k = open + 1;
+            while (k < close - 1)
+            {
+                var start = k;
+                List<string> docs = [];
+                while (k < close - 1 && (IsKind(k, RustTokenKind.DocOuter) || Is(k, "#")))
+                {
+                    if (IsKind(k, RustTokenKind.DocOuter))
+                    {
+                        docs.Add(DocText(Text(k)));
+                        k++;
+                    }
+                    else
+                    {
+                        k = Is(k + 1, "[") ? SkipBalanced(k + 1) : k + 1;
+                    }
+                }
+
+                var sigStart = k;
+                if (Is(k, "pub"))
+                {
+                    k++;
+                    if (Is(k, "("))
+                    {
+                        k = SkipBalanced(k);
+                    }
+                }
+
+                var nameTok = k;
+                var typeStart = k + 2;
+                var angle = 0;
+                var e = typeStart;
+                for (; e < close - 1; e++)
+                {
+                    var s = _t[e].Kind == RustTokenKind.Punct ? Text(e) : "";
+                    if (IsOpen(s))
+                    {
+                        e = SkipBalanced(e) - 1;
+                    }
+                    else if (s == "<")
+                    {
+                        angle++;
+                    }
+                    else if (s == ">")
+                    {
+                        angle--;
+                    }
+                    else if (s == "," && angle <= 0)
+                    {
+                        break;
+                    }
+                }
+
+                if (IsKind(nameTok, RustTokenKind.Ident) && Is(nameTok + 1, ":"))
+                {
+                    var name = Text(nameTok);
+                    var fd = Descriptor(parent.Descriptors, new MonikerDescriptor(name, Suffix.Term));
+                    EndDef(fd, nameTok, Kind.Field, start, e, docs, SigText(sigStart, e), name);
+                }
+
+                k = e + 1;
+            }
+
+            _i = close;
+        }
+
+        private void ParseEnum(ScanContext ctx, int itemStart, int sigStart, List<string> docs)
+        {
+            var nameTok = _i + 1;
+            if (!IsKind(nameTok, RustTokenKind.Ident))
+            {
+                _i++;
+                return;
+            }
+
+            var name = Text(nameTok);
+            var def = BeginDef(ctx, name, Suffix.Type);
+            _i = FindHeaderEnd(SkipGenerics(nameTok + 1));
+            var headerEnd = _i;
+            if (Is(_i, "{"))
+            {
+                var close = SkipBalanced(_i);
+                var k = _i + 1;
+                while (k < close - 1)
+                {
+                    var start = k;
+                    List<string> vdocs = [];
+                    while (k < close - 1 && (IsKind(k, RustTokenKind.DocOuter) || Is(k, "#")))
+                    {
+                        if (IsKind(k, RustTokenKind.DocOuter))
+                        {
+                            vdocs.Add(DocText(Text(k)));
+                            k++;
+                        }
+                        else
+                        {
+                            k = Is(k + 1, "[") ? SkipBalanced(k + 1) : k + 1;
+                        }
+                    }
+
+                    var vTok = k;
+                    if (!IsKind(vTok, RustTokenKind.Ident))
+                    {
+                        k++;
+                        continue;
+                    }
+
+                    var vname = Text(vTok);
+                    var vd = Descriptor(def.Descriptors, new MonikerDescriptor(vname, Suffix.Type));
+                    k++;
+                    if (Is(k, "("))
+                    {
+                        k = SkipBalanced(k);
+                    }
+                    else if (Is(k, "{"))
+                    {
+                        var fieldsOpen = k;
+                        ParseNamedFields(vd, fieldsOpen);
+                        k = SkipBalanced(fieldsOpen);
+                    }
+
+                    var vEnd = k;
+                    while (k < close - 1 && !Is(k, ","))
+                    {
+                        k = _t[k].Kind == RustTokenKind.Punct && IsOpen(Text(k)) ? SkipBalanced(k) : k + 1;
+                    }
+
+                    EndDef(vd, vTok, Kind.EnumMember, start, Math.Max(vEnd, vTok + 1), vdocs, null, vname);
+                    k++;
+                }
+
+                _i = close;
+            }
+            else
+            {
+                _i++;
+            }
+
+            EndDef(def, nameTok, Kind.Enum, itemStart, _i, docs, SigText(sigStart, headerEnd), name);
+            RegisterItem(name, def.Symbol, false);
+        }
+
+        private void ParseTrait(ScanContext ctx, int itemStart, int sigStart, List<string> docs)
+        {
+            var nameTok = _i + 1;
+            if (!IsKind(nameTok, RustTokenKind.Ident))
+            {
+                _i++;
+                return;
+            }
+
+            var name = Text(nameTok);
+            var def = BeginDef(ctx, name, Suffix.Type);
+            _i = FindHeaderEnd(SkipGenerics(nameTok + 1));
+            var headerEnd = _i;
+            if (Is(_i, "{"))
+            {
+                var close = SkipBalanced(_i);
+                var inner = new ScanContext(def.Descriptors, ctx.ModulePrefix, ctx.Dir, AssocKind.Trait);
+                _i++;
+                ParseItems(inner, close - 1, []);
+                _i = close;
+            }
+            else
+            {
+                _i++;
+            }
+
+            EndDef(def, nameTok, Kind.Trait, itemStart, _i, docs, SigText(sigStart, headerEnd), name);
+            RegisterItem(name, def.Symbol, false);
+        }
+
+        private void ParseImpl(ScanContext ctx, int itemStart, int sigStart, List<string> docs)
+        {
+            var implTok = _i;
+            var k = SkipGenerics(_i + 1);
+            if (Is(k, "!"))
+            {
+                k++;
+            }
+
+            // header up to `{` or `where`
+            var headerStart = k;
+            var angle = 0;
+            var forTok = -1;
+            while (k < _t.Count && !Is(k, "{") && !Is(k, "where") && !Is(k, ";"))
+            {
+                if (Is(k, "<"))
+                {
+                    angle++;
+                }
+                else if (Is(k, ">"))
+                {
+                    angle--;
+                }
+                else if (Is(k, "for") && angle == 0 && forTok < 0)
+                {
+                    forTok = k;
+                }
+                else if (_t[k].Kind == RustTokenKind.Punct && IsOpen(Text(k)))
+                {
+                    k = SkipBalanced(k);
+                    continue;
+                }
+
+                k++;
+            }
+
+            var headerEnd = k;
+            var selfText = forTok >= 0 ? TypeText(forTok + 1, headerEnd) : TypeText(headerStart, headerEnd);
+            var traitText = forTok >= 0 ? TypeText(headerStart, forTok) : null;
+            List<MonikerDescriptor> more = [new("impl", Suffix.Type), new(selfText, Suffix.TypeParameter)];
+            if (traitText is not null)
+            {
+                more.Add(new(traitText, Suffix.TypeParameter));
+            }
+
+            var def = Descriptor(ctx.Prefix, [.. more]);
+            _i = FindHeaderEnd(headerEnd);
+            if (Is(_i, "{"))
+            {
+                var close = SkipBalanced(_i);
+                var inner = new ScanContext(def.Descriptors, ctx.ModulePrefix, ctx.Dir, AssocKind.Impl);
+                _i++;
+                ParseItems(inner, close - 1, []);
+                _i = close;
+            }
+            else
+            {
+                _i++;
+            }
+
+            EndDef(def, implTok, Kind.TypeAlias, itemStart, _i, docs, SigText(sigStart, headerEnd), selfText);
+        }
+
+        private void ParseConstStatic(ScanContext ctx, int itemStart, int sigStart, List<string> docs, string kw)
+        {
+            var k = _i + 1;
+            if (kw == "static" && Is(k, "mut"))
+            {
+                k++;
+            }
+
+            if (!IsKind(k, RustTokenKind.Ident) || Is(k, "_"))
+            {
+                SkipToSemicolon();
+                return;
+            }
+
+            var name = Text(k);
+            var def = BeginDef(ctx, name, Suffix.Term);
+            var sigEnd = k + 1;
+            // signature runs up to the `=`
+            var e = k + 1;
+            while (e < _t.Count && !Is(e, "=") && !Is(e, ";"))
+            {
+                e = _t[e].Kind == RustTokenKind.Punct && IsOpen(Text(e)) ? SkipBalanced(e) : e + 1;
+            }
+
+            sigEnd = e;
+            _i = e;
+            SkipToSemicolon();
+            EndDef(def, k, kw == "const" ? Kind.Constant : Kind.StaticVariable, itemStart, _i, docs, SigText(sigStart, sigEnd), name);
+            if (ctx.Assoc == AssocKind.None)
+            {
+                RegisterItem(name, def.Symbol, false);
+            }
+        }
+
+        private void ParseTypeAlias(ScanContext ctx, int itemStart, int sigStart, List<string> docs)
+        {
+            var nameTok = _i + 1;
+            if (!IsKind(nameTok, RustTokenKind.Ident))
+            {
+                _i++;
+                return;
+            }
+
+            var name = Text(nameTok);
+            var def = BeginDef(ctx, name, Suffix.Type);
+            var e = SkipGenerics(nameTok + 1);
+            var sigEnd = e;
+            _i = e;
+            SkipToSemicolon();
+            EndDef(def, nameTok, ctx.Assoc == AssocKind.None ? Kind.TypeAlias : Kind.AssociatedType, itemStart, _i, docs, SigText(sigStart, sigEnd), name);
+            if (ctx.Assoc == AssocKind.None)
+            {
+                RegisterItem(name, def.Symbol, false);
+            }
+        }
+
+        private void ParseMacroRules(ScanContext ctx, int itemStart, List<string> docs)
+        {
+            var nameTok = _i + 2;
+            if (!IsKind(nameTok, RustTokenKind.Ident))
+            {
+                _i++;
+                return;
+            }
+
+            var name = Text(nameTok);
+            var def = BeginDef(ctx, name, Suffix.Macro);
+            _i = nameTok + 1;
+            if (_i < _t.Count && IsOpen(Text(_i)))
+            {
+                _i = SkipBalanced(_i);
+            }
+
+            if (Is(_i, ";"))
+            {
+                _i++;
+            }
+
+            EndDef(def, nameTok, Kind.Macro, itemStart, _i, docs, "macro_rules! " + name, name);
+            RegisterItem(name, def.Symbol, true);
+        }
+
+        // ---- function bodies -----------------------------------------------------------------------------
+
+        private bool IsItemStart(int i)
+        {
+            var j = i;
+            while (j < _t.Count)
+            {
+                if (IsKind(j, RustTokenKind.DocOuter))
+                {
+                    j++;
+                }
+                else if (Is(j, "#") && Is(j + 1, "["))
+                {
+                    j = SkipBalanced(j + 1);
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (Is(j, "pub"))
+            {
+                j++;
+                if (Is(j, "("))
+                {
+                    j = SkipBalanced(j);
+                }
+            }
+
+            if (j >= _t.Count || _t[j].Kind != RustTokenKind.Ident)
+            {
+                return false;
+            }
+
+            return Text(j) switch
+            {
+                "fn" or "struct" or "enum" or "trait" or "impl" or "mod" or "type" or "use" => IsKind(j + 1, RustTokenKind.Ident) || Text(j) == "impl" || Text(j) == "use",
+                "macro_rules" => Is(j + 1, "!"),
+                "const" => IsKind(j + 1, RustTokenKind.Ident),
+                "static" => IsKind(j + 1, RustTokenKind.Ident) && (!Is(j + 1, "move")),
+                "union" => IsKind(j + 1, RustTokenKind.Ident) && (Is(j + 2, "{") || Is(j + 2, "<")),
+                "unsafe" => Is(j + 1, "fn") || Is(j + 1, "impl") || Is(j + 1, "trait"),
+                "async" => Is(j + 1, "fn"),
+                "extern" => Is(j + 1, "crate") || IsKind(j + 1, RustTokenKind.Str) && (Is(j + 2, "fn") || Is(j + 2, "{")),
+                _ => false,
+            };
+        }
+
+        private sealed class BodyScanner(FileScanner s, string enclosing, MonikerDescriptor[] modulePrefix, string dir, List<(string Name, string Symbol)> paramScope)
+        {
+            public void Run(int open, int end)
+            {
+                List<List<(string Name, string Symbol)>> scopes = [paramScope];
+                List<(int Depth, List<int> Bindings)> pending = [];
+                HashSet<int> skip = [];
+                var depth = 0;
+                var itemCtx = new ScanContext(modulePrefix, modulePrefix, dir, AssocKind.None);
+                for (var i = open; i < end; i++)
+                {
+                    var t = s._t[i];
+                    if (t.Kind == RustTokenKind.Punct)
+                    {
+                        var p = s.Text(i);
+                        if (p == "{")
+                        {
+                            depth++;
+                            scopes.Add([]);
+                        }
+                        else if (p is "(" or "[")
+                        {
+                            depth++;
+                        }
+                        else if (p is ")" or "]")
+                        {
+                            depth--;
+                        }
+                        else if (p == "}")
+                        {
+                            depth--;
+                            if (scopes.Count > 1)
+                            {
+                                scopes.RemoveAt(scopes.Count - 1);
+                            }
+
+                            pending.RemoveAll(x => x.Depth > depth);
+                        }
+                        else if (p == ";")
+                        {
+                            for (var q = pending.Count - 1; q >= 0; q--)
+                            {
+                                if (pending[q].Depth != depth)
+                                {
+                                    continue;
+                                }
+
+                                foreach (var b in pending[q].Bindings)
+                                {
+                                    var n = s.Text(b);
+                                    scopes[^1].Add((n, s.DeclareLocal(b, n, Kind.Variable, enclosing)));
+                                }
+
+                                pending.RemoveAt(q);
+                            }
+                        }
+
+                        continue;
+                    }
+
+                    if (t.Kind != RustTokenKind.Ident)
+                    {
+                        if (t.Kind is RustTokenKind.DocOuter && s.IsItemStart(i))
+                        {
+                            i = RunItem(i, itemCtx) - 1;
+                        }
+
+                        continue;
+                    }
+
+                    var atStmtStart = i > open && s.Is(i - 1, "{") || s.Is(i - 1, ";") || s.Is(i - 1, "}") || i == open + 1;
+                    if (atStmtStart && s.IsItemStart(i))
+                    {
+                        i = RunItem(i, itemCtx) - 1;
+                        continue;
+                    }
+
+                    var text = s.Text(i);
+                    if (text == "let")
+                    {
+                        var j = i + 1;
+                        var d = 0;
+                        while (j < end)
+                        {
+                            var q = s._t[j].Kind == RustTokenKind.Punct ? s.Text(j) : "";
+                            if (IsOpenP(q))
+                            {
+                                d++;
+                            }
+                            else if (IsCloseP(q))
+                            {
+                                d--;
+                            }
+
+                            if (d < 0 || (d == 0 && q is "=" or ":" or ";"))
+                            {
+                                break;
+                            }
+
+                            j++;
+                        }
+
+                        var bindings = s.ExtractBindings(i + 1, j);
+                        foreach (var b in bindings)
+                        {
+                            skip.Add(b);
+                        }
+
+                        pending.Add((depth, bindings));
+                        continue;
+                    }
+
+                    if (skip.Contains(i) || s.Is(i - 1, ".") || s.Is(i + 1, "::") || s.Is(i + 1, "!"))
+                    {
+                        continue;
+                    }
+
+                    if (s.Is(i + 1, ":") && (s.Is(i - 1, "{") || s.Is(i - 1, ",")) && !s.Is(i + 2, ":"))
+                    {
+                        continue;
+                    }
+
+                    for (var sc = scopes.Count - 1; sc >= 0; sc--)
+                    {
+                        var hit = scopes[sc].FindLastIndex(x => x.Name == text);
+                        if (hit >= 0)
+                        {
+                            s.Out.Occurrences.Add(new(t.Start, t.End, scopes[sc][hit].Symbol, false, null));
+                            s.Out.Consumed.Add(i);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            private int RunItem(int i, ScanContext itemCtx)
+            {
+                var saved = s._i;
+                s._i = i;
+                s.ParseItem(itemCtx);
+                var next = Math.Max(s._i, i + 1);
+                s._i = saved;
+                return next;
+            }
+
+            private static bool IsOpenP(string x) => x is "(" or "[" or "{";
+
+            private static bool IsCloseP(string x) => x is ")" or "]" or "}";
+        }
+    }
+
+    private PackageInformation PackageInfo => package.Information;
+
+    private void RegisterItemExternal(string name, string symbol)
+    {
+        if (!_itemsByName.TryGetValue(name, out var list))
+        {
+            _itemsByName[name] = list = [];
+        }
+
+        list.Add((symbol, false));
+    }
+}
