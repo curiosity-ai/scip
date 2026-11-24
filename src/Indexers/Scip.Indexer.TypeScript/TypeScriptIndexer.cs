@@ -146,6 +146,7 @@ public sealed class TypeScriptIndexer : IIndexer
         var constructors = new Dictionary<Node, bool>();
         var projectFileCount = 0;
         var emitted = 0;
+        program.RegisterAugmentations(config.FileNames);
         var projectFiles = new HashSet<string>(config.FileNames.Select(TsProgram.Normalize), StringComparer.Ordinal);
         var ordered = program.ProgramOrder(config.FileNames).Where(projectFiles.Contains).ToList();
         var orderedSet = new HashSet<string>(ordered, StringComparer.Ordinal);

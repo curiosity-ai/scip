@@ -114,7 +114,7 @@ public sealed class Checker(TsProgram program)
     private List<Node>? ModuleRoot(Node specifier)
     {
         var target = Program.ResolveModule(specifier.File!, specifier.Text);
-        return target is null ? null : [target.Root];
+        return target is null ? null : [target.Root, .. Program.AugmentationsOf(target)];
     }
 
     private List<Node>? ExportSpecifierSymbol(Node spec)
@@ -208,7 +208,7 @@ public sealed class Checker(TsProgram program)
                 break;
             case SK.NamespaceImport:
                 target = Program.ResolveModule(alias.File!, alias.Parent!.Parent!.ModuleSpecifier!.Text);
-                return target is null ? null : [target.Root];
+                return target is null ? null : [target.Root, .. Program.AugmentationsOf(target)];
             case SK.ImportEqualsDeclaration:
                 if (alias.Expression is { Kind: SK.ExternalModuleReference } ext)
                 {
@@ -249,6 +249,21 @@ public sealed class Checker(TsProgram program)
 
     public List<Node>? LookupExport(TsSourceFile file, string name, HashSet<TsSourceFile> visited, bool keepAlias = false)
     {
+        var result = LookupExportCore(file, name, visited, keepAlias);
+        var augmentations = Program.AugmentationsOf(file);
+        if (augmentations.Count == 0) { return result; }
+        // `declare module "x" { interface Foo {} }` elsewhere merges its declarations into the module's exports.
+        List<Node>? merged = null;
+        foreach (var aug in augmentations)
+        {
+            if (B(aug).ExportTable(aug) is { } table && table.TryGetValue(name, out var extra)) { (merged ??= []).AddRange(extra); }
+        }
+
+        return merged is null ? result : [.. result ?? [], .. merged];
+    }
+
+    private List<Node>? LookupExportCore(TsSourceFile file, string name, HashSet<TsSourceFile> visited, bool keepAlias = false)
+    {
         if (!visited.Add(file)) { return null; }
         var b = Program.BinderFor(file);
         var table = b.ExportTable(file.Root);
@@ -274,7 +289,7 @@ public sealed class Checker(TsProgram program)
                     else if (exportDecl.ModuleSpecifier is { } ms)
                     {
                         var target = Program.ResolveModule(file, ms.Text);
-                        var r = target is null ? null : LookupExport(target, original, visited);
+                        var r = target is null ? null : LookupExportCore(target, original, visited);
                         if (r is not null) { return r; }
                     }
                     else
@@ -296,7 +311,7 @@ public sealed class Checker(TsProgram program)
             if (exportDecl.Clause is null && exportDecl.ModuleSpecifier is { } ms && name != "default")
             {
                 var target = Program.ResolveModule(file, ms.Text);
-                var r = target is null ? null : LookupExport(target, name, visited, keepAlias);
+                var r = target is null ? null : LookupExportCore(target, name, visited, keepAlias);
                 if (r is not null) { return r; }
             }
         }

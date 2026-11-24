@@ -130,6 +130,35 @@ public sealed class TsProgram
         }
     }
 
+    private readonly Dictionary<string, List<Node>> _augmentations = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Finds <c>declare module "x" { ... }</c> augmentations in <paramref name="fileNames"/> (cheap text pre-filter, then
+    /// parse) so that exports of module x can include declarations merged in from other files.
+    /// </summary>
+    public void RegisterAugmentations(IEnumerable<string> fileNames)
+    {
+        foreach (var fileName in fileNames)
+        {
+            string text;
+            try { text = File.ReadAllText(fileName); }
+            catch (IOException) { continue; }
+            if (!text.Contains("declare module", StringComparison.Ordinal)) { continue; }
+            var file = GetFile(fileName);
+            if (file is null) { continue; }
+            foreach (var st in file.Root.Elements)
+            {
+                if (st.Kind != SK.ModuleDeclaration || st.Name is not { Kind: SK.StringLiteral } name) { continue; }
+                var target = ResolveModule(file, name.Text);
+                if (target is null) { continue; }
+                if (!_augmentations.TryGetValue(target.FileName, out var list)) { _augmentations[target.FileName] = list = []; }
+                list.Add(st);
+            }
+        }
+    }
+
+    public List<Node> AugmentationsOf(TsSourceFile file) => _augmentations.TryGetValue(file.FileName, out var l) ? l : [];
+
     public Binder BinderFor(TsSourceFile file)
     {
         if (file.IsLib && !ReferenceEquals(this, LibStore.Program)) { return LibStore.Program.BinderFor(file); }
