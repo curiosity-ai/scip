@@ -840,6 +840,32 @@ internal sealed partial class RubyWalker
         {
             _i += 2;
         }
+        else if (Tok(_i) is { Kind: Tk.Punct, Text: "(" })
+        {
+            // `def (expr).name`: skip the parenthesised receiver (unknown object).
+            var depth = 0;
+            var j = _i;
+            for (; j < _t.Count && _t[j].Kind != Tk.Eof; j++)
+            {
+                if (_t[j] is { Kind: Tk.Punct, Text: "(" })
+                {
+                    depth++;
+                }
+                else if (_t[j] is { Kind: Tk.Punct, Text: ")" } && --depth == 0)
+                {
+                    break;
+                }
+            }
+
+            if (Tok(j + 1) is { Kind: Tk.Punct, Text: "." })
+            {
+                _i = j + 2;
+            }
+            else
+            {
+                return;
+            }
+        }
 
         var nameTok = Tok(_i);
         var name = nameTok.Text;
@@ -873,6 +899,10 @@ internal sealed partial class RubyWalker
 
             name = sb.ToString();
             nameEnd = end;
+            if (name.Length == 0)
+            {
+                return;
+            }
         }
         else
         {
