@@ -141,7 +141,7 @@ public sealed class Pom
         Managed.TryGetValue(group + ":" + artifact, out var v) ? Resolve(v) : ParentPom?.ManagedVersion(group, artifact);
 
     /// <summary>Evaluates a Maven profile <c>&lt;jdk&gt;</c> activation: a version prefix, a range such as <c>[17,)</c>, or a negation.</summary>
-    internal static bool JdkActivation(string spec, int major)
+    public static bool JdkActivation(string spec, int major)
     {
         spec = spec.Trim();
         if (spec.StartsWith('!')) return !JdkActivation(spec[1..], major);

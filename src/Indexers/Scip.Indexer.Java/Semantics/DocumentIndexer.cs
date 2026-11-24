@@ -133,6 +133,34 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
 
     private void Reference(string symbol, int start, int end) => Emit(symbol, start, end, 0, null);
 
+    /// <summary>
+    /// semanticdb-javac locates a declared name by searching the source text from the declaration's start (modifiers and
+    /// annotations included) for the first whole-word match, so a same-named identifier in an annotation, type argument,
+    /// comment or string literal wins over the real name. Mirrored here so definition ranges agree.
+    /// </summary>
+    private int SearchName(string name, int nameStart, int declStart)
+    {
+        var from = declStart;
+        while (from >= 0 && from < _src.Length)
+        {
+            var offset = _src.IndexOf(name, from, StringComparison.Ordinal);
+            if (offset < 0) return nameStart;
+            var end = offset + name.Length;
+            if (offset > 0 && IsIdentPart(_src[offset - 1])) { from = end + 1; continue; }
+            if (end < _src.Length && IsIdentPart(_src[end])) { from = end + 1; continue; }
+            return offset;
+        }
+        return nameStart;
+    }
+
+    private static bool IsIdentPart(char c) => char.IsLetterOrDigit(c) || c is '_' or '$';
+
+    private void NamedDefinition(string symbol, string name, int nameStart, int declStart, (int, int)? enclosing)
+    {
+        var start = SearchName(name, nameStart, declStart);
+        Definition(symbol, start, start + name.Length, enclosing);
+    }
+
     private void Definition(string symbol, int start, int end, (int, int)? enclosing) => Emit(symbol, start, end, (int)SymbolRole.Definition, enclosing);
 
     private SymbolInformation AddInfo(string symbol, string displayName, Kind kind, string? signature, string? doc, string? enclosingSymbol = null)
@@ -215,9 +243,9 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
                 var last = imp.Parts[^1];
                 var name = last.Name;
                 var walkType = new ClassT(type.Name, []);
-                foreach (var (m, _) in ws.FindMethods(walkType, name, null)) Reference(_names.Method(m), last.Start, last.End);
-                if (ws.FindField(walkType, name, null) is { } f) Reference(_names.Field(f.Field), last.Start, last.End);
-                else if (ws.FindMemberType(type, name) is { } mt) Reference(_names.Type(mt), last.Start, last.End);
+                // javac attributes no single symbol to the name of a static import, so only member types are referenced
+                if (ws.FindMethods(walkType, name, null).Count == 0 && ws.FindField(walkType, name, null) is null && ws.FindMemberType(type, name) is { } mt)
+                    Reference(_names.Type(mt), last.Start, last.End);
             }
         }
     }
@@ -233,7 +261,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         if (!anon)
         {
             EmitAnnotations(d.Mods, parent); // class annotations are resolved in the enclosing scope
-            Definition(typeSymbol, d.NameStart, d.NameStart + d.Name.Length, (d.Start, d.End));
+            NamedDefinition(typeSymbol, d.Name, d.NameStart, d.Start, (d.Start, d.End));
             var info = AddInfo(typeSymbol, d.Name, d.Kind switch
             {
                 TypeKind.Enum => Kind.Enum,
@@ -273,9 +301,10 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         foreach (var rc in d.RecordComponents)
         {
             var f = ti.Fields.First(x => x.Decl == rc);
+            EmitAnnotations(rc.Mods, scope);
             ws.ResolveType(rc.Type!, scope, this);
             var fs = _names.Field(f);
-            Definition(fs, rc.NameStart, rc.NameStart + rc.Name.Length, (rc.Start, rc.End));
+            NamedDefinition(fs, rc.Name, rc.NameStart, rc.Start, (rc.Start, rc.End));
             AddInfo(fs, rc.Name, Kind.Field, FormatField(f, rc.Mods, scope), null, typeSymbol);
         }
         foreach (var ec in d.EnumConstants)
@@ -312,7 +341,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         var f = ti.Fields.First(x => x.Decl == ec);
         var fs = _names.Field(f);
         EmitAnnotations(ec.Mods, scope);
-        Definition(fs, ec.NameStart, ec.NameStart + ec.Name.Length, (ec.Start, ec.End));
+        NamedDefinition(fs, ec.Name, ec.NameStart, ec.Start, (ec.Start, ec.End));
         var argTypes = ec.Args.Select(a => Eval(a, scope)).ToList();
         var args = string.Join(", ", ec.Args.Select(a => _src[a.Start..a.End]));
         var display = ec.Args.Count > 0 ? $"{ec.Name}({args})" : ec.Name;
@@ -320,7 +349,11 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         AddInfo(fs, display, Kind.UnspecifiedKind, sig, ec.Doc, null);
         var ctors = ti.Methods.Where(m => m.IsCtor).Select(m => (m, new Dictionary<string, JType>())).ToList();
         var best = ChooseMethod(ctors, argTypes, scope);
-        if (best is not null) Reference(_names.Method(best.Value.Method), ec.NameStart, ec.NameStart + ec.Name.Length);
+        if (best is not null)
+        {
+            var ecs = SearchName(ec.Name, ec.NameStart, ec.Start);
+            Reference(_names.Method(best.Value.Method), ecs, ecs + ec.Name.Length);
+        }
         if (ec.Body is not null)
         {
             var decl = new TypeDecl { Kind = TypeKind.Class, IsLocalOrAnon = true, Start = ec.Start, End = ec.End };
@@ -338,7 +371,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         ws.ResolveType(d.Type, scope, this);
         var fs = _names.Field(f);
         var staticScope = scope.Child();
-        Definition(fs, d.NameStart, d.NameStart + d.Name.Length, (d.Start, d.End));
+        NamedDefinition(fs, d.Name, d.NameStart, d.Start, (d.Start, d.End));
         AddInfo(fs, d.Name, f.IsStatic ? Kind.StaticField : Kind.Field, FormatField(f, d.Mods, scope), d.Doc, _names.Type(ti));
         if (d.Init is not null) Eval(d.Init, staticScope, f.Type);
     }
@@ -354,7 +387,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         var skipDef = m.IsCtor && ti.IsAnonymous;
         if (!skipDef)
         {
-            Definition(ms, d.NameStart, d.NameStart + d.Name.Length, (d.Start, d.End));
+            NamedDefinition(ms, d.Name, d.NameStart, d.Start, (d.Start, d.End));
             var info = AddInfo(ms, m.Name, defKind, FormatMethod(m, d, scope), d.Doc, ti.IsLocal || ti.IsAnonymous ? _names.Type(ti) : null);
             if (!m.IsCtor && !m.IsStatic)
             {
@@ -414,10 +447,15 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
             default: throw new InvalidOperationException();
         }
         if (nameOverride is not null) { name = nameOverride; nameStart = nameStartOverride; }
+        if (term && decl is Declarator)
+        {
+            kind = Kind.UnspecifiedKind; // javac: RESOURCE_VARIABLE, implicitly final
+            flags |= Mod.Final;
+        }
         var v = new LocalVar { Name = name, Type = type, Flags = flags, Decl = decl, Mods = mods, OwnerMethod = method, OwnerType = owner ?? scope.EnclosingType, TermOwner = term ? scope.EnclosingMethod : null };
         scope.Vars[name] = v;
         var sym = _names.Variable(v);
-        Definition(sym, nameStart, nameStart + name.Length, (encStart, encEnd));
+        NamedDefinition(sym, name, nameStart, encStart, (encStart, encEnd));
         var enclosing = method is not null ? _names.Method(method) : owner is not null ? _names.Type(owner) : scope.EnclosingMethod is { } em ? _names.Method(em) : scope.EnclosingType is { } et ? _names.Type(et) : null;
         AddInfo(sym, name, kind, type.IsKnown ? FormatVar(v) : null, null, enclosing);
         return v;

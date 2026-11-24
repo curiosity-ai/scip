@@ -686,7 +686,7 @@ public sealed class Parser
             var mods = ParseModifiers();
             if (AtTypeKeyword())
             {
-                var d = ParseTypeDecl(mods, null);
+                var d = ParseTypeDecl(mods, DocAt(start));
                 d.IsLocalOrAnon = true;
                 return Fin(new LocalClassStmt { Decl = d }, start);
             }
