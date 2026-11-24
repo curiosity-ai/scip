@@ -52,6 +52,8 @@ public sealed class TypeScriptIndexer : IIndexer
 
         Directory.CreateDirectory(Path.GetDirectoryName(options.Output)!);
         var documentCount = 0;
+        var definedSymbols = new HashSet<string>(StringComparer.Ordinal);
+        var referencedSymbols = new HashSet<string>(StringComparer.Ordinal);
         using (var file = new FileStream(options.Output, FileMode.Create, FileAccess.Write))
         using (var writer = new IndexWriter(file))
         {
@@ -66,7 +68,14 @@ public sealed class TypeScriptIndexer : IIndexer
             foreach (var project in projects)
             {
                 var root = Path.GetFullPath(project, options.Cwd).Replace('\\', '/');
-                IndexSingleProject(options, root, project == "." ? options.Cwd : project, indexedProjects, indexedFiles, writer, stdout, stderr, ref documentCount, cancellationToken);
+                IndexSingleProject(options, root, project == "." ? options.Cwd : project, indexedProjects, indexedFiles, writer, stdout, stderr, ref documentCount, definedSymbols, referencedSymbols, cancellationToken);
+            }
+
+            // Global symbols referenced but never defined in this index (e.g. unresolved externals) need an external
+            // SymbolInformation so that every occurrence symbol is documented.
+            foreach (var symbol in referencedSymbols.Where(s => !definedSymbols.Contains(s)).Order(StringComparer.Ordinal))
+            {
+                writer.WriteExternalSymbol(new SymbolInformation { Symbol = symbol });
             }
         }
 
@@ -84,7 +93,8 @@ public sealed class TypeScriptIndexer : IIndexer
 
     private static void IndexSingleProject(
         TypeScriptOptions options, string projectRoot, string displayName, HashSet<string> indexedProjects, HashSet<string> indexedFiles,
-        IndexWriter writer, TextWriter stdout, TextWriter stderr, ref int documentCount, CancellationToken ct)
+        IndexWriter writer, TextWriter stdout, TextWriter stderr, ref int documentCount,
+        HashSet<string> definedSymbols, HashSet<string> referencedSymbols, CancellationToken ct)
     {
         if (!indexedProjects.Add(projectRoot)) { return; }
         string configFile;
@@ -93,8 +103,9 @@ public sealed class TypeScriptIndexer : IIndexer
             configFile = Path.Combine(projectRoot, "tsconfig.json");
             if (!File.Exists(configFile))
             {
-                if (options.InferTsconfig)
+                if (options.InferTsconfig || options.Projects.Count == 0 && !options.NpmWorkspaces && !options.YarnWorkspaces && !options.YarnBerryWorkspaces && !options.PnpmWorkspaces)
                 {
+                    if (!options.InferTsconfig) { stderr.WriteLine($"info: no tsconfig.json in {displayName}; inferring one (equivalent to --infer-tsconfig)"); }
                     File.WriteAllText(configFile, TsConfig.InferTsconfig(projectRoot));
                 }
                 else
@@ -123,7 +134,7 @@ public sealed class TypeScriptIndexer : IIndexer
 
         foreach (var reference in config.References)
         {
-            IndexSingleProject(options, reference, reference, indexedProjects, indexedFiles, writer, stdout, stderr, ref documentCount, ct);
+            IndexSingleProject(options, reference, reference, indexedProjects, indexedFiles, writer, stdout, stderr, ref documentCount, definedSymbols, referencedSymbols, ct);
         }
 
         if (config.FileNames.Count == 0) { return; }
@@ -161,6 +172,17 @@ public sealed class TypeScriptIndexer : IIndexer
 
             if (document.Occurrences.Count > 0)
             {
+                foreach (var info in document.Symbols) { definedSymbols.Add(info.Symbol); }
+                foreach (var o in document.Occurrences)
+                {
+                    if (!o.Symbol.StartsWith("local ", StringComparison.Ordinal)) { referencedSymbols.Add(o.Symbol); }
+                }
+
+                foreach (var info in document.Symbols)
+                {
+                    foreach (var r in info.Relationships.Where(r => !r.Symbol.StartsWith("local ", StringComparison.Ordinal))) { referencedSymbols.Add(r.Symbol); }
+                }
+
                 writer.WriteDocument(document);
                 documentCount++;
                 emitted++;

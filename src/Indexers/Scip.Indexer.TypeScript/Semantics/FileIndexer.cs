@@ -42,6 +42,22 @@ public sealed class FileIndexer(
 
         EmitSourceFileOccurrence();
         Visit(sourceFile.Root);
+        EnsureLocalSymbolInformation();
+    }
+
+    /// <summary>
+    /// Every local symbol occurring in a document (e.g. import aliases, which are references without a definition
+    /// node) needs a <c>SymbolInformation</c> in the same document, as <c>scip lint</c> requires.
+    /// </summary>
+    private void EnsureLocalSymbolInformation()
+    {
+        foreach (var o in document.Occurrences.ToArray())
+        {
+            if (o.Symbol.StartsWith("local ", StringComparison.Ordinal) && !_symbolInformation.ContainsKey(o.Symbol))
+            {
+                PushSymbolInformation(new SymbolInformation { Symbol = o.Symbol });
+            }
+        }
     }
 
     // ------------------------------------------------------------------ ranges
@@ -140,7 +156,7 @@ public sealed class FileIndexer(
 
             if (((node.Kind == SK.Identifier && node.Parent!.Kind == SK.NewExpression) ||
                  (node.Parent!.Kind == SK.PropertyAccessExpression && node.Parent.Parent!.Kind == SK.NewExpression)) &&
-                declaration.Kind == SK.ClassDeclaration && HasConstructor(declaration))
+                declaration.Kind == SK.ClassDeclaration && !scipSymbol.IsLocal && !scipSymbol.IsEmpty && HasConstructor(declaration))
             {
                 scipSymbol = ScipSymbol.Global(scipSymbol, Suffix.Method, "<constructor>");
             }
