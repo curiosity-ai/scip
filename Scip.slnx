@@ -20,5 +20,9 @@
     <Project Path="tests/Scip.Tests/Scip.Tests.csproj" />
     <Project Path="tests/Scip.Cli.Tests/Scip.Cli.Tests.csproj" />
     <Project Path="tests/Scip.Reprolang.Tests/Scip.Reprolang.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Dart.Tests/Scip.Indexer.Dart.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.DotNet.Tests/Scip.Indexer.DotNet.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Ruby.Tests/Scip.Indexer.Ruby.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Rust.Tests/Scip.Indexer.Rust.Tests.csproj" />
   </Folder>
 </Solution>
