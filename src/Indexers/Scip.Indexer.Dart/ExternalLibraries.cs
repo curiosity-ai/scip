@@ -380,6 +380,7 @@ internal static class SdkTable
                             _ => DeclKind.Extension,
                         };
                         type = New(kind, f[2], null, lib, file, [(f[2], SymbolDescriptor.Types.Suffix.Type)]);
+                        type.IsLocal = f[2].StartsWith('_');
                         type.Supers.AddRange(Split(f[3]) ?? []);
                         type.Lib = lib;
                         lib.Declared.TryAdd(type.Name, type);

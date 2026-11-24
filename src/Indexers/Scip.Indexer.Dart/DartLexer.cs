@@ -25,20 +25,22 @@ internal sealed class DartLexer(string source)
     private readonly StringBuilder _pendingDoc = new();
 
     private readonly List<List<Token>> _docRefs = [];
+    private readonly List<int> _docStarts = [];
+    private int _pendingDocStart;
     private bool _inFence;
 
     public static (List<Token> Tokens, IReadOnlyList<string> Docs) Lex(string source)
     {
-        var (tokens, docs, _) = LexFull(source);
+        var (tokens, docs, _, _) = LexFull(source);
         return (tokens, docs);
     }
 
     /// <summary>Like <see cref="Lex"/>, also returning the <c>[Name]</c>/<c>[Type.member]</c> references found in doc comments.</summary>
-    public static (List<Token> Tokens, IReadOnlyList<string> Docs, List<List<Token>> DocRefs) LexFull(string source)
+    public static (List<Token> Tokens, IReadOnlyList<string> Docs, List<List<Token>> DocRefs, List<int> DocStarts) LexFull(string source)
     {
         var lexer = new DartLexer(source);
         lexer.LexUntil(stopAtCloseBrace: false);
-        return (lexer._tokens, lexer._docs, lexer._docRefs);
+        return (lexer._tokens, lexer._docs, lexer._docRefs, lexer._docStarts);
     }
 
     /// <summary>Finds comment references (<c>[Foo]</c>, <c>[Foo.bar]</c>) in a doc comment line starting at <paramref name="from"/>.</summary>
@@ -126,6 +128,7 @@ internal sealed class DartLexer(string source)
         if (_pendingDoc.Length > 0)
         {
             _docs.Add(_pendingDoc.ToString().TrimEnd('\n'));
+            _docStarts.Add(_pendingDocStart);
             doc = _docs.Count - 1;
             _pendingDoc.Clear();
         }
@@ -162,6 +165,11 @@ internal sealed class DartLexer(string source)
                 {
                     ScanDocRefs(start + 3, _pos);
                     // upstream strips `^\s*///\s*`
+                    if (_pendingDoc.Length == 0)
+                    {
+                        _pendingDocStart = start;
+                    }
+
                     _pendingDoc.Append(line[3..].TrimEnd('\r').TrimStart()).Append('\n');
                 }
             }

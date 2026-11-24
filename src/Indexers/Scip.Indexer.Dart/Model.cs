@@ -44,6 +44,15 @@ internal sealed class Decl(DeclKind kind, string name, Decl? parent, Token nameT
 
     public int EnclosingStart { get; set; }
 
+    /// <summary>Start of the node including its doc comment (upstream enclosing ranges include documentation).</summary>
+    public int RangeStart
+    {
+        get => _rangeStart >= 0 ? _rangeStart : EnclosingStart;
+        set => _rangeStart = value;
+    }
+
+    private int _rangeStart = -1;
+
     public int EnclosingEnd { get; set; }
 
     public string? Doc { get; set; }
@@ -54,6 +63,9 @@ internal sealed class Decl(DeclKind kind, string name, Decl? parent, Token nameT
     public bool IsLocal { get; set; }
 
     public bool IsStatic { get; set; }
+
+    /// <summary>A declaration that exists only so references can resolve to it; it is never defined in the document.</summary>
+    public bool IsSynthetic { get; init; }
 
     /// <summary>Best-effort simple name of the declared (or obviously inferred) type; null when unknown.</summary>
     public string? TypeName { get; set; }
@@ -108,9 +120,13 @@ internal sealed class FileModel(string relativePath)
     /// <summary>Doc comment references: each entry is the dotted segments of one <c>[A.b]</c>.</summary>
     public List<List<Token>> DocRefs { get; set; } = [];
 
+    public List<int> DocStarts { get; set; } = [];
+
     public List<Decl> TopLevel { get; } = [];
 
     public List<Decl> AllDecls { get; } = [];
+
+    public List<Decl> SyntheticParams { get; } = [];
 
     public List<DirectiveRef> Directives { get; } = [];
 

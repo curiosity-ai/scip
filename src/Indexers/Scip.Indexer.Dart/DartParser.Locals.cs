@@ -28,8 +28,17 @@ internal sealed partial class DartParser
             _indexByOffset.TryAdd(_t[i].Offset, i);
         }
 
+        foreach (var d in _m.AllDecls)
+        {
+            d.RangeStart = d.EnclosingStart;
+            if (d.Doc is not null && _indexByOffset.TryGetValue(d.EnclosingStart, out var ti) && _t[ti].DocIndex is >= 0 and var di && di < _m.DocStarts.Count)
+            {
+                d.RangeStart = Math.Min(d.EnclosingStart, _m.DocStarts[di]);
+            }
+        }
+
         // Parameters of declarations are visible in the whole declaration.
-        foreach (var d in _m.AllDecls.ToList())
+        foreach (var d in _m.AllDecls.Concat(_m.SyntheticParams).ToList())
         {
             if (d is { Kind: DeclKind.Parameter, Parent: { } owner })
             {

@@ -32,8 +32,9 @@ internal sealed partial class DartParser
 
     public static FileModel Parse(string relativePath, string source, ExternalPackage? external = null)
     {
-        var (tokens, docs, docRefs) = DartLexer.LexFull(source);
+        var (tokens, docs, docRefs, docStarts) = DartLexer.LexFull(source);
         var model = new FileModel(relativePath) { Tokens = tokens, DocRefs = docRefs, External = external };
+        model.DocStarts = docStarts;
         var parser = new DartParser(source, tokens, docs, model);
         parser.ParseFile();
         parser.ScanLocals();
@@ -969,6 +970,17 @@ internal sealed partial class DartParser
                     _m.ThisFieldRefs.Add(new ThisFieldRef(nameTok.Value, cls));
                     if (!named)
                     {
+                        // a positional field formal parameter is a `local` parameter that is referenced, never defined
+                        var synthetic = new Decl(DeclKind.Parameter, nameTok.Value.Text, owner, nameTok.Value, _m.RelativePath)
+                        {
+                            External = _m.External,
+                            IsLocal = true,
+                            IsSynthetic = true,
+                            EnclosingStart = slice[idx].Offset,
+                            EnclosingEnd = slice[^1].End,
+                        };
+                        owner.Parameters.Add(synthetic);
+                        _m.SyntheticParams.Add(synthetic);
                         return;
                     }
                 }

@@ -25,8 +25,9 @@ public class SdkTableGenerator
         var sb = new StringBuilder();
         foreach (var name in Libraries)
         {
-            var dir = Path.Combine(lib, name);
-            var mainName = File.Exists(Path.Combine(dir, name + ".dart")) ? name + ".dart" : name.TrimStart('_') + ".dart";
+            var dirName = name == "_internal" ? "internal" : name;
+            var dir = Path.Combine(lib, dirName);
+            var mainName = File.Exists(Path.Combine(dir, dirName + ".dart")) ? dirName + ".dart" : dirName.TrimStart('_') + ".dart";
             var mainPath = Path.Combine(dir, mainName);
             if (!File.Exists(mainPath))
             {
@@ -49,7 +50,7 @@ public class SdkTableGenerator
                     .Append(d.Prefix ?? "").Append('\n');
             }
 
-            EmitFile(sb, id, mainName, main);
+            EmitFile(sb, id, null, main);
             foreach (var part in main.Directives.Where(d => d.Text == "part"))
             {
                 var partName = ExternalLibraries.StringValue(part.Uri.Text);
@@ -67,10 +68,11 @@ public class SdkTableGenerator
         await Assert.That(sb.Length).IsGreaterThan(1000);
     }
 
-    private static void EmitFile(StringBuilder sb, string lib, string file, FileModel model)
+    private static void EmitFile(StringBuilder sb, string lib, string? file, FileModel model)
     {
-        sb.Append("F\t").Append(lib).Append('/').Append(file).Append('\n');
-        foreach (var d in model.TopLevel.Where(d => !d.Name.StartsWith('_') && d.Kind != DeclKind.ImportPrefix))
+        // declarations of a library's main file are identified by the library uri alone (`dart:core/`), parts by `dart:core/part.dart`
+        sb.Append("F\t").Append(file is null ? lib : lib + "/" + file).Append('\n');
+        foreach (var d in model.TopLevel.Where(d => d.Kind != DeclKind.ImportPrefix && (!d.Name.StartsWith('_') || d.IsTypeLike)))
         {
             if (d.IsTypeLike)
             {

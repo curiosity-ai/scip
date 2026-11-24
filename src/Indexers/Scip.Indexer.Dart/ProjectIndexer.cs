@@ -445,6 +445,19 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             .ThenBy(o => o.Definition ? 0 : 1)
             .ToList();
 
+        // Local symbol numbers follow the upstream visit order: a declaration (with its relationships, which may
+        // allocate locals for private supertypes) comes before everything inside its node.
+        var relCache = new Dictionary<Decl, List<Relationship>>();
+        foreach (var o in occs.OrderBy(o => o.Definition && o.Def is { } dd ? dd.RangeStart : o.Start).ThenBy(o => o.Definition ? 0 : 1))
+        {
+            if (o.Definition && o.Def is { } def)
+            {
+                relCache[def] = [.. RelationshipsOf(def, f, locals)];
+            }
+
+            _ = o.Symbol ?? SymbolOf(o.Target!, locals);
+        }
+
         var fileSymbol = FileSymbol(_pubspec.Name, Version, f.RelativePath);
         var document = new Document
         {
@@ -475,7 +488,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             SetRange(occ, lines.RangeOf(o.Start, o.Length));
             if (o.Def is { } def)
             {
-                AddEnclosing(occ, lines.RangeOf(def.EnclosingStart, def.EnclosingEnd - def.EnclosingStart));
+                AddEnclosing(occ, lines.RangeOf(def.RangeStart, def.EnclosingEnd - def.RangeStart));
             }
 
             document.Occurrences.Add(occ);
@@ -494,7 +507,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 info.Documentation.Add(d.Doc);
             }
 
-            foreach (var rel in RelationshipsOf(d, f, locals))
+            foreach (var rel in relCache.TryGetValue(d, out var cachedRels) ? cachedRels : [.. RelationshipsOf(d, f, locals)])
             {
                 if (!info.Relationships.Any(x => x.Symbol == rel.Symbol))
                 {
@@ -510,7 +523,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
 
     private void RecordExternal(Decl d, string symbol)
     {
-        if (_externalInfo.ContainsKey(symbol))
+        if (d.IsLocal || symbol.StartsWith("local ", StringComparison.Ordinal) || _externalInfo.ContainsKey(symbol))
         {
             return;
         }
