@@ -5,7 +5,7 @@ public enum EKind { Namespace, Class, Enum, EnumConst, Func, Var, Field, Typedef
 public enum SKind { Global, Namespace, Class, Enum, Function, Block, Template }
 
 /// <summary>A (possibly unresolved) reference to a type by name, resolved lazily from the scope where it was written.</summary>
-public sealed record TypeRef(Scope Scope, List<string> Chain, bool Leading);
+public sealed record TypeRef(Scope Scope, List<string> Chain, bool Leading, bool Indirect = false);
 
 public sealed class Entity(string name, EKind kind, string symbol, Scope declScope, bool inProject)
 {
@@ -30,14 +30,28 @@ public sealed class Entity(string name, EKind kind, string symbol, Scope declSco
 
     public int MaxArgs { get; set; }
 
+    /// <summary>Canonical parameter types of a function (clang spelling), used to pick overloads.</summary>
+    public List<string> ParamTypes { get; set; } = [];
+
     public bool Defined { get; set; }
 
     public bool IsStatic { get; set; }
+
+    /// <summary>Entities that resolve names but never produce occurrences (namespace aliases).</summary>
+    public bool Silent { get; set; }
 
     /// <summary>Declared type (variables, fields, typedefs) or return type (functions).</summary>
     public TypeRef? Type { get; set; }
 
     public List<TypeRef> Bases { get; } = [];
+
+    /// <summary>For typedefs and aliases: the aliased type as tokens (declarator name removed) and the scope to resolve it in.</summary>
+    public Tok[]? AliasToks { get; set; }
+
+    public Scope? AliasScope { get; set; }
+
+    /// <summary>For class templates: the template scope declaring the parameters.</summary>
+    public Scope? TemplateScope { get; set; }
 
     public bool IsType => Kind is EKind.Class or EKind.Enum or EKind.Typedef or EKind.TemplateParam;
 }
@@ -56,6 +70,11 @@ public sealed class Scope(Scope? parent, SKind kind)
     public Dictionary<string, List<Entity>> Names { get; } = [];
 
     public List<Scope> Usings { get; } = [];
+
+    /// <summary>Template scopes: names of the template parameters in declaration order ("" when unnamed).</summary>
+    public List<string> TemplateParamNames { get; } = [];
+
+    public HashSet<string> TemplateTemplateNames { get; } = [];
 
     /// <summary>Where declarations made "in" this scope go (template scopes forward to their parent).</summary>
     public Scope Target => Kind == SKind.Template ? Parent!.Target : this;

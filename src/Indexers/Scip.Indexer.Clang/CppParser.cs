@@ -13,7 +13,7 @@ public interface IOccurrenceSink
 /// Pass one declares entities; pass two (deferred jobs, in file order) scans types, initialisers and bodies, so uses
 /// before declaration inside a translation unit resolve.
 /// </summary>
-public sealed class CppParser
+public sealed partial class CppParser
 {
     private static readonly HashSet<string> Builtins =
     [
@@ -43,6 +43,7 @@ public sealed class CppParser
     private readonly Dictionary<int, int> _anonCounters = [];
     private readonly Dictionary<string, List<Entity>> _members = [];
     private bool _pass2;
+    private readonly TypeCanon _canon;
 
     public Scope Global { get; } = new(null, SKind.Global) { Path = [] };
 
@@ -51,6 +52,7 @@ public sealed class CppParser
         _t = tokens;
         _files = files;
         _sink = sink;
+        _canon = new TypeCanon(static (sc, name, leading) => leading ? Root(sc).LookupHere(name) : sc.Lookup(name));
         _match = new int[tokens.Count];
         Array.Fill(_match, -1);
         var stack = new List<int>();
@@ -242,14 +244,30 @@ public sealed class CppParser
         return e;
     }
 
-    private static Scope OwnScope(Entity e, Scope parent, SKind kind, SymbolDescriptor desc)
+    private static Scope Root(Scope s)
     {
-        var s = new Scope(parent, kind) { Owner = e, Path = parent.Path is null ? null : [.. parent.Path, desc] };
+        while (s.Parent is not null)
+        {
+            s = s.Parent;
+        }
+
+        return s;
+    }
+
+    private static Scope OwnScope(Entity e, Scope parent, SKind kind, SymbolDescriptor desc, Scope? lexicalParent = null)
+    {
+        var s = new Scope(lexicalParent ?? parent, kind) { Owner = e, Path = parent.Path is null ? null : [.. parent.Path, desc] };
         e.Own = s;
         return s;
     }
 
-    private void Emit(Tok at, Entity e, bool def) => _sink.Emit(at, e, def);
+    private void Emit(Tok at, Entity e, bool def)
+    {
+        if (!e.Silent)
+        {
+            _sink.Emit(at, e, def);
+        }
+    }
 
     // ---- declarations --------------------------------------------------------------------------------------
 
@@ -341,7 +359,27 @@ public sealed class CppParser
             var nameTok = _t[q];
             if (P(q + 1, "="))
             {
-                return SkipStatement(p, end); // namespace alias
+                var aliasEnd = StmtEnd(q, end);
+                var aliasScope = scope;
+                var aliasName = nameTok.Text;
+                var tgtStart = q + 2;
+                void MakeAlias()
+                {
+                    if (aliasScope.Target.Names.ContainsKey(aliasName))
+                    {
+                        return;
+                    }
+
+                    if (ResolveQualifierChain(aliasScope, tgtStart, aliasEnd, emit: false) is { Own: { } own })
+                    {
+                        var host = aliasScope.Target;
+                        host.Add(new Entity(aliasName, EKind.Namespace, "", host, false) { Own = own, Silent = true, Defined = true });
+                    }
+                }
+
+                MakeAlias();
+                Defer(MakeAlias);
+                return aliasEnd < end ? aliasEnd + 1 : aliasEnd;
             }
 
             any = true;
@@ -468,6 +506,24 @@ public sealed class CppParser
 
     private void DeclareTemplateParam(Scope ts, Scope outer, int a, int b)
     {
+        if (b > a)
+        {
+            var nm = "";
+            for (var x = a; x < b && !P(x, "="); x++)
+            {
+                if (IsName(x))
+                {
+                    nm = _t[x].Text;
+                }
+            }
+
+            ts.TemplateParamNames.Add(nm);
+            if (P(a, "template"))
+            {
+                ts.TemplateTemplateNames.Add(nm);
+            }
+        }
+
         var eq = a;
         while (eq < b && !P(eq, "="))
         {
@@ -517,6 +573,8 @@ public sealed class CppParser
             var nameTok = _t[p + 1];
             var ent = NewEntity(target, nameTok.Text, EKind.Typedef, D(nameTok.Text, SymbolDescriptor.Types.Suffix.Type), nameTok, SymbolInformation.Types.Kind.TypeAlias);
             ent.Type = MakeTypeRef(scope, p + 3, e);
+            ent.AliasToks = _t.GetRange(p + 3, Math.Max(0, e - (p + 3))).ToArray();
+            ent.AliasScope = scope;
             ent.Defined = true;
             Emit(nameTok, ent, true);
             Defer(() => Scan(scope, p + 3, e));
@@ -565,6 +623,23 @@ public sealed class CppParser
     }
 
     private TypeRef? MakeTypeRef(Scope scope, int a, int b)
+    {
+        var r = MakeTypeRefCore(scope, a, b);
+        if (r is not null)
+        {
+            for (var x = a; x < b && x < _t.Count; x++)
+            {
+                if (_t[x].Kind == TokKind.Punct && _t[x].Text == "*")
+                {
+                    return r with { Indirect = true };
+                }
+            }
+        }
+
+        return r;
+    }
+
+    private TypeRef? MakeTypeRefCore(Scope scope, int a, int b)
     {
         for (var i = a; i < b; i++)
         {
@@ -741,7 +816,12 @@ public sealed class CppParser
         if (ent is null)
         {
             ent = NewEntity(target, descName, isEnum ? EKind.Enum : EKind.Class, desc, nameTok, sk);
-            OwnScope(ent, target, isEnum ? SKind.Enum : SKind.Class, desc);
+            OwnScope(ent, target, isEnum ? SKind.Enum : SKind.Class, desc, scope.Kind == SKind.Template ? scope : null);
+        }
+
+        if (scope.Kind == SKind.Template && scope.TemplateParamNames.Count > 0 && !isEnum)
+        {
+            ent.TemplateScope ??= scope;
         }
 
         Emit(nameTok, ent, isDef);
@@ -989,6 +1069,12 @@ public sealed class CppParser
         while (k < end)
         {
             var t = _t[k];
+            if (t.Kind == TokKind.Ident && t.Text == "operator")
+            {
+                k = SkipOperatorName(k, end);
+                continue;
+            }
+
             if (t.Kind == TokKind.Punct)
             {
                 if (t.Text is "[" && P(k + 1, "[") && M(k) > 0)
@@ -1038,7 +1124,7 @@ public sealed class CppParser
         if (parenIdx >= 0 && M(parenIdx) > parenIdx)
         {
             // function pointer / grouped declarator?
-            var headIsEmpty = parenIdx == p || !(IsName(parenIdx - 1) || Id(parenIdx - 1) && _t[parenIdx - 1].Text == "operator" || P(parenIdx - 1, ">") || IsOperatorName(parenIdx - 1) || P(parenIdx - 1, "~") || P(parenIdx - 2, "~"));
+            var headIsEmpty = parenIdx == p || !(FindOperatorKeyword(p, parenIdx) >= 0 || IsName(parenIdx - 1) || Id(parenIdx - 1) && _t[parenIdx - 1].Text == "operator" || P(parenIdx - 1, ">") || IsOperatorName(parenIdx - 1) || P(parenIdx - 1, "~") || P(parenIdx - 2, "~"));
             if (!headIsEmpty && !(P(parenIdx + 1, "*") || P(parenIdx + 1, "&")) && !(isTypedef && false))
             {
                 return ParseFunction(scope, p, end, parenIdx, friend, isStatic, isTypedef);
@@ -1202,6 +1288,27 @@ public sealed class CppParser
 
             var ent = existing ?? NewEntity(target, nameTok.Text, kind, desc, nameTok, sk);
             ent.Type ??= type;
+            if (kind == EKind.Typedef && first && typeStart >= 0 && ent.AliasToks is null)
+            {
+                var ae = nameIdx + 1;
+                while (ae < end && !P(ae, ",") && !P(ae, ";") && !P(ae, "=") && !P(ae, "{"))
+                {
+                    ae = _t[ae].Kind == TokKind.Punct && _t[ae].Text is "(" or "[" && M(ae) > ae ? M(ae) + 1 : ae + 1;
+                }
+
+                var al = new List<Tok>();
+                for (var x = typeStart; x < ae; x++)
+                {
+                    if (x != nameIdx)
+                    {
+                        al.Add(_t[x]);
+                    }
+                }
+
+                ent.AliasToks = [.. al];
+                ent.AliasScope = scope;
+            }
+
             ent.IsStatic |= isStatic;
             var isExtern = false;
             for (var x = Math.Max(typeStart, 0); x < nameIdx && typeStart >= 0; x++)
@@ -1306,7 +1413,15 @@ public sealed class CppParser
         var nameStartTok = _t[nameIdx];
         var nameLen = _t[nameIdx].Len;
         var nameFirstIdx = nameIdx;
-        if (P(nameIdx, ")") && P(nameIdx - 1, "(") && P(nameIdx - 2, "operator"))
+        var opIdx = FindOperatorKeyword(p, open);
+        if (opIdx >= 0)
+        {
+            name = OperatorName(scope, opIdx, open - 1);
+            nameFirstIdx = opIdx;
+            nameStartTok = _t[opIdx];
+            nameLen = nameStartTok.Len;
+        }
+        else if (P(nameIdx, ")") && P(nameIdx - 1, "(") && P(nameIdx - 2, "operator"))
         {
             name = "operator()";
             nameFirstIdx = nameIdx - 2;
@@ -1365,7 +1480,6 @@ public sealed class CppParser
         // --- parameters and tail
         var parms = ParseParams(open, close);
         var tailEnd = close + 1;
-        var isConst = false;
         var isPure = false;
         var bodyOpen = -1;
         var ctorInitStart = -1;
@@ -1434,11 +1548,6 @@ public sealed class CppParser
                 trailingStart = q + 1;
             }
 
-            if (t.Kind == TokKind.Ident && t.Text == "const" && trailingStart < 0)
-            {
-                isConst = true;
-            }
-
             if (t.Kind == TokKind.Punct && t.Text is "(" or "[" && M(q) > q)
             {
                 q = M(q) + 1;
@@ -1496,7 +1605,7 @@ public sealed class CppParser
         var isCtor = ownerClass is not null && name == ownerClass.Name;
         var isDtor = ownerClass is not null && name == "~" + ownerClass.Name;
         var key = isCtor ? "<ctor>" : name;
-        var sig = string.Join(',', parms.Select(pm => TypeText(pm.A, pm.TypeEnd))) + (isConst ? " const" : "");
+        var (sig, fnType, paramTypes) = CanonicalFunction(lexicalParent, p, headEnd, nameFirstIdx, open, close, end, isCtor || isDtor, name);
         Entity? ent = null;
         if (target.Names.TryGetValue(key, out var cands))
         {
@@ -1505,7 +1614,7 @@ public sealed class CppParser
 
         if (ent is null)
         {
-            var desc = D(name, SymbolDescriptor.Types.Suffix.Method, AstHash.Hex(sig, 8));
+            var desc = D(name, SymbolDescriptor.Types.Suffix.Method, WyHash.HexOfText(fnType));
             var sk = isCtor ? SymbolInformation.Types.Kind.Constructor
                 : target.Kind == SKind.Class ? (isStatic ? SymbolInformation.Types.Kind.StaticMethod : SymbolInformation.Types.Kind.Method)
                 : SymbolInformation.Types.Kind.Function;
@@ -1519,6 +1628,7 @@ public sealed class CppParser
             }
 
             ent.IsStatic = isStatic;
+            ent.ParamTypes = paramTypes;
             ent.Type = headEnd > p ? MakeTypeRef(scope, p, headEnd) : null;
         }
 
@@ -2149,6 +2259,8 @@ public sealed class CppParser
     private void Scan(Scope scope, int a, int b)
     {
         Entity? last = null;
+        Entity? opFn = null;
+        var opEnd = -2;
         var lastIdx = -2;
         var i = a;
         while (i < b)
@@ -2169,11 +2281,25 @@ public sealed class CppParser
                     continue;
                 }
 
+                OperatorUse(scope, a, b, i, ref last, ref lastIdx, ref opFn, ref opEnd);
                 i++;
                 continue;
             }
 
             if (t.Kind != TokKind.Ident)
+            {
+                LiteralOperatorUse(scope, i);
+                i++;
+                continue;
+            }
+
+            if (t.Text == "operator")
+            {
+                i = OperatorKeywordUse(scope, i, b, i > a && P(i - 1, "::") && !(i - 2 >= a && Id(i - 2)));
+                continue;
+            }
+
+            if (t.Text.StartsWith('_') && i > a && !t.Space && _t[i - 1].Kind is TokKind.StringLiteral or TokKind.CharLiteral && LiteralOperatorUse(scope, i))
             {
                 i++;
                 continue;
