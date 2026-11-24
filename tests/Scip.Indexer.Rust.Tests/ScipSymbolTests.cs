@@ -19,8 +19,10 @@ public class ScipSymbolTests
             var file = Path.Combine(dir, "lib.rs");
             await File.WriteAllTextAsync(file, source);
             var package = new CargoPackage(name, version, Path.Combine(dir, "Cargo.toml"), []);
-            var scanner = new RustCrateScanner(package, new CargoTarget(name, kind, file), new HashSet<string>());
+            var target = new CargoTarget(name, kind, file);
+            var scanner = new RustCrateScanner(package, target, new HashSet<string>());
             scanner.Scan();
+            RustAnalysis.Analyze([new ScanUnit(package, target, scanner)]);
             var result = scanner.Files.Single();
             var byteOffset = Encoding.UTF8.GetByteCount(source.AsSpan(0, offset));
             var occ = result.Occurrences.First(o => o.Start != 0 && o.Start <= byteOffset - 1 && byteOffset - 1 < o.End);

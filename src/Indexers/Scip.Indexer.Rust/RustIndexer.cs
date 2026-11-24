@@ -65,23 +65,33 @@ public sealed class RustIndexer() : IIndexer
         }
 
         HashSet<string> seen = [];
-        List<Document> documents = [];
+        List<ScanUnit> units = [];
         foreach (var package in packages)
         {
             foreach (var target in package.Targets)
             {
                 var scanner = new RustCrateScanner(package, target, seen);
                 scanner.Scan();
-                foreach (var file in scanner.Files)
-                {
-                    var relative = Path.GetRelativePath(root, file.Path).Replace('\\', '/');
-                    if (relative.StartsWith("../", StringComparison.Ordinal))
-                    {
-                        continue; // outside the project root: not part of this index
-                    }
+                units.Add(new ScanUnit(package, target, scanner));
+            }
+        }
 
-                    documents.Add(RustIndexAssembler.ToDocument(file, relative));
+        bool IsExternal(CargoPackage p) =>
+            Path.GetRelativePath(root, Path.GetDirectoryName(Path.GetFullPath(p.ManifestPath))!).StartsWith("..", StringComparison.Ordinal);
+
+        var externals = RustAnalysis.Analyze(units, IsExternal);
+        List<Document> documents = [];
+        foreach (var unit in units)
+        {
+            foreach (var file in unit.Scanner.Files)
+            {
+                var relative = Path.GetRelativePath(root, file.Path).Replace('\\', '/');
+                if (relative.StartsWith("../", StringComparison.Ordinal))
+                {
+                    continue; // outside the project root: not part of this index
                 }
+
+                documents.Add(RustIndexAssembler.ToDocument(file, relative));
             }
         }
 
@@ -93,7 +103,7 @@ public sealed class RustIndexer() : IIndexer
             TextDocumentEncoding = TextEncoding.Utf8,
         };
         metadata.ToolInfo.Arguments.AddRange(settings.Raw);
-        RustIndexAssembler.Write(output, metadata, documents, [], log);
+        RustIndexAssembler.Write(output, metadata, documents, externals, log);
         return true;
     }
 }

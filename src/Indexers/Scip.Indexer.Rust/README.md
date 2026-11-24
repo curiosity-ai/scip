@@ -32,25 +32,48 @@ TraitMethod), consts, statics, type aliases, `macro_rules!`, doc comments, funct
 locals with lexical-scope references, items nested in function bodies (with upstream's known "no function name"
 behaviour, FIXME #18771).
 
+## Resolution layer (`RustWorld`, `RustResolver`, `RustStd`, `RustAnalysis`)
+
+After all targets are scanned, `RustAnalysis.Analyze` builds a cross-crate item graph and resolves references:
+
+- module tree (`mod x;`, `#[path]`, inline), `use` trees (nested braces, `self`, `as` aliases, globs, `crate`/`super`/`self`),
+  paths through modules, enums (variants), types (inherent/trait impl items, trait items);
+- workspace crates and `path = "..."` dependencies from `[dependencies]` (also the package's own lib from bin/test
+  targets); path deps outside the project root are resolved and reported as `external_symbols`;
+- a built-in model of `core`/`alloc`/`std` (`RustStd`): symbols such as
+  `rust-analyzer cargo core https://github.com/rust-lang/rust/library/core core/option/Option#Some#`, std re-exports,
+  the prelude, and the signatures of common methods (Option/Result/Vec/String/str/slice/HashMap/HashSet/BTreeMap/
+  VecDeque/Rc/Arc/RefCell/Iterator ...). Referenced std items are emitted as `external_symbols`;
+- simple type tracking: params, `let x: T`, `let x = Path::ctor(..)` / struct literal / method-call chains, `self`,
+  fields (incl. tuple fields `.0`), `?`, indexing, `for`/`if let Some(x)` bindings, smart-pointer/String/Vec deref,
+  generic substitution through impl self types; method calls and field accesses resolve to the impl item (trait
+  default methods resolve to the trait item);
+- struct-literal/pattern field references, operator overloading (`s += t` resolves to `impl[S][AddAssign<Self>]add_assign()`),
+  tuple struct/variant fields (`Foo#0.`), generic/lifetime parameters (locals enclosed by the item), closure parameters,
+  `for`/`if let`/`while let` bindings.
+
 ## NOT covered (honest gaps)
 
-- No name resolution or type inference. References are heuristic: an identifier resolves to a local in scope, or to
-  an item when that name is defined **exactly once** in the same cargo target. Method calls, field accesses, paths
-  through re-exports/`use` aliases, trait method dispatch, generics, and macro-expanded code are not resolved.
-- No references across crates and no `external_symbols` (dependencies are not parsed; no std/core symbols).
-- Impl type display is the source text of the type, not rust-analyzer's resolved display (upstream gives
-  `AddAssign<Self>`; we give `AddAssign`). Tuple-struct fields, closure parameters, `for`/`match` bindings, generic
-  parameters and lifetimes produce no symbols.
-- The definition occurrence emitted for an `impl` block (at the `impl` keyword) is a guess at upstream's placement.
-- `cfg` attributes are ignored (all items are indexed); `#[doc = ""]` attributes are not read.
+- No full type inference / trait solving: expression types come from the simple model above. Method calls on
+  generic parameters (`T: Trait`), closures' return types, iterator adaptor item types, `match` arm bindings,
+  `impl Trait` returns, associated-type projections and macro-expanded code are not resolved.
+- Only a small, hand-written part of the standard library is modelled (and impl descriptors of std items are
+  approximate, e.g. `Vec<T, A>`); other `std::*` paths produce no reference. Third-party registry crates
+  (non-path dependencies) are not parsed.
+- Impl type display is the source text of the type except for the defaulted `Rhs = Self` operator traits.
+- `cfg` attributes are ignored; derives/attribute macros and `#[doc = ""]` are not interpreted; `macro_rules`
+  bodies are skipped (invocations are resolved, expansions are not).
+- Local numbering follows declaration order, not rust-analyzer's token order.
 - Vendored-library handling and cargo features/build scripts (`OUT_DIR`) do not apply.
 
 ## Tests (`tests/Scip.Indexer.Rust.Tests`)
 
-Ports the `check_symbol` tests of `scip.rs` that need no cross-crate resolution (trait items, fields, params,
-locals, all target kinds, nested-in-function misbehaviour), the documentation/enclosing-range tests, plus end-to-end
-and smoke tests. Upstream tests needing `deps:foo` use-site resolution or `AddAssign<Self>` display are not ported.
-No external toolchain is used in tests.
+Ports all `check_symbol` tests of `scip.rs` (`ScipSymbolTests` for single-file ones, `ResolutionTests` for the
+multi-crate `deps:foo` fixtures expressed as path dependencies, `operator_overload`, `basic`, struct-literal field,
+param/closure-param/local, `global_symbol_for_pub_struct[_reference]`), the documentation/enclosing-range tests, plus
+resolution tests (imports, globs, method calls, generics, std) and end-to-end/smoke tests. Smoke run on
+`.reference/rust-analyzer/crates/syntax`: ~13.8k definitions + ~36k references, 135 external symbols. No external
+toolchain is used in tests.
 
 Note: the project is not in `Scip.slnx` (shared file); run with
 `dotnet test --project tests/Scip.Indexer.Rust.Tests`.
