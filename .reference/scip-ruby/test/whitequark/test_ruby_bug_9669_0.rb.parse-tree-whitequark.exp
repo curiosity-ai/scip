@@ -1,0 +1,4 @@
+s(:def, :a,
+  s(:params,
+    s(:kwarg, :b)),
+  s(:return))

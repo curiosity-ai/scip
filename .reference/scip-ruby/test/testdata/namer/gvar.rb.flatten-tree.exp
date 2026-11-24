@@ -1,0 +1,15 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  $a = 1
+
+  class ::A<<C A>> < (::<todo sym>)
+    def meth(<blk>)
+      [$a, $b, $c]
+    end
+
+    $b = 2
+
+    $a
+
+    <runtime method definition of meth>
+  end
+end

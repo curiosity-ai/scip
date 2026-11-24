@@ -1,0 +1,399 @@
+#include "common/timers/Timer.h"
+#include "core/Names.h"
+#include "core/core.h"
+#include "core/errors/resolver.h"
+#include "resolver/resolver.h"
+#include <vector>
+
+using namespace std;
+
+namespace sorbet::resolver {
+
+namespace {
+core::ErrorClass getRedeclarationErrorCode(const core::GlobalState &gs, core::ClassOrModuleRef parent,
+                                           core::NameRef name) {
+    if (parent == core::Symbols::Enumerable() || parent.data(gs)->derivesFrom(gs, core::Symbols::Enumerable())) {
+        return core::errors::Resolver::EnumerableParentTypeNotDeclared;
+    } else {
+        return core::errors::Resolver::ParentTypeNotDeclared;
+    }
+}
+
+// Note having this error is intentional, as it makes it easier to implement Sorbet's incremental mode.
+//
+// In the past, we have floated ideas of allowing users to skip redeclaring a parent's type members if
+// those type members are fixed, and simply copying the fixed type member down onto the child on the
+// user's behalf.
+//
+// But that runs afoul of our (simple) heuristic to retypecheck all files that simply mention a symbol
+// name on the LSP fast path. If a grandchild class was not forced to redeclare a grandparent's
+// `type_member`, then the grandparent class's file could be edited and Sorbet wouldn't include the
+// grandchild class's file in the set of files to retypecheck.
+void reportRedeclarationError(core::GlobalState &gs, core::ClassOrModuleRef parent,
+                              core::TypeMemberRef parentTypeMember, core::ClassOrModuleRef sym) {
+    auto name = parentTypeMember.data(gs)->name;
+
+    if (name == core::Names::Constants::AttachedClass()) {
+        auto code = sym.data(gs)->derivesFrom(gs, core::Symbols::Module())
+                        ? core::errors::Resolver::HasAttachedClassModuleNotDeclared
+                        : core::errors::Resolver::HasAttachedClassIncluded;
+        if (auto e = gs.beginError(sym.data(gs)->loc(), code)) {
+            auto hasAttachedClass = core::Names::declareHasAttachedClass().show(gs);
+            if (sym.data(gs)->isModule()) {
+                e.setHeader("`{}` declared by parent `{}` must be re-declared in `{}`", hasAttachedClass,
+                            parent.show(gs), sym.show(gs));
+            } else if (sym.data(gs)->isSingletonClass(gs)) {
+                // All singleton classes (classes and modules) should have a synthetic `<AttachedClass>` type member.
+                ENFORCE(false, "All singleton classes (class+module) should have an `<AttachedClass>` type member");
+
+                // We used to report an error here saying that if you declare a module with
+                // `has_attached_class!` and then `extend` it into a module, you probably messed up.
+                //
+                // Now, it's not clear how this can happen, but on the off chance it can, let's report a message.
+                //
+                // This also means that we no longer have good messaging guiding people against
+                // misuse of stacks of modules using mixes_in_class_methods. But that's **already**
+                // a problem, regardless of whether `has_attached_class!` is in play, so regressing this is ~fine.
+                //
+                // We should solve the problem that mixes_in_class_methods is bad separately.
+                e.setHeader("`{}` was declared `{}` and so cannot be `{}`ed into `{}`", parent.show(gs),
+                            hasAttachedClass, "extend", sym.data(gs)->attachedClass(gs).show(gs));
+                e.addErrorNote("Please report a bug--we thought this case was impossible");
+            } else if (code == core::errors::Resolver::HasAttachedClassModuleNotDeclared) {
+                e.setHeader("`{}` declared by parent `{}` must be re-declared in `{}`", hasAttachedClass,
+                            parent.show(gs), sym.show(gs));
+            } else if (sym.data(gs)->derivesFrom(gs, core::Symbols::Class())) {
+                // The VM rejects attempts to subclass Class directly
+                e.setHeader("`{}` is a subclass of `{}` which is not allowed", sym.show(gs), "Class");
+            } else {
+                // sym is a normal, non singleton class
+                e.setHeader("`{}` was declared `{}` and so must be `{}`ed into the class `{}`", parent.show(gs),
+                            hasAttachedClass, "extend", sym.show(gs));
+            }
+            e.addErrorLine(parentTypeMember.data(gs)->loc(), "`{}` declared in parent here", hasAttachedClass);
+        }
+    } else {
+        auto code = getRedeclarationErrorCode(gs, parent, name);
+        if (auto e = gs.beginError(sym.data(gs)->loc(), code)) {
+            e.setHeader("Type `{}` declared by parent `{}` must be re-declared in `{}`", name.show(gs), parent.show(gs),
+                        sym.show(gs));
+            e.addErrorLine(parentTypeMember.data(gs)->loc(), "`{}` declared in parent here", name.show(gs));
+            auto symIsSingletonClass = true;
+            auto maybeDefinedOn = sym.data(gs)->attachedClass(gs);
+            if (!maybeDefinedOn.exists()) {
+                symIsSingletonClass = false;
+                // implies we _are_ the attached class
+                maybeDefinedOn = sym.data(gs)->lookupSingletonClass(gs);
+            }
+            if (maybeDefinedOn.exists()) {
+                auto didYouMeanMember = maybeDefinedOn.data(gs)->findMember(gs, name);
+                if (didYouMeanMember.exists() && didYouMeanMember.isTypeMember()) {
+                    e.addErrorNote("Did you mean to define `{}` as a `{}` instead?", name.show(gs),
+                                   symIsSingletonClass ? "type_template" : "type_member");
+                    e.addErrorLine(didYouMeanMember.loc(gs), "A `{}` with the same name is defined here",
+                                   symIsSingletonClass ? "type_member" : "type_template");
+                }
+            }
+        }
+    }
+}
+
+core::TypeMemberRef resolveTypeMember(core::GlobalState &gs, core::ClassOrModuleRef parent,
+                                      core::TypeMemberRef parentTypeMember, core::ClassOrModuleRef sym) {
+    core::NameRef name = parentTypeMember.data(gs)->name;
+    core::SymbolRef my = sym.data(gs)->findMemberNoDealias(name);
+    if (!my.exists()) {
+        reportRedeclarationError(gs, parent, parentTypeMember, sym);
+
+        auto typeMember = gs.enterTypeMember(sym.data(gs)->loc(), sym, name, parentTypeMember.data(gs)->variance());
+        typeMember.data(gs)->flags.isFixed = true;
+        auto untyped = core::Types::untyped(sym);
+        typeMember.data(gs)->resultType = core::make_type<core::LambdaParam>(typeMember, untyped, untyped);
+        return {};
+    }
+    if (!my.isTypeMember()) {
+        if (auto e = gs.beginError(my.loc(gs), core::errors::Resolver::NotATypeVariable)) {
+            auto defaultError = true;
+            if (my.isClassAlias(gs)) {
+                auto dealiased = my.dealias(gs);
+                if (dealiased.owner(gs) == sym.data(gs)->lookupSingletonClass(gs) && dealiased.name(gs) == name) {
+                    e.setHeader("`{}` must be declared as a type_member (not a type_template) to match the parent",
+                                name.show(gs));
+                    e.addErrorLine(parentTypeMember.data(gs)->loc(), "Declared in parent `{}` here",
+                                   parentTypeMember.data(gs)->owner.show(gs));
+                    defaultError = false;
+                }
+            }
+            if (defaultError) {
+                e.setHeader("Type variable `{}` needs to be declared as a type_member or type_template, not a {}",
+                            name.show(gs), my.showKind(gs));
+            }
+        }
+        auto synthesizedName = gs.freshNameUnique(core::UniqueNameKind::TypeVarName, name, 1);
+        auto typeMember = gs.enterTypeMember(sym.data(gs)->loc(), sym, synthesizedName, core::Variance::Invariant);
+        typeMember.data(gs)->flags.isFixed = true;
+        auto untyped = core::Types::untyped(sym);
+        typeMember.data(gs)->resultType = core::make_type<core::LambdaParam>(typeMember, untyped, untyped);
+        return {};
+    }
+
+    auto myTypeMember = my.asTypeMemberRef();
+    auto myVariance = myTypeMember.data(gs)->variance();
+    auto parentVariance = parentTypeMember.data(gs)->variance();
+    if (myVariance != parentVariance && myVariance != core::Variance::Invariant) {
+        if (auto e = gs.beginError(myTypeMember.data(gs)->loc(), core::errors::Resolver::ParentVarianceMismatch)) {
+            auto orInvariant = parentVariance == core::Variance::Invariant ? "" : " or invariant";
+            if (name == core::Names::Constants::AttachedClass()) {
+                e.setHeader("Type variance mismatch for `{}` with parent `{}`. Parent needs to be `{}` but it is `{}`",
+                            "T.attached_class", parent.show(gs), core::Polarities::showVariance(myVariance),
+                            core::Polarities::showVariance(parentVariance));
+            } else {
+                e.setHeader("Type variance mismatch for `{}` with parent `{}`. Child `{}` should be `{}`{}, but "
+                            "it is `{}`",
+                            name.show(gs), parent.show(gs), sym.show(gs),
+                            core::Polarities::showVariance(parentVariance), orInvariant,
+                            core::Polarities::showVariance(myVariance));
+            }
+            e.addErrorLine(parentTypeMember.data(gs)->loc(), "Parent `{}` declared here", parent.show(gs));
+        }
+        return myTypeMember;
+    }
+    return myTypeMember;
+}
+
+void resolveTypeMembers(core::GlobalState &gs, core::ClassOrModuleRef sym, vector<bool> &resolved) {
+    if (resolved[sym.id()]) {
+        return;
+    }
+    resolved[sym.id()] = true;
+
+    if (sym.data(gs)->superClass().exists()) {
+        auto parent = sym.data(gs)->superClass();
+        resolveTypeMembers(gs, parent, resolved);
+
+        auto parentTypeMembers = parent.data(gs)->typeMembers();
+        vector<core::TypeMemberRef> myTypeMembers;
+        myTypeMembers.reserve(parentTypeMembers.size());
+        bool foundAll = true;
+        for (auto parentTypeMember : parentTypeMembers) {
+            auto found = resolveTypeMember(gs, parent, parentTypeMember, sym);
+            foundAll = foundAll && found.exists();
+            if (found.exists()) {
+                myTypeMembers.emplace_back(found);
+            }
+        }
+        if (foundAll) {
+            int parentIdx = 0;
+            // check that type params are in the same order.
+            for (auto parentTypeMember : parentTypeMembers) {
+                auto my = myTypeMembers[parentIdx];
+                if (sym.data(gs)->typeMembers()[parentIdx] != my) {
+                    if (auto e = gs.beginError(my.data(gs)->loc(), core::errors::Resolver::TypeMembersInWrongOrder)) {
+                        e.setHeader("Type members for `{}` repeated in wrong order", sym.show(gs));
+                        e.addErrorLine(my.data(gs)->loc(), "Found type member with name `{}`",
+                                       my.data(gs)->name.show(gs));
+                        e.addErrorLine(sym.data(gs)->typeMembers()[parentIdx].data(gs)->loc(),
+                                       "Expected type member with name `{}`",
+                                       sym.data(gs)->typeMembers()[parentIdx].data(gs)->name.show(gs));
+                        e.addErrorLine(parentTypeMember.data(gs)->loc(),
+                                       "`{}` defined in parent here:", parentTypeMember.data(gs)->name.show(gs));
+                    }
+                    int childIdx = 0;
+                    while (childIdx < sym.data(gs)->typeMembers().size() &&
+                           sym.data(gs)->typeMembers()[childIdx] != my) {
+                        childIdx++;
+                    }
+                    ENFORCE(childIdx < sym.data(gs)->typeMembers().size());
+                    // quadratic
+                    swap(sym.data(gs)->existingTypeMembers()[childIdx], sym.data(gs)->existingTypeMembers()[parentIdx]);
+                }
+                parentIdx++;
+            }
+        }
+    }
+    for (auto mixin : sym.data(gs)->mixins()) {
+        resolveTypeMembers(gs, mixin, resolved);
+        auto typeMembers = mixin.data(gs)->typeMembers();
+        for (auto tm : typeMembers) {
+            resolveTypeMember(gs, mixin, tm, sym);
+        }
+    }
+
+    // If this class has no type members, fix attached class early.
+    if (sym.data(gs)->typeMembers().empty()) {
+        sym.data(gs)->unsafeComputeExternalType(gs);
+        auto singleton = sym.data(gs)->lookupSingletonClass(gs);
+        if (singleton.exists()) {
+            // AttachedClass doesn't exist on `T.untyped`, which is a problem
+            // with RuntimeProfiled.
+            auto attachedClass = singleton.data(gs)->findMember(gs, core::Names::Constants::AttachedClass());
+            if (attachedClass.exists()) {
+                auto lambdaParam =
+                    core::cast_type<core::LambdaParam>(attachedClass.asTypeMemberRef().data(gs)->resultType);
+                ENFORCE(lambdaParam != nullptr);
+
+                lambdaParam->lowerBound = core::Types::bottom();
+                lambdaParam->upperBound = sym.data(gs)->externalType();
+            }
+        }
+    }
+}
+
+} // namespace
+
+void Resolver::finalizeAncestors(core::GlobalState &gs) {
+    Timer timer(gs.tracer(), "resolver.finalize_ancestors");
+    int methodCount = 0;
+    int classCount = 0;
+    int singletonClassCount = 0;
+    int moduleCount = 0;
+    for (const auto ref : gs.newMethods()) {
+        auto loc = ref.data(gs)->loc();
+        if (loc.file().exists() && loc.file().data(gs).sourceType == core::File::Type::Normal) {
+            methodCount++;
+        }
+    }
+    for (auto ref : gs.newClassOrModules()) {
+        if (!ref.data(gs)->isClassModuleSet()) {
+            // we did not see a declaration for this type not did we see it used. Default to module.
+            ref.data(gs)->setIsModule(true);
+            ref.data(gs)->singletonClass(gs); // force singleton class into existence
+        }
+    }
+
+    auto n = gs.classAndModulesUsed();
+    for (auto ref : gs.newClassOrModules()) {
+        auto loc = ref.data(gs)->loc();
+        if (loc.file().exists() && loc.file().data(gs).sourceType == core::File::Type::Normal) {
+            if (ref.data(gs)->isClass()) {
+                classCount++;
+            } else {
+                moduleCount++;
+            }
+        }
+        if (ref.data(gs)->superClass().exists() && ref.data(gs)->superClass() != core::Symbols::todo()) {
+            continue;
+        }
+        if (ref == core::Symbols::Sorbet_Private_Static_ImplicitModuleSuperClass()) {
+            // only happens if we run without stdlib
+            ENFORCE(!core::Symbols::Sorbet_Private_Static_ImplicitModuleSuperClass().data(gs)->loc().exists());
+            ref.data(gs)->setSuperClass(core::Symbols::BasicObject());
+            continue;
+        }
+
+        auto attached = ref.data(gs)->attachedClass(gs);
+        bool isSingleton = attached.exists() && attached != core::Symbols::untyped();
+        if (isSingleton) {
+            singletonClassCount++;
+            if (attached.data(gs)->superClass() == core::Symbols::Sorbet_Private_Static_ImplicitModuleSuperClass()) {
+                // Note: this depends on attached classes having lower indexes in name table than their singletons
+                ref.data(gs)->setSuperClass(core::Symbols::Module());
+            } else {
+                ENFORCE(attached.data(gs)->superClass() != core::Symbols::todo());
+                auto singletonSuperClass = attached.data(gs)->superClass().data(gs)->lookupSingletonClass(gs);
+                if (!singletonSuperClass.exists()) {
+                    singletonSuperClass = core::Symbols::Class();
+                }
+                ref.data(gs)->setSuperClass(singletonSuperClass);
+            }
+        } else {
+            if (ref.data(gs)->isClass()) {
+                if (core::Symbols::BasicObject() != ref && core::Symbols::top() != ref) {
+                    ref.data(gs)->setSuperClass(core::Symbols::Object());
+                }
+            } else {
+                ENFORCE(ref.data(gs)->isModule());
+                ENFORCE(!ref.data(gs)->superClass().exists() || ref.data(gs)->superClass() == core::Symbols::todo());
+
+                ref.data(gs)->setSuperClass(core::Symbols::Sorbet_Private_Static_ImplicitModuleSuperClass());
+            }
+        }
+    }
+    ENFORCE(n == gs.classAndModulesUsed(),
+            "Cannot add new classes in this loop--might not have finalized the new classes!")
+
+    prodCounterAdd("types.input.modules.total", moduleCount);
+    prodCounterAdd("types.input.classes.total", classCount);
+    prodCounterAdd("types.input.singleton_classes.total", singletonClassCount);
+    prodCounterAdd("types.input.methods.total", methodCount);
+}
+
+void Resolver::finalizeSymbols(core::GlobalState &gs,
+                               optional<absl::Span<const core::ClassOrModuleRef>> symbolsToRecompute) {
+    Timer timer(gs.tracer(), "resolver.finalize_resolution");
+    // TODO(nelhage): Properly this first loop should go in finalizeAncestors,
+    // but we currently compute mixes_in_class_methods during the same AST walk
+    // that resolves types and we don't want to introduce additional passes if
+    // we don't have to. It would be a tractable refactor to merge it
+    // `ResolveConstantsWalk` if it becomes necessary to process earlier.
+    {
+        Timer timer(gs.tracer(), "resolver.mix_in_class_methods");
+
+        for (auto sym : gs.newClassOrModules()) {
+            if (sym.data(gs)->flags.isLinearizationComputed) {
+                // Without this, the addMixin below for mixedInClassMethods is not idempotent on the
+                // fast path, and will accidentally mix a `ClassMethods` module into all children (not
+                // just the class that has the `include` triggering the mixes_in_class_methods, but all
+                // subclasses of that class).
+                continue;
+            }
+
+            core::ClassOrModuleRef singleton;
+            for (auto ancst : sym.data(gs)->mixins()) {
+                // Reading the fake property created in resolver#resolveClassMethodsJob(){}
+                auto mixedInClassMethods = ancst.data(gs)->findMethod(gs, core::Names::mixedInClassMethods());
+                if (!mixedInClassMethods.exists()) {
+                    continue;
+                }
+                if (!singleton.exists()) {
+                    singleton = sym.data(gs)->singletonClass(gs);
+                }
+
+                auto &resultType = mixedInClassMethods.data(gs)->resultType;
+                ENFORCE(resultType != nullptr && core::isa_type<core::TupleType>(resultType));
+                auto types = core::cast_type<core::TupleType>(resultType);
+
+                for (auto &type : types->elems) {
+                    ENFORCE(core::isa_type<core::ClassType>(type));
+                    auto classType = core::cast_type_nonnull<core::ClassType>(type);
+                    if (!singleton.data(gs)->addMixin(gs, classType.symbol)) {
+                        // Should never happen. We check in ResolveConstantsWalk that classMethods are a module before
+                        // adding it as a member.
+                        ENFORCE(false);
+                    }
+                }
+            }
+        }
+    }
+
+    vector<bool> resolved;
+    resolved.resize(gs.classAndModulesUsed());
+
+    if (symbolsToRecompute.has_value()) {
+        Timer timer(gs.tracer(), "resolver.resolve_type_members.partial");
+        for (auto sym : *symbolsToRecompute) {
+            resolveTypeMembers(gs, sym, resolved);
+
+            if (gs.cacheSensitiveOptions.requiresAncestorEnabled) {
+                // Precompute the list of all required ancestors for this symbol
+                sym.data(gs)->computeRequiredAncestorLinearization(gs);
+            }
+        }
+    } else {
+        // As we don't mutate mixins during incremental resolution, we only compute the linearization of the hieararchy
+        // when we don't have a known set of symbols that need to be updated.
+        gs.computeLinearization();
+
+        Timer timer(gs.tracer(), "resolver.resolve_type_members");
+        for (auto sym : gs.newClassOrModules()) {
+            resolveTypeMembers(gs, sym, resolved);
+
+            if (gs.cacheSensitiveOptions.requiresAncestorEnabled) {
+                // Precompute the list of all required ancestors for this symbol
+                sym.data(gs)->computeRequiredAncestorLinearization(gs);
+            }
+        }
+    }
+}
+
+} // namespace sorbet::resolver

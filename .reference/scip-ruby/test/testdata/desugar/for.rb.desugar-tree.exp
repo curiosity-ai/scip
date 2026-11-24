@@ -1,0 +1,206 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  <self>.extend(<emptyTree>::<C T>::<C Sig>)
+
+  class <emptyTree>::<C A><<C <todo sym>>> < (::<todo sym>)
+    def self.each<<todo method>>(&blk)
+      begin
+        blk.call(1, 2, 3, 4, 5)
+        blk.call(6, 7, 8, 9, 0)
+      end
+    end
+  end
+
+  class <emptyTree>::<C E><<C <todo sym>>> < (::<todo sym>)
+    def self.e=<<todo method>>(e, &<blk>)
+      @e = e
+    end
+
+    def self.e<<todo method>>(&<blk>)
+      @e
+    end
+  end
+
+  class <emptyTree>::<C Main><<C <todo sym>>> < (::<todo sym>)
+    def self.main<<todo method>>(&<blk>)
+      begin
+        <emptyTree>::<C A>.each() do |a|
+          <self>.puts(a.inspect())
+        end
+        <emptyTree>::<C A>.each() do |*forTemp|
+          begin
+            begin
+              <assignTemp>$2 = ::<Magic>.<splat>(forTemp)
+              <assignTemp>$3 = ::<Magic>.<expand-splat>(<assignTemp>$2, 1, 0)
+              a = <assignTemp>$3.[](0)
+              <assignTemp>$2
+            end
+            <self>.puts(a.inspect())
+          end
+        end
+        <emptyTree>::<C A>.each() do |a, b|
+          begin
+            <self>.puts(a.inspect())
+            <self>.puts(b.inspect())
+          end
+        end
+        <emptyTree>::<C A>.each() do |*forTemp|
+          begin
+            begin
+              <assignTemp>$4 = ::<Magic>.<splat>(forTemp)
+              <assignTemp>$5 = ::<Magic>.<expand-splat>(<assignTemp>$4, 2, 0)
+              a = <assignTemp>$5.[](0)
+              b = <assignTemp>$5.[](1)
+              <assignTemp>$4
+            end
+            <self>.puts(a.inspect())
+            <self>.puts(b.inspect())
+          end
+        end
+        <self>.puts("main")
+        <emptyTree>::<C A>.each() do |forTemp$6|
+          begin
+            begin
+              <assignTemp>$7 = forTemp$6
+              <assignTemp>$8 = ::<Magic>.<expand-splat>(<assignTemp>$7, 5, 0)
+              @a = <assignTemp>$8.[](0)
+              @@b = <assignTemp>$8.[](1)
+              $c = <assignTemp>$8.[](2)
+              d = <assignTemp>$8.[](3)
+              <emptyTree>::<C E>.e=(<assignTemp>$8.[](4))
+              <assignTemp>$7
+            end
+            begin
+              <self>.puts(@a.inspect())
+              <self>.puts(@@b.inspect())
+              <self>.puts($c.inspect())
+              <self>.puts(d.inspect())
+              <self>.puts(<emptyTree>::<C E>.e().inspect())
+            end
+          end
+        end
+        <emptyTree>::<C A>.each() do |*forTemp|
+          begin
+            begin
+              <assignTemp>$9 = ::<Magic>.<splat>(forTemp)
+              <assignTemp>$10 = ::<Magic>.<expand-splat>(<assignTemp>$9, 5, 0)
+              @a = <assignTemp>$10.[](0)
+              @@b = <assignTemp>$10.[](1)
+              $c = <assignTemp>$10.[](2)
+              d = <assignTemp>$10.[](3)
+              <emptyTree>::<C E>.e=(<assignTemp>$10.[](4))
+              <assignTemp>$9
+            end
+            <self>.puts(@a.inspect())
+            <self>.puts(@@b.inspect())
+            <self>.puts($c.inspect())
+            <self>.puts(d.inspect())
+            <self>.puts(<emptyTree>::<C E>.e().inspect())
+          end
+        end
+      end
+    end
+  end
+
+  <emptyTree>::<C Main>.main()
+
+  @ivar = <emptyTree>::<C T>.let([:x, 0], [<emptyTree>::<C Symbol>, <emptyTree>::<C Integer>])
+
+  @@cvar = <emptyTree>::<C T>.let([:x, 0], [<emptyTree>::<C Symbol>, <emptyTree>::<C Integer>])
+
+  $gvar = <emptyTree>::<C T>.let([:x, 0], [<emptyTree>::<C Symbol>, <emptyTree>::<C Integer>])
+
+  <self>.sig() do ||
+    <self>.params(:arg, [<emptyTree>::<C Symbol>, <emptyTree>::<C Integer>]).void()
+  end
+
+  def call_target=<<todo method>>(arg, &<blk>)
+    <emptyTree>
+  end
+
+  <emptyTree>::<C ConstantTarget> = <emptyTree>::<C T>.let([:x, 0], [<emptyTree>::<C Symbol>, <emptyTree>::<C Integer>])
+
+  <emptyTree>::<C ConstantPathTarget> = <emptyTree>::<C T>.let([:x, 0], [<emptyTree>::<C Symbol>, <emptyTree>::<C Integer>])
+
+  module <emptyTree>::<C Nested><<C <todo sym>>> < ()
+    <emptyTree>::<C ConstantPathTarget> = <emptyTree>::<C T>.let([:x, 0], [<emptyTree>::<C Symbol>, <emptyTree>::<C Integer>])
+  end
+
+  a = <emptyTree>::<C T>.let([], <emptyTree>::<C T>::<C Array>.[]([<emptyTree>::<C Symbol>, <emptyTree>::<C Integer>]))
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$2|
+    begin
+      @ivar = forTemp$2
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$3|
+    begin
+      @@cvar = forTemp$3
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$4|
+    begin
+      $gvar = forTemp$4
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$5|
+    begin
+      <self>.call_target=(forTemp$5)
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$6|
+    begin
+      <self>.call_target=(forTemp$6)
+      "loop body"
+    end
+  end
+
+  [].each() do |forTemp$7|
+    begin
+      <emptyTree>::<C E>.e=(forTemp$7)
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$8|
+    begin
+      <emptyTree>::<C ConstantTarget> = forTemp$8
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$9|
+    begin
+      ::<root>::<C ConstantPathTarget> = forTemp$9
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$10|
+    begin
+      <emptyTree>::<C Nested>::<C ConstantPathTarget> = forTemp$10
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$11|
+    begin
+      ::<root>::<C Nested>::<C ConstantPathTarget> = forTemp$11
+      "loop body"
+    end
+  end
+
+  [[:a, 1], [:b, 2], [:c, 3]].each() do |forTemp$12|
+    begin
+      a.[]=(123, forTemp$12)
+      "loop body"
+    end
+  end
+end

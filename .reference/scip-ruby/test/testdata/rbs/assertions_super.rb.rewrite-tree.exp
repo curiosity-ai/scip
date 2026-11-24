@@ -1,0 +1,87 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  class <emptyTree>::<C Foo><<C <todo sym>>> < (::<todo sym>)
+    ::T::Sig::WithoutRuntime.sig() do ||
+      <self>.params(:x, <emptyTree>::<C Integer>, :y, <emptyTree>::<C String>).returns(<emptyTree>::<C String>)
+    end
+
+    def foo<<todo method>>(x, y, &<blk>)
+      y.*(x)
+    end
+
+    <runtime method definition of foo>
+  end
+
+  class <emptyTree>::<C Bar><<C <todo sym>>> < (<emptyTree>::<C Foo>)
+    ::T::Sig::WithoutRuntime.sig() do ||
+      <self>.override().params(:x, <emptyTree>::<C Integer>, :y, <emptyTree>::<C String>).returns(<emptyTree>::<C String>)
+    end
+
+    def foo<<todo method>>(x, y, &<blk>)
+      <cast:cast>(<self>.<super>(<cast:cast>(<emptyTree>::<C ARGV>.first(), <todo sym>, <emptyTree>::<C String>), <cast:cast>(<emptyTree>::<C ARGV>.last(), <todo sym>, <emptyTree>::<C Integer>)), <todo sym>, <emptyTree>::<C Integer>)
+    end
+
+    <runtime method definition of foo>
+  end
+
+  class <emptyTree>::<C Baz><<C <todo sym>>> < (<emptyTree>::<C Foo>)
+    ::T::Sig::WithoutRuntime.sig() do ||
+      <self>.override().params(:x, <emptyTree>::<C Integer>, :y, <emptyTree>::<C String>).returns(<emptyTree>::<C String>)
+    end
+
+    def foo<<todo method>>(x, y, &<blk>)
+      ::<Magic>.<call-with-splat>(<self>, :<super>, ::<Magic>.<splat>([<cast:cast>(<emptyTree>::<C ARGV>.first(), <todo sym>, <emptyTree>::<C Integer>), <cast:cast>(<emptyTree>::<C ARGV>.last(), <todo sym>, <emptyTree>::<C String>)]), nil)
+    end
+
+    <runtime method definition of foo>
+  end
+
+  class <emptyTree>::<C Qux><<C <todo sym>>> < (<emptyTree>::<C Foo>)
+    ::T::Sig::WithoutRuntime.sig() do ||
+      <self>.override().params(:x, <emptyTree>::<C Integer>, :y, <emptyTree>::<C String>).returns(<emptyTree>::<C String>)
+    end
+
+    def foo<<todo method>>(x, y, &<blk>)
+      <cast:cast>(<self>.<super>(<emptyTree>::<C ARGV>.first(), <emptyTree>::<C ARGV>.last()), <todo sym>, <emptyTree>::<C Integer>)
+    end
+
+    <runtime method definition of foo>
+  end
+
+  class <emptyTree>::<C SuperBlockParent><<C <todo sym>>> < (::<todo sym>)
+    def forwarding_super<<todo method>>(*args, &<blk>)
+      <emptyTree>
+    end
+
+    def explicit_super<<todo method>>(arg, &<blk>)
+      <emptyTree>
+    end
+
+    <runtime method definition of forwarding_super>
+
+    <runtime method definition of explicit_super>
+  end
+
+  class <emptyTree>::<C SuperBlockChild><<C <todo sym>>> < (<emptyTree>::<C SuperBlockParent>)
+    def forwarding_super<<todo method>>(*args, &<blk>)
+      <self>.<super>(ZSuperArgs) do |local_record|
+        begin
+          return_value = <cast:let>(nil, <todo sym>, ::<root>::<C T>.nilable(::<root>::<C T>::<C Hash>.<syntheticSquareBrackets>(<emptyTree>::<C Symbol>, ::<root>::<C T>.untyped())))
+          <emptyTree>::<C T>.reveal_type(return_value)
+        end
+      end
+    end
+
+    def explicit_super<<todo method>>(arg, &<blk>)
+      <self>.<super>(arg) do |local_record|
+        begin
+          return_value = <cast:let>(nil, <todo sym>, ::<root>::<C T>.nilable(<emptyTree>::<C String>))
+          <emptyTree>::<C T>.reveal_type(return_value)
+        end
+      end
+    end
+
+    <runtime method definition of forwarding_super>
+
+    <runtime method definition of explicit_super>
+  end
+end

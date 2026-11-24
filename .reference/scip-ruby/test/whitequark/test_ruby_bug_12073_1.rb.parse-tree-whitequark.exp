@@ -1,0 +1,7 @@
+s(:def, :foo,
+  s(:params,
+    s(:param, :raise)),
+  s(:send, nil, :raise,
+    s(:const,
+      s(:const, nil, :A), :B),
+    s(:str, "")))

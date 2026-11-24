@@ -1,0 +1,5 @@
+s(:def, :f,
+  s(:params,
+    s(:mlhs,
+      s(:mlhs,
+        s(:param, :a)))), nil)

@@ -1,0 +1,40 @@
+# typed: true
+# selective-apply-code-action: refactor.rewrite
+extend T::Sig
+
+class A
+  extend T::Sig
+
+  sig {params(this: A).void}
+  def self.nullary(this)
+    # | apply-code-action: [A] Convert to singleton class method (best effort)
+    puts "Hello, peter."
+  end
+
+  def example
+    A.nullary(self)
+    A.nullary(self)
+    A.nullary(self) {}
+    #       ^^ error: does not take a block
+    A.nullary(self) {}
+    #         ^^ error: does not take a block
+    A.nullary(self) do # error: does not take a block
+    end
+    A.nullary(self) do # error: does not take a block
+    end
+  end
+
+  sig {params(other: A).returns(T.self_type)}
+  def +(other); self; end
+end
+
+A.nullary(A.new) do # error: does not take a block
+end
+A.nullary(A.new) {}
+#             ^^ error: does not take a block
+A.nullary(A.new) do # error: does not take a block
+end
+
+(T.unsafe(A.new)).nullary
+
+(A).nullary(A.new + A.new)

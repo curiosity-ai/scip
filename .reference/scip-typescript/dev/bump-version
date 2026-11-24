@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -eux
+
+# Creates a release PR that bumps the version in package.json.
+# After the PR is merged, tag the merge commit to trigger the release job
+# (see Development.md).
+
+NEW_VERSION="$1"
+if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "You need to specify a version number in the format X.Y.Z"
+    exit 1
+fi
+
+# Assert that there are no uncommitted changes
+git diff-index --quiet HEAD --
+
+# The remote pointing at sourcegraph/scip-typescript (override with REMOTE=...)
+REMOTE="${REMOTE:-$(git remote -v | awk '$2 ~ /[:\/]sourcegraph\/scip-typescript(\.git)?$/ && $3 == "(push)" { print $1; exit }')}"
+if [[ -z "$REMOTE" ]]; then
+    echo "No git remote for sourcegraph/scip-typescript found, set REMOTE=..."
+    exit 1
+fi
+
+BRANCH="release/v$NEW_VERSION"
+git fetch "$REMOTE" main
+git switch -c "$BRANCH" "$REMOTE/main"
+
+echo "Updating package.json."
+yarn version --no-git-tag-version --new-version "$NEW_VERSION"
+git commit -am "Release v$NEW_VERSION."
+
+git push -u "$REMOTE" "$BRANCH"
+gh pr create --repo sourcegraph/scip-typescript --base main --head "$BRANCH" \
+    --title "Release v$NEW_VERSION." \
+    --body "Bumps the version to $NEW_VERSION.
+
+### Test plan
+
+Version bump only. Once merged, pushing the \`v$NEW_VERSION\` tag triggers the release workflow."

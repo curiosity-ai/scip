@@ -1,0 +1,13 @@
+[tool.pyright]
+include = ["test*.py"]
+
+reportMissingImports = true
+reportUnusedClass = "warning"
+
+pythonVersion = "3.9"
+
+[dependency-groups]
+dev = [{include-group = "test"}, "requests"]
+
+[tool.example]
+max_id = 9223372036854775807

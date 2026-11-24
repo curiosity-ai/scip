@@ -1,0 +1,1314 @@
+import path from 'path'
+
+import { create } from '@bufbuild/protobuf'
+import {
+  type Descriptor,
+  type Diagnostic,
+  DiagnosticSchema,
+  DiagnosticTag,
+  type Document,
+  type Occurrence,
+  OccurrenceSchema,
+  type Relationship,
+  RelationshipSchema,
+  Severity,
+  type Signature,
+  SignatureSchema,
+  type SymbolInformation,
+  SymbolInformation_Kind,
+  SymbolInformationSchema,
+  SymbolRole,
+} from '@scip-code/scip'
+import * as ts from 'typescript'
+
+import { ProjectOptions } from './CommandLineOptions.js'
+import { Counter } from './Counter.js'
+import {
+  metaDescriptor,
+  methodDescriptor,
+  packageDescriptor,
+  parameterDescriptor,
+  termDescriptor,
+  typeDescriptor,
+  typeParameterDescriptor,
+} from './Descriptor.js'
+import { Input } from './Input.js'
+import { Packages } from './Packages.js'
+import { formatByteSizeAsHumanReadable } from './parseHumanByteSizeIntoNumber.js'
+import { Position } from './Position.js'
+import { Range } from './Range.js'
+import { ScipSymbol } from './ScipSymbol.js'
+import { SourceInfo } from './SourceInfo.js'
+import * as ts_inline from './TypeScriptInternal.js'
+
+export class FileIndexer {
+  private localCounter = new Counter()
+  private propertyCounters: Map<string, Counter> = new Map()
+  private localSymbolTable: Map<ts.Node, ScipSymbol> = new Map()
+  private symbolInformation: Map<string, SymbolInformation> = new Map()
+  private occurrenceKeys: Set<string> = new Set()
+  private workingDirectoryRegExp: RegExp
+  constructor(
+    public readonly checker: ts.TypeChecker,
+    public readonly options: ProjectOptions,
+    public readonly input: Input,
+    public readonly document: Document,
+    public readonly globalSymbolTable: Map<ts.Node, ScipSymbol>,
+    public readonly globalConstructorTable: Map<ts.ClassDeclaration, boolean>,
+    public readonly packages: Packages,
+    public readonly sourceFile: ts.SourceFile,
+    public readonly sourceInfo: SourceInfo,
+    public readonly sourceInfos: Map<ts.SourceFile, SourceInfo>,
+    private readonly transformDocumentation: (
+      value: string
+    ) => string = value => value
+  ) {
+    this.workingDirectoryRegExp = new RegExp(options.cwd, 'g')
+  }
+  public index(): void {
+    // Uncomment below if you want to skip certain files for local development.
+    // if (!this.sourceFile.fileName.includes('constructor')) {
+    //   return
+    // }
+
+    const byteSize = Buffer.from(this.sourceInfo.originalText).length
+    if (
+      this.options.maxFileByteSizeNumber &&
+      byteSize > this.options.maxFileByteSizeNumber
+    ) {
+      const humanSize = formatByteSizeAsHumanReadable(byteSize)
+      const humanMaxSize = formatByteSizeAsHumanReadable(
+        this.options.maxFileByteSizeNumber
+      )
+      console.log(
+        `info: skipping file '${this.sourceFile.fileName}' because it has byte size ${humanSize} that exceeds the maximum threshold ${humanMaxSize}. ` +
+          'If you intended to index this file, use the flag --max-file-byte-size to configure the maximum file size threshold.'
+      )
+      return
+    }
+
+    this.emitSourceFileOccurrence()
+    this.visit(this.sourceFile)
+  }
+  private emitSourceFileOccurrence(): void {
+    const symbol = this.scipSymbol(this.sourceFile)
+    if (symbol.isEmpty()) {
+      return
+    }
+    this.pushOccurrence(
+      create(OccurrenceSchema, {
+        typedRange: new Range(
+          new Position(0, 0),
+          new Position(0, 0)
+        ).toTypedRange(),
+        typedEnclosingRange: this.sourceInfo
+          .range(this.sourceFile)
+          ?.toTypedEnclosingRange(),
+        symbol: symbol.value,
+        symbolRoles: SymbolRole.Definition,
+      })
+    )
+    const moduleName =
+      this.sourceFile.moduleName || path.basename(this.sourceInfo.fileName)
+    this.pushSymbolInformation(
+      create(SymbolInformationSchema, {
+        symbol: symbol.value,
+        signatureDocumentation: signatureDocumentation(
+          `module "${moduleName}"`
+        ),
+        kind: SymbolInformation_Kind.File,
+      })
+    )
+  }
+  private visit(node: ts.Node): void {
+    if (
+      ts.isConstructorDeclaration(node) ||
+      ts.isIdentifier(node) ||
+      ts.isPrivateIdentifier(node) ||
+      ts.isStringLiteralLike(node)
+    ) {
+      const sym = this.getTSSymbolAtLocation(node)
+      if (sym) {
+        this.visitSymbolOccurrence(node, sym)
+      }
+    }
+
+    ts.forEachChild(node, node => this.visit(node))
+  }
+
+  // Get the ts.Symbol corresponding to the current node, potentially de-aliasing
+  // the direct symbol to account for imports.
+  //
+  // This code is directly based off src/services/goToDefinition.ts.
+  private getTSSymbolAtLocation(node: ts.Node): ts.Symbol | undefined {
+    const rangeNode: ts.Node = ts.isConstructorDeclaration(node)
+      ? (node.getFirstToken() ?? node)
+      : node
+    let symbol = this.checker.getSymbolAtLocation(rangeNode)
+
+    // For C.prototype['member'] assignments the checker exposes the member on
+    // C's instance type, but not at the string literal itself.
+    if (
+      !symbol &&
+      ts.isElementAccessExpression(node.parent) &&
+      node.parent.argumentExpression === node &&
+      ts.isStringLiteralLike(node)
+    ) {
+      const owner = this.prototypeOwner(node.parent.expression)
+      symbol = owner
+        ? this.checker.getDeclaredTypeOfSymbol(owner).getProperty(node.text)
+        : undefined
+    }
+
+    // If this is an alias, and the request came at the declaration location
+    // get the aliased symbol instead. This allows for goto def on an import e.g.
+    //   import {A, B} from "mod";
+    // to jump to the implementation directly.
+    if (
+      symbol?.declarations &&
+      symbol.flags & ts.SymbolFlags.Alias &&
+      node.kind === ts.SyntaxKind.Identifier &&
+      (node.parent === symbol.declarations[0] ||
+        ts_inline.shouldSkipAlias(symbol.declarations[0]))
+    ) {
+      const aliased = this.checker.getAliasedSymbol(symbol)
+      if (aliased.declarations) {
+        return aliased
+      }
+    }
+    return symbol
+  }
+
+  private hasConstructor(classDeclaration: ts.ClassDeclaration): boolean {
+    const cached = this.globalConstructorTable.get(classDeclaration)
+    if (cached !== undefined) {
+      return cached
+    }
+
+    for (const member of classDeclaration.members) {
+      if (ts.isConstructorDeclaration(member)) {
+        this.globalConstructorTable.set(classDeclaration, true)
+        return true
+      }
+    }
+
+    this.globalConstructorTable.set(classDeclaration, false)
+    return false
+  }
+
+  private getDeclarationsForPropertyAssignment(
+    node: ts.Node
+  ): ts.Declaration[] | undefined {
+    const objectElement = ts_inline.getContainingObjectLiteralElement(node)
+    if (!objectElement) {
+      return
+    }
+    const contextualType = this.checker.getContextualType(objectElement.parent)
+    if (contextualType === undefined) {
+      return
+    }
+    // svelte2tsx gives the generated props object the contextual type
+    // `Props | undefined`. Property lookup on that union cannot find `label`
+    // in `<Component label={value} />`, so remove the nullish branch first.
+    const propertyOwner = this.sourceInfo.isSvelte
+      ? this.checker.getNonNullableType(contextualType)
+      : contextualType
+    const symbol = ts_inline.getPropertySymbolFromContextualType(
+      objectElement,
+      propertyOwner
+    )
+    const declarations = symbol?.getDeclarations()
+    // Inferred object types can contextually resolve a property back to its
+    // own declaration. Treat that circular result as a definition instead of
+    // emitting a reference to a symbol that never gets SymbolInformation.
+    return declarations?.includes(objectElement) ? undefined : declarations
+  }
+
+  private visitSymbolOccurrence(node: ts.Node, sym: ts.Symbol): void {
+    const isConstructor = ts.isConstructorDeclaration(node)
+    // For constructors, this method is passed the declaration node and not the identifier node.
+    // In either case, this method needs to get the range of the "name" of the declaration, for constructors we
+    // get the firstToken which contains the text "constructor".
+    const range = this.sourceInfo.range(
+      isConstructor ? (node.getFirstToken() ?? node) : node
+    )
+    if (!range) {
+      return
+    }
+    let role = 0
+    let declarations: ts.Node[] =
+      this.getDeclarationsForPropertyAssignment(node) ?? []
+    const isPrototypeMemberDefinition =
+      (accessName(node.parent) !== undefined ||
+        (ts.isCallExpression(node.parent) &&
+          node.parent.arguments[1] === node)) &&
+      sym.declarations?.some(declaration => declaration === node.parent) ===
+        true &&
+      this.prototypeAssignment(node.parent)?.memberName !== undefined
+    const isDefinitionNode =
+      declarations.length === 0 &&
+      (isDefinition(node) || isPrototypeMemberDefinition)
+    if (isDefinitionNode) {
+      role |= SymbolRole.Definition
+    }
+    if (declarations.length === 0) {
+      declarations = ts.isConstructorDeclaration(node)
+        ? [node]
+        : isDefinitionNode
+          ? // Don't emit ambiguous definition at definition-site. You can reproduce
+            // ambiguous results by triggering "Go to definition" in VS Code on `Conflict`
+            // in the example below:
+            // export const Conflict = 42
+            // export interface Conflict {}
+            //                  ^^^^^^^^ "Go to definition" shows two results: const and interface.
+            // See https://github.com/sourcegraph/scip-typescript/pull/206 for more details.
+            [node.parent]
+          : sym?.declarations || []
+    }
+    for (const declaration of declarations) {
+      let scipSymbol = this.scipSymbol(declaration)
+
+      let enclosingRange: Range | undefined
+
+      if (!isDefinitionNode || scipSymbol.isEmpty() || scipSymbol.isLocal()) {
+        // Skip enclosing ranges for these cases
+      } else if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer &&
+        ts.isFunctionLike(declaration.initializer)
+      ) {
+        // Cover the whole `export const name = ...` statement so the range
+        // encloses the name. Fall back to the declaration itself when the
+        // statement has several declarations or there is no statement (e.g.
+        // a `for` loop initializer).
+        const statement = declaration.parent.parent
+        enclosingRange = this.sourceInfo.range(
+          ts.isVariableStatement(statement) &&
+            statement.declarationList.declarations.length === 1
+            ? statement
+            : declaration
+        )
+      } else if (
+        ts.isFunctionDeclaration(declaration) ||
+        ts.isEnumDeclaration(declaration) ||
+        ts.isTypeAliasDeclaration(declaration) ||
+        ts.isClassDeclaration(declaration) ||
+        ts.isMethodDeclaration(declaration) ||
+        ts.isInterfaceDeclaration(declaration) ||
+        ts.isConstructorDeclaration(declaration)
+      ) {
+        enclosingRange = this.sourceInfo.range(declaration)
+      }
+
+      if (
+        ((ts.isIdentifier(node) && ts.isNewExpression(node.parent)) ||
+          (ts.isPropertyAccessExpression(node.parent) &&
+            ts.isNewExpression(node.parent.parent))) &&
+        ts.isClassDeclaration(declaration) &&
+        this.hasConstructor(declaration)
+      ) {
+        scipSymbol = ScipSymbol.global(
+          scipSymbol,
+          methodDescriptor('<constructor>')
+        )
+      }
+
+      if (scipSymbol.isEmpty()) {
+        // Skip empty symbols
+        continue
+      }
+      this.pushOccurrence(
+        create(OccurrenceSchema, {
+          typedEnclosingRange: enclosingRange?.toTypedEnclosingRange(),
+          typedRange: range.toTypedRange(),
+          symbol: scipSymbol.value,
+          symbolRoles: role,
+
+          diagnostics: FileIndexer.diagnosticsFor(sym, isDefinitionNode),
+        })
+      )
+      if (isDefinitionNode) {
+        this.addSymbolInformation(node, sym, declaration, scipSymbol)
+        this.handleObjectBindingPattern(node, range)
+        // Only emit one symbol for definitions sites, see https://github.com/sourcegraph/scip-typescript/issues/45
+        break
+      }
+    }
+    this.handleShorthandPropertyValue(node.parent, range)
+  }
+
+  /**
+   * Emits an additional definition occurrence when destructuring an object
+   * pattern. For example:
+   * ```
+   * interface Props { property: number}
+   * const props: Props[] = [{ property: 42 }]
+   * props.map(({property}) => property) = {a}
+   * //          ^^^^^^^^ references `Props.property` and defines a local parameter `property`
+   * ```
+   */
+  private handleObjectBindingPattern(node: ts.Node, range: Range): void {
+    const isObjectBindingPatternProperty =
+      ts.isIdentifier(node) &&
+      ts.isBindingElement(node.parent) &&
+      ts.isObjectBindingPattern(node.parent.parent)
+    if (!isObjectBindingPatternProperty) {
+      return
+    }
+    const tpe = this.checker.getTypeAtLocation(node.parent.parent)
+    const property = tpe.getProperty(node.getText())
+    for (const declaration of property?.declarations || []) {
+      const scipSymbol = this.scipSymbol(declaration)
+      if (scipSymbol.isEmpty()) {
+        continue
+      }
+      this.pushOccurrence(
+        create(OccurrenceSchema, {
+          typedRange: range.toTypedRange(),
+          symbol: scipSymbol.value,
+        })
+      )
+    }
+  }
+
+  /**
+   * Handles the special-case around shorthand property syntax so that we emit two occurrences instead of only one.
+   * Shorthand properties need two symbols because the token is both a property and a reference to its value. For example:
+   * ```
+   * const a = 42
+   * const b = {a}
+   * //         ^ both references the local const `a` and defines a new property
+   * const c = b.a
+   * //          ^ reference to the property `a`, not the local const
+   * ```
+   * Contextually typed properties similarly reference both the contextual property
+   * and the local or imported value at the same range.
+   */
+  private handleShorthandPropertyValue(
+    declaration: ts.Node,
+    range: Range
+  ): void {
+    if (!ts.isShorthandPropertyAssignment(declaration)) {
+      return
+    }
+    let valueSymbol =
+      this.checker.getShorthandAssignmentValueSymbol(declaration)
+    if (!valueSymbol) {
+      return
+    }
+    if (valueSymbol.flags & ts.SymbolFlags.Alias) {
+      valueSymbol = this.checker.getAliasedSymbol(valueSymbol)
+    }
+    for (const symbol of valueSymbol.declarations || []) {
+      const scipSymbol = this.scipSymbol(symbol)
+      if (scipSymbol.isEmpty()) {
+        continue
+      }
+      this.pushOccurrence(
+        create(OccurrenceSchema, {
+          typedRange: range.toTypedRange(),
+          symbol: scipSymbol.value,
+        })
+      )
+    }
+  }
+
+  private sanitizeDocumentation(value: string): string {
+    // Absolute paths make documentation machine-specific.
+    const documentation = value.replace(this.workingDirectoryRegExp, '')
+    return this.transformDocumentation(documentation)
+  }
+  private addSymbolInformation(
+    node: ts.Node,
+    sym: ts.Symbol,
+    declaration: ts.Node,
+    symbol: ScipSymbol
+  ): void {
+    const docstring = sym.getDocumentationComment(this.checker)
+    this.pushSymbolInformation(
+      create(SymbolInformationSchema, {
+        symbol: symbol.value,
+        documentation:
+          docstring.length > 0
+            ? [ts.displayPartsToString(docstring).toWellFormed()]
+            : [],
+        signatureDocumentation: signatureDocumentation(
+          this.sanitizeDocumentation(
+            this.signatureForDocumentation(node, sym, declaration)
+          )
+        ),
+        relationships: this.relationships(declaration, symbol),
+        kind: symbolKind(declaration, sym),
+      })
+    )
+  }
+
+  private pushSymbolInformation(info: SymbolInformation): void {
+    const existing = this.symbolInformation.get(info.symbol)
+    if (!existing) {
+      this.symbolInformation.set(info.symbol, info)
+      this.document.symbols.push(info)
+      return
+    }
+
+    // Overload declarations share one SCIP symbol but can contribute distinct
+    // signatures and relationships. Keep the first non-empty documentation
+    // and merge relationships into the single SymbolInformation entry.
+    if (existing.documentation.length === 0) {
+      existing.documentation = info.documentation
+    }
+    existing.signatureDocumentation ??= info.signatureDocumentation
+    for (const relationship of info.relationships) {
+      const previous = existing.relationships.find(
+        candidate => candidate.symbol === relationship.symbol
+      )
+      if (previous) {
+        previous.isDefinition ||= relationship.isDefinition
+        previous.isReference ||= relationship.isReference
+        previous.isImplementation ||= relationship.isImplementation
+        previous.isTypeDefinition ||= relationship.isTypeDefinition
+      } else {
+        existing.relationships.push(relationship)
+      }
+    }
+  }
+
+  private pushOccurrence(occurrence: Occurrence): void {
+    const key = `${Range.fromOccurrence(occurrence).toString()} ${occurrence.symbolRoles} ${occurrence.symbol}`
+    if (this.occurrenceKeys.has(key)) {
+      return
+    }
+    this.occurrenceKeys.add(key)
+    this.document.occurrences.push(occurrence)
+  }
+
+  private relationships(
+    declaration: ts.Node,
+    declarationSymbol: ScipSymbol
+  ): Relationship[] {
+    const relationships: Relationship[] = []
+    const isAddedSymbol = new Set<string>()
+    const pushImplementation = (
+      node: ts.NamedDeclaration,
+      isReferences: boolean
+    ): void => {
+      const symbol = this.scipSymbol(node)
+      if (symbol.isEmpty()) {
+        return
+      }
+      if (symbol.value === declarationSymbol.value) {
+        return
+      }
+      if (isAddedSymbol.has(symbol.value)) {
+        // Avoid duplicate relationships. This can happen for overloaded methods
+        // that have different ts.Symbol but the same SCIP symbol.
+        return
+      }
+      isAddedSymbol.add(symbol.value)
+      relationships.push(
+        create(RelationshipSchema, {
+          symbol: symbol.value,
+          isImplementation: true,
+          isReference: isReferences,
+        })
+      )
+    }
+    if (ts.isClassDeclaration(declaration)) {
+      this.forEachAncestor(declaration, ancestor => {
+        pushImplementation(ancestor, false)
+      })
+    } else if (
+      ts.isMethodDeclaration(declaration) ||
+      ts.isMethodSignature(declaration) ||
+      ts.isPropertyAssignment(declaration) ||
+      ts.isPropertyDeclaration(declaration)
+    ) {
+      const declarationName = declaration.name.getText()
+      this.forEachAncestor(declaration.parent, ancestor => {
+        for (const member of ancestor.members) {
+          if (declarationName === member.name?.getText()) {
+            pushImplementation(member, true)
+          }
+        }
+      })
+    }
+    return relationships
+  }
+
+  private prototypeOwner(node: ts.Node): ts.Symbol | undefined {
+    if (
+      !(
+        ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)
+      ) ||
+      accessName(node) !== 'prototype'
+    ) {
+      return
+    }
+    const symbol = this.checker.getSymbolAtLocation(node.expression)
+    return symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0
+      ? this.checker.getAliasedSymbol(symbol)
+      : symbol
+  }
+
+  private prototypeAssignment(
+    node: ts.Node
+  ): { declaration: ts.Declaration; memberName?: string } | undefined {
+    if (ts.isCallExpression(node)) {
+      const [target, name] = node.arguments
+      if (
+        node.arguments.length !== 3 ||
+        !ts.isStringLiteralLike(name) ||
+        !ts.isPropertyAccessExpression(node.expression) ||
+        node.expression.name.text !== 'defineProperty' ||
+        !ts.isIdentifier(node.expression.expression) ||
+        node.expression.expression.text !== 'Object'
+      ) {
+        return
+      }
+      // The checker also treats a shadowed Object.defineProperty as a member
+      // declaration. Only the global Object has the semantics we rely on.
+      const object = this.checker.getSymbolAtLocation(
+        node.expression.expression
+      )
+      if (
+        !object ||
+        object !==
+          this.checker.resolveName(
+            'Object',
+            undefined,
+            ts.SymbolFlags.Value,
+            false
+          )
+      ) {
+        return
+      }
+      const symbol = this.prototypeOwner(target)
+      const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0]
+      return declaration ? { declaration, memberName: name.text } : undefined
+    }
+
+    const assignment = ts.isBinaryExpression(node)
+      ? node
+      : ts.isObjectLiteralExpression(node)
+        ? node.parent
+        : ts.isPropertyAccessExpression(node) ||
+            ts.isElementAccessExpression(node)
+          ? node.parent
+          : (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) &&
+              (ts.isPropertyAccessExpression(node.parent) ||
+                ts.isElementAccessExpression(node.parent))
+            ? node.parent.parent
+            : (ts.isPropertyAssignment(node) ||
+                  ts.isShorthandPropertyAssignment(node)) &&
+                ts.isObjectLiteralExpression(node.parent)
+              ? node.parent.parent
+              : undefined
+    if (
+      !assignment ||
+      !ts.isBinaryExpression(assignment) ||
+      assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+      !(
+        ts.isPropertyAccessExpression(assignment.left) ||
+        ts.isElementAccessExpression(assignment.left)
+      )
+    ) {
+      return
+    }
+
+    let prototype: ts.Node = assignment.left
+    let memberName: string | undefined
+    if (
+      node === assignment.left &&
+      accessName(assignment.left.expression) === 'prototype'
+    ) {
+      prototype = assignment.left.expression
+      memberName = accessName(node)
+      if (memberName === undefined) {
+        return
+      }
+    } else {
+      if (!ts.isObjectLiteralExpression(assignment.right)) {
+        return
+      }
+      if (
+        ts.isPropertyAssignment(node) ||
+        ts.isShorthandPropertyAssignment(node)
+      ) {
+        const name = ts.isComputedPropertyName(node.name)
+          ? node.name.expression
+          : node.name
+        memberName =
+          ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)
+            ? name.text
+            : node.name.getText()
+      }
+    }
+
+    const symbol = this.prototypeOwner(prototype)
+    const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0]
+    return declaration ? { declaration, memberName } : undefined
+  }
+
+  private scipSymbol(node: ts.Node): ScipSymbol {
+    const fromCache: ScipSymbol | undefined =
+      this.globalSymbolTable.get(node) || this.localSymbolTable.get(node)
+    if (fromCache) {
+      return fromCache
+    }
+    // Use the declaration's source info, since references can cross files.
+    const sourceInfo = this.sourceInfos.get(node.getSourceFile())
+    const declarationSymbol = sourceInfo?.declarationSymbol(node, declaration =>
+      this.scipSymbol(declaration)
+    )
+    if (declarationSymbol !== undefined) {
+      return this.cached(node, declarationSymbol)
+    }
+    if (ts.isBlock(node)) {
+      return ScipSymbol.empty()
+    }
+    if (ts.isSourceFile(node)) {
+      const package_ = this.packages.symbol(node.fileName)
+      if (package_.isEmpty()) {
+        return this.cached(node, ScipSymbol.anonymousPackage())
+      }
+      return this.cached(node, package_)
+    }
+
+    const prototypeAssignment = this.prototypeAssignment(node)
+    if (prototypeAssignment) {
+      // Declarations attached to prototype writes and their object literals belong
+      // to the constructor. Members need their own stable descriptor instead
+      // of the local or counter-based object-property fallback.
+      const owner = this.scipSymbol(prototypeAssignment.declaration)
+      if (owner.isEmpty() || owner.isLocal()) {
+        return prototypeAssignment.memberName !== undefined
+          ? this.newLocalSymbol(node)
+          : owner
+      }
+      const symbol =
+        prototypeAssignment.memberName !== undefined
+          ? ScipSymbol.global(
+              owner,
+              termDescriptor(prototypeAssignment.memberName)
+            )
+          : owner
+      return this.cached(node, symbol)
+    }
+
+    if (
+      ts.isPropertyAssignment(node) ||
+      ts.isShorthandPropertyAssignment(node)
+    ) {
+      const name = node.name.getText()
+      let counter = this.propertyCounters.get(name)
+      if (!counter) {
+        counter = new Counter()
+        this.propertyCounters.set(name, counter)
+      }
+      return this.cached(
+        node,
+        ScipSymbol.global(
+          this.scipSymbol(node.getSourceFile()),
+          metaDescriptor(`${node.name.getText()}${counter.next()}`)
+        )
+      )
+    }
+
+    if (ts.isJsxAttribute(node)) {
+      // NOTE(olafurpg): the logic below is a bit convoluted but I spent several
+      // hours and failed to come up with a cleaner solution. JSX attributes
+      // have custom typechecking rules, as documented here
+      // https://www.typescriptlang.org/docs/handbook/jsx.html#type-checking The
+      // only way to access the actual symbol we want to reference appears to go
+      // through the JSX opening element, which is the grandparent of the JSX
+      // attribute node. Through the signature of the opening element, we get
+      // the permitted attributes by querying the type of the first parameter.
+      const jsxElement = node.parent.parent
+      const props = this.checker
+        .getResolvedSignature(jsxElement)
+        ?.getParameters()?.[0]
+      if (props) {
+        try {
+          const tpe = this.checker.getTypeOfSymbolAtLocation(props, node)
+          const property = tpe.getProperty(
+            ts_inline.getTextOfJsxAttributeName(node.name)
+          )
+          for (const decl of property?.declarations || []) {
+            return this.scipSymbol(decl)
+          }
+        } catch {
+          // TODO: https://github.com/sourcegraph/scip-typescript/issues/34
+          // continue regardless of error, the TypeScript compiler tends to
+          // trigger stack overflows in getTypeOfSymbolAtLocation and we
+          // don't know why yet.
+        }
+      }
+    }
+
+    const owner = this.scipSymbol(node.parent)
+    if (owner.isEmpty() || owner.isLocal()) {
+      return this.newLocalSymbol(node)
+    }
+
+    if (isAnonymousContainerOfSymbols(node)) {
+      return this.cached(node, this.scipSymbol(node.parent))
+    }
+
+    if (
+      ts.isImportSpecifier(node) ||
+      ts.isImportClause(node) ||
+      ts.isNamespaceImport(node)
+    ) {
+      // Resolve the import binding rather than its inferred type. This matters
+      // for Svelte components and imported stores, whose inferred types point
+      // at framework helpers instead of the user-authored declaration.
+      const alias = node.name
+        ? this.checker.getSymbolAtLocation(node.name)
+        : undefined
+      if (
+        (sourceInfo?.isSvelte || isSvelteImport(node)) &&
+        alias &&
+        (alias.flags & ts.SymbolFlags.Alias) !== 0
+      ) {
+        const imported = this.checker.getAliasedSymbol(alias)
+        for (const declaration of imported.declarations || []) {
+          return this.scipSymbol(declaration)
+        }
+      }
+      const tpe = this.checker.getTypeAtLocation(node)
+      for (const declaration of tpe.symbol?.declarations || []) {
+        return this.scipSymbol(declaration)
+      }
+    }
+
+    const desc = this.descriptor(node)
+    if (desc) {
+      return this.cached(node, ScipSymbol.global(owner, desc))
+    }
+
+    // Fallback case: generate a local symbol. It's not a bug when this case
+    // happens. For example, we hit this case for block `{}` that are local
+    // symbols, which are direct children of global symbols (toplevel
+    // functions).
+    return this.newLocalSymbol(node)
+  }
+
+  private newLocalSymbol(node: ts.Node): ScipSymbol {
+    const symbol = ScipSymbol.local(this.localCounter.next())
+    this.localSymbolTable.set(node, symbol)
+    return symbol
+  }
+  private cached(node: ts.Node, symbol: ScipSymbol): ScipSymbol {
+    this.globalSymbolTable.set(node, symbol)
+    return symbol
+  }
+  private descriptor(node: ts.Node): Descriptor | undefined {
+    if (
+      ts.isInterfaceDeclaration(node) ||
+      ts.isEnumDeclaration(node) ||
+      ts.isTypeAliasDeclaration(node)
+    ) {
+      return typeDescriptor(node.name.getText())
+    }
+    if (ts.isClassLike(node)) {
+      const name = node.name?.getText()
+      if (name) {
+        return typeDescriptor(name)
+      }
+    }
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isMethodSignature(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      const name = node.name?.getText()
+      if (name) {
+        return methodDescriptor(name)
+      }
+    }
+    if (ts.isConstructorDeclaration(node)) {
+      return methodDescriptor('<constructor>')
+    }
+    if (
+      ts.isPropertyDeclaration(node) ||
+      ts.isPropertySignature(node) ||
+      ts.isEnumMember(node) ||
+      ts.isVariableDeclaration(node)
+    ) {
+      return termDescriptor(node.name.getText())
+    }
+    if (ts.isAccessor(node)) {
+      const prefix = ts.isGetAccessor(node) ? '<get>' : '<set>'
+      return methodDescriptor(prefix + node.name.getText())
+    }
+    if (ts.isModuleDeclaration(node)) {
+      return packageDescriptor(node.name.getText())
+    }
+    if (ts.isParameter(node)) {
+      return parameterDescriptor(node.name.getText())
+    }
+    if (ts.isTypeParameterDeclaration(node)) {
+      return typeParameterDescriptor(node.name.getText())
+    }
+    if (ts.isTypeReferenceNode(node)) {
+      return metaDescriptor(node.typeName.getText())
+    }
+    if (ts.isTypeLiteralNode(node)) {
+      return metaDescriptor('typeLiteral' + this.localCounter.next().toString())
+    }
+    return undefined
+  }
+
+  private signatureForDocumentation(
+    node: ts.Node,
+    sym: ts.Symbol,
+    declaration: ts.Node
+  ): string {
+    const kind = scriptElementKind(node, sym)
+    const type = (): string =>
+      this.checker.typeToString(this.checker.getTypeAtLocation(node))
+    const asSignatureDeclaration = (
+      node: ts.Node,
+      declaration: ts.Node
+    ): ts.SignatureDeclaration | undefined => {
+      return ts.isConstructorDeclaration(node)
+        ? node
+        : ts.isFunctionDeclaration(declaration) ||
+            ts.isMethodDeclaration(declaration) ||
+            ts.isMethodSignature(declaration)
+          ? declaration
+          : undefined
+    }
+    const signature = (): string | undefined => {
+      const signatureDeclaration = asSignatureDeclaration(node, declaration)
+      if (!signatureDeclaration) {
+        return undefined
+      }
+      const signature =
+        this.checker.getSignatureFromDeclaration(signatureDeclaration)
+      return signature ? this.checker.signatureToString(signature) : undefined
+    }
+    switch (kind) {
+      case ts.ScriptElementKind.localVariableElement:
+      case ts.ScriptElementKind.variableElement: {
+        return 'var ' + node.getText() + ': ' + type()
+      }
+      case ts.ScriptElementKind.memberVariableElement: {
+        return '(property) ' + node.getText() + ': ' + type()
+      }
+      case ts.ScriptElementKind.parameterElement: {
+        return '(parameter) ' + node.getText() + ': ' + type()
+      }
+      case ts.ScriptElementKind.constElement: {
+        return 'const ' + node.getText() + ': ' + type()
+      }
+      case ts.ScriptElementKind.letElement: {
+        return 'let ' + node.getText() + ': ' + type()
+      }
+      case ts.ScriptElementKind.alias: {
+        return 'type ' + node.getText()
+      }
+      case ts.ScriptElementKind.classElement:
+      case ts.ScriptElementKind.localClassElement: {
+        if (ts.isConstructorDeclaration(node)) {
+          return 'constructor' + (signature() || '')
+        }
+        return 'class ' + node.getText()
+      }
+      case ts.ScriptElementKind.interfaceElement: {
+        return 'interface ' + node.getText()
+      }
+      case ts.ScriptElementKind.enumElement: {
+        return 'enum ' + node.getText()
+      }
+      case ts.ScriptElementKind.enumMemberElement: {
+        let suffix = ''
+        const declaration = sym.declarations?.[0]
+        if (declaration && ts.isEnumMember(declaration)) {
+          const constantValue = this.checker.getConstantValue(declaration)
+          if (constantValue) {
+            suffix = ' = ' + constantValue.toString()
+          }
+        }
+        return '(enum member) ' + node.getText() + suffix
+      }
+      case ts.ScriptElementKind.functionElement: {
+        return 'function ' + node.getText() + (signature() || type())
+      }
+      case ts.ScriptElementKind.memberFunctionElement: {
+        return '(method) ' + node.getText() + (signature() || type())
+      }
+      case ts.ScriptElementKind.memberGetAccessorElement: {
+        return 'get ' + node.getText() + ': ' + type()
+      }
+      case ts.ScriptElementKind.memberSetAccessorElement: {
+        return 'set ' + node.getText() + type()
+      }
+      case ts.ScriptElementKind.constructorImplementationElement: {
+        return ''
+      }
+    }
+    return node.getText() + ': ' + type()
+  }
+
+  // Invokes the `onAncestor` callback for all "ancestors" of the provided node,
+  // where "ancestor" is loosely defined as the superclass or superinterface of
+  // that node. The callback is invoked on the `node` parameter itself if it's
+  // class-like or an interface.
+  private forEachAncestor(
+    node: ts.Node,
+    onAncestor: (
+      ancestor: ts.ClassLikeDeclaration | ts.InterfaceDeclaration
+    ) => void
+  ): void {
+    const isVisited = new Set<ts.Node>()
+    const loop = (declaration: ts.Node): void => {
+      if (isVisited.has(declaration)) {
+        return
+      }
+      isVisited.add(declaration)
+      if (
+        ts.isClassLike(declaration) ||
+        ts.isInterfaceDeclaration(declaration)
+      ) {
+        onAncestor(declaration)
+      }
+      if (ts.isObjectLiteralExpression(declaration)) {
+        const tpe =
+          this.checker.getContextualType(declaration) ??
+          this.checker.getTypeAtLocation(declaration)
+        for (const symbolDeclaration of tpe.symbol?.declarations || []) {
+          loop(symbolDeclaration)
+        }
+      } else if (
+        ts.isClassLike(declaration) ||
+        ts.isInterfaceDeclaration(declaration)
+      ) {
+        for (const heritageClause of declaration?.heritageClauses || []) {
+          for (const tpe of heritageClause.types) {
+            const ancestorSymbol = this.getTSSymbolAtLocation(tpe.expression)
+            if (ancestorSymbol) {
+              for (const ancestorDecl of ancestorSymbol.declarations || []) {
+                loop(ancestorDecl)
+              }
+            }
+          }
+        }
+      }
+    }
+    loop(node)
+  }
+
+  /**
+   * Returns the scip diagnostics for a given typescript symbol.
+   * @param sym - The TypeScript symbol to get diagnostics for
+   * @param isDefinition - Whether this occurrence is a definition of the symbol
+   */
+  private static diagnosticsFor(
+    sym: ts.Symbol,
+    isDefinition: boolean
+  ): Diagnostic[] | undefined {
+    // Currently, the logic below only supports deprecation
+    // diagnostics. Since linters typically only emit such
+    // diagnostics at reference sites, skip the check if we're
+    // not at a definition.
+    if (isDefinition) {
+      return undefined
+    }
+
+    const jsDocTags = sym.getJsDocTags()
+
+    const deprecatedTag = jsDocTags.find(tag => tag.name === 'deprecated')
+    if (deprecatedTag) {
+      return [
+        create(DiagnosticSchema, {
+          severity: Severity.Information,
+          code: 'DEPRECATED',
+          // jsDocInfo.text is a tokenized representation of the tag text.
+          // Concatenate the elements to get the full message
+          message: deprecatedTag.text?.map(part => part.text).join(''),
+          tags: [DiagnosticTag.Deprecated],
+        }),
+      ]
+    }
+
+    return undefined
+  }
+}
+
+function accessName(node: ts.Node): string | undefined {
+  if (ts.isPropertyAccessExpression(node)) {
+    return node.name.text
+  }
+  if (
+    ts.isElementAccessExpression(node) &&
+    ts.isStringLiteralLike(node.argumentExpression)
+  ) {
+    return node.argumentExpression.text
+  }
+  return undefined
+}
+
+function isAnonymousContainerOfSymbols(node: ts.Node): boolean {
+  return (
+    ts.isModuleBlock(node) ||
+    ts.isImportDeclaration(node) ||
+    (ts.isImportClause(node) && !node.name) ||
+    ts.isNamedImports(node) ||
+    ts.isVariableStatement(node) ||
+    ts.isVariableDeclarationList(node)
+  )
+}
+
+function isSvelteImport(
+  node: ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport
+): boolean {
+  let parent: ts.Node | undefined = node.parent
+  while (parent && !ts.isImportDeclaration(parent)) {
+    parent = parent.parent
+  }
+  return (
+    !!parent &&
+    ts.isStringLiteral(parent.moduleSpecifier) &&
+    parent.moduleSpecifier.text.endsWith('.svelte')
+  )
+}
+
+function scriptElementKind(
+  node: ts.Node,
+  sym: ts.Symbol
+): ts.ScriptElementKind {
+  const flags = sym.getFlags()
+  if (flags & ts.SymbolFlags.TypeAlias) {
+    return ts.ScriptElementKind.alias
+  }
+  if (flags & ts.SymbolFlags.Class) {
+    return ts.ScriptElementKind.classElement
+  }
+  if (flags & ts.SymbolFlags.Interface) {
+    return ts.ScriptElementKind.interfaceElement
+  }
+  if (flags & ts.SymbolFlags.Enum) {
+    return ts.ScriptElementKind.enumElement
+  }
+  if (flags & ts.SymbolFlags.EnumMember) {
+    return ts.ScriptElementKind.enumMemberElement
+  }
+  if (flags & ts.SymbolFlags.Method) {
+    return ts.ScriptElementKind.memberFunctionElement
+  }
+  if (flags & ts.SymbolFlags.GetAccessor) {
+    return ts.ScriptElementKind.memberGetAccessorElement
+  }
+  if (flags & ts.SymbolFlags.SetAccessor) {
+    return ts.ScriptElementKind.memberSetAccessorElement
+  }
+  if (flags & ts.SymbolFlags.Constructor) {
+    return ts.ScriptElementKind.constructorImplementationElement
+  }
+  if (flags & ts.SymbolFlags.Function) {
+    return ts.ScriptElementKind.functionElement
+  }
+  if (flags & ts.SymbolFlags.Variable) {
+    if (ts_inline.isParameter(sym)) {
+      return ts.ScriptElementKind.parameterElement
+    }
+    if (node.flags & ts.NodeFlags.Const) {
+      return ts.ScriptElementKind.constElement
+    }
+    if (node.flags & ts.NodeFlags.Let) {
+      return ts.ScriptElementKind.letElement
+    }
+    return ts.ScriptElementKind.variableElement
+  }
+  if (flags & ts.SymbolFlags.ClassMember) {
+    return ts.ScriptElementKind.memberVariableElement
+  }
+  return ts.ScriptElementKind.unknown
+}
+
+// Signatures use TypeScript syntax even for JavaScript and Svelte sources.
+function signatureDocumentation(text: string): Signature | undefined {
+  if (text === '') {
+    return undefined
+  }
+  return create(SignatureSchema, {
+    language: 'typescript',
+    text: text.toWellFormed(),
+  })
+}
+
+function symbolKind(
+  declaration: ts.Node,
+  sym: ts.Symbol
+): SymbolInformation_Kind {
+  const Kind = SymbolInformation_Kind
+
+  if (ts.isClassLike(declaration)) {
+    return Kind.Class
+  }
+  if (ts.isInterfaceDeclaration(declaration)) {
+    return Kind.Interface
+  }
+  if (ts.isTypeAliasDeclaration(declaration)) {
+    return Kind.TypeAlias
+  }
+  if (ts.isEnumDeclaration(declaration)) {
+    return Kind.Enum
+  }
+  if (ts.isEnumMember(declaration)) {
+    return Kind.EnumMember
+  }
+  if (ts.isConstructorDeclaration(declaration)) {
+    return Kind.Constructor
+  }
+  if (ts.isGetAccessorDeclaration(declaration)) {
+    return Kind.Getter
+  }
+  if (ts.isSetAccessorDeclaration(declaration)) {
+    return Kind.Setter
+  }
+  if (
+    ts.isMethodDeclaration(declaration) ||
+    ts.isMethodSignature(declaration)
+  ) {
+    return hasStaticModifier(declaration) ? Kind.StaticMethod : Kind.Method
+  }
+  if (ts.isFunctionDeclaration(declaration)) {
+    return Kind.Function
+  }
+  if (
+    ts.isPropertyDeclaration(declaration) ||
+    ts.isPropertySignature(declaration) ||
+    ts.isPropertyAssignment(declaration) ||
+    ts.isShorthandPropertyAssignment(declaration)
+  ) {
+    return hasStaticModifier(declaration) ? Kind.StaticProperty : Kind.Property
+  }
+  if (ts.isParameter(declaration)) {
+    return declaration.name.getText() === 'this'
+      ? Kind.ThisParameter
+      : Kind.Parameter
+  }
+  if (ts.isTypeParameterDeclaration(declaration)) {
+    return Kind.TypeParameter
+  }
+  if (ts.isModuleDeclaration(declaration)) {
+    return ts.isStringLiteral(declaration.name) ? Kind.Module : Kind.Namespace
+  }
+  if (ts.isVariableDeclaration(declaration)) {
+    return variableKind(declaration)
+  }
+  if (ts.isBindingElement(declaration)) {
+    return bindingElementKind(declaration)
+  }
+
+  const flags = sym.getFlags()
+  if (flags & ts.SymbolFlags.TypeAlias) return Kind.TypeAlias
+  if (flags & ts.SymbolFlags.Class) return Kind.Class
+  if (flags & ts.SymbolFlags.Interface) return Kind.Interface
+  if (flags & ts.SymbolFlags.Enum) return Kind.Enum
+  if (flags & ts.SymbolFlags.EnumMember) return Kind.EnumMember
+  if (flags & ts.SymbolFlags.Constructor) return Kind.Constructor
+  if (flags & ts.SymbolFlags.GetAccessor) return Kind.Getter
+  if (flags & ts.SymbolFlags.SetAccessor) return Kind.Setter
+  if (flags & ts.SymbolFlags.Method) return Kind.Method
+  if (flags & ts.SymbolFlags.Function) return Kind.Function
+  if (flags & ts.SymbolFlags.TypeParameter) return Kind.TypeParameter
+  if (flags & ts.SymbolFlags.NamespaceModule) return Kind.Namespace
+  if (flags & ts.SymbolFlags.Property) return Kind.Property
+  if (flags & ts.SymbolFlags.Variable) {
+    return ts_inline.isParameter(sym) ? Kind.Parameter : Kind.Variable
+  }
+  return Kind.UnspecifiedKind
+}
+
+function hasStaticModifier(node: ts.Node): boolean {
+  return Boolean(
+    ts.canHaveModifiers(node) &&
+    ts
+      .getModifiers(node)
+      ?.some(modifier => modifier.kind === ts.SyntaxKind.StaticKeyword)
+  )
+}
+
+function variableKind(
+  declaration: ts.VariableDeclaration
+): SymbolInformation_Kind {
+  const Kind = SymbolInformation_Kind
+  const parent = declaration.parent
+  if (
+    ts.isVariableDeclarationList(parent) &&
+    parent.flags & (ts.NodeFlags.Const | ts.NodeFlags.Using)
+  ) {
+    return Kind.Constant
+  }
+  return Kind.Variable
+}
+
+function bindingElementKind(
+  declaration: ts.BindingElement
+): SymbolInformation_Kind {
+  const Kind = SymbolInformation_Kind
+  let owner: ts.Node = declaration.parent
+  while (
+    ts.isBindingElement(owner) ||
+    ts.isArrayBindingPattern(owner) ||
+    ts.isObjectBindingPattern(owner)
+  ) {
+    owner = owner.parent
+  }
+  if (ts.isParameter(owner)) {
+    return Kind.Parameter
+  }
+  if (ts.isVariableDeclaration(owner)) {
+    return variableKind(owner)
+  }
+  return Kind.Variable
+}
+
+function declarationName(node: ts.Node): ts.Node | undefined {
+  if (
+    ts.isBindingElement(node) ||
+    ts.isEnumDeclaration(node) ||
+    ts.isEnumMember(node) ||
+    ts.isVariableDeclaration(node) ||
+    ts.isPropertyDeclaration(node) ||
+    ts.isAccessor(node) ||
+    ts.isMethodSignature(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isPropertySignature(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isModuleDeclaration(node) ||
+    ts.isPropertyAssignment(node) ||
+    ts.isShorthandPropertyAssignment(node) ||
+    ts.isParameter(node) ||
+    ts.isTypeParameterDeclaration(node) ||
+    ts.isTypeAliasDeclaration(node) ||
+    ts.isInterfaceDeclaration(node) ||
+    ts.isClassDeclaration(node)
+  ) {
+    return node.name
+  }
+  return undefined
+}
+
+/**
+ * For example:
+ *
+ * const a = 1
+ *       ^ node
+ *       ^ node.parent.name
+ *       ^^^^^ node.parent
+ *
+ * function a(): void {}
+ *          ^ node
+ *          ^ node.parent.name
+ * ^^^^^^^^^^^^^^^^^^^^^ node.parent
+ */
+function isDefinition(node: ts.Node): boolean {
+  return (
+    declarationName(node.parent) === node || ts.isConstructorDeclaration(node)
+  )
+}

@@ -1,0 +1,248 @@
+#ifndef SORBET_PACKAGER_COMPUTE_PACKAGE_SCCS_H
+#define SORBET_PACKAGER_COMPUTE_PACKAGE_SCCS_H
+
+#include "common/common.h"
+#include "core/GlobalState.h"
+#include "core/packages/Condensation.h"
+#include "core/packages/MangledName.h"
+
+namespace sorbet::packager {
+
+class ComputePackageSCCs {
+    core::GlobalState &gs;
+
+    int nextIndex = 1;
+
+    // Metadata for Tarjan's algorithm
+    // https://www.cs.cmu.edu/~15451-f18/lectures/lec19-DFS-strong-components.pdf provides a good overview of the
+    // algorithm.
+    struct NodeInfo {
+        static constexpr int UNVISITED = 0;
+
+        // A given package's index in the DFS traversal; ie. when it was first visited. The default value of 0 means the
+        // package hasn't been visited yet.
+        int index = UNVISITED;
+        // The lowest index reachable from a given package (in the same SCC) by following any number of tree edges
+        // and at most one back/cross edge
+        int lowLink = 0;
+        // Fast way to check if a package is on the stack
+        bool onStack = false;
+    };
+
+    UnorderedMap<core::packages::MangledName, NodeInfo> nodeMap;
+    // As we visit packages, we push them onto the stack. Once we find the "root" of an SCC, we can use the stack to
+    // determine all packages in the SCC.
+    std::vector<core::packages::MangledName> stack;
+
+    core::packages::CondensationBuilder condensation;
+
+    ComputePackageSCCs(core::GlobalState &gs) : gs{gs} {
+        auto numPackages = gs.packageDB().packages().size();
+        this->stack.reserve(numPackages);
+        this->nodeMap.reserve(numPackages);
+    }
+
+    // DFS traversal for Tarjan's algorithm starting from pkgName, along with keeping track of some metadata needed for
+    // detecting SCCs.
+    template <core::packages::ImportType EdgeType, typename P>
+    void strongConnect(core::packages::MangledName pkgName, NodeInfo &infoAtEntry, P &packageGraph) {
+        auto &packageDB = gs.packageDB();
+        if (!packageDB.getPackageInfo(pkgName).exists()) {
+            // This is to handle the case where the user imports a package that doesn't exist.
+            return;
+        }
+
+        infoAtEntry.index = this->nextIndex;
+        infoAtEntry.lowLink = this->nextIndex;
+        this->nextIndex++;
+        this->stack.push_back(pkgName);
+        infoAtEntry.onStack = true;
+
+        for (auto &i : packageGraph.getImports(pkgName)) {
+            // We want to consider all imports from test code, but only normal imports for application code.
+            if constexpr (EdgeType == core::packages::ImportType::Normal) {
+                if (i.type != core::packages::ImportType::Normal) {
+                    continue;
+                }
+            }
+            // We need to be careful with this; it's not valid after a call to `strongConnect`,
+            // because our reference might disappear from underneath us during that call.
+            auto &importInfo = this->nodeMap[i.mangledName];
+            if (importInfo.index == NodeInfo::UNVISITED) {
+                // This is a tree edge (ie. a forward edge that we haven't visited yet).
+                this->strongConnect<EdgeType>(i.mangledName, importInfo, packageGraph);
+
+                // Need to re-lookup for the reason above.
+                auto &importInfo = this->nodeMap[i.mangledName];
+                if (importInfo.index == NodeInfo::UNVISITED) {
+                    // This is to handle early return above.
+                    continue;
+                }
+                // Since we can follow any number of tree edges for lowLink, the lowLink of child is valid for this
+                // package too.
+                //
+                // Note that we cannot use `infoAtEntry` here because it might have been invalidated.
+                auto &pkgLink = this->nodeMap[pkgName].lowLink;
+                pkgLink = std::min(pkgLink, importInfo.lowLink);
+            } else if (importInfo.onStack) {
+                // This is a back edge (edge to ancestor) or cross edge (edge to a different subtree). Since we can only
+                // follow at most one back/cross edge, the best update we can make to lowlink of the current package is
+                // the child's index.
+                //
+                // Note that we cannot use `infoAtEntry` here because it might have been invalidated.
+                auto &pkgLink = this->nodeMap[pkgName].lowLink;
+                pkgLink = std::min(pkgLink, importInfo.index);
+            }
+            // If the child package is already visited and not on the stack, it's in a different SCC, so no update to
+            // the lowlink.
+        }
+
+        // We cannot re-use `infoAtEntry` here because `nodeMap` might have been re-allocated and
+        // invalidate our reference.
+        auto &ourInfo = this->nodeMap[pkgName];
+        if (ourInfo.index == ourInfo.lowLink) {
+            // This is the root of an SCC. This means that all packages on the stack from this package to the top of the
+            // top of the stack are in the same SCC. Pop the stack until we reach the root of the SCC, and assign them
+            // the same SCC ID.
+            core::packages::MangledName poppedPkgName;
+            auto &condensationNode =
+                this->condensation.pushNode(EdgeType, packageDB.getPackageInfo(pkgName).isPreludePackage());
+            auto sccId = condensationNode.id;
+
+            // Set the SCC ids for all of the members of the SCC
+            do {
+                poppedPkgName = this->stack.back();
+                condensationNode.members.push_back(poppedPkgName);
+                this->stack.pop_back();
+                this->nodeMap[poppedPkgName].onStack = false;
+
+                if constexpr (EdgeType == core::packages::ImportType::Normal) {
+                    packageGraph.setSCCId(poppedPkgName, sccId);
+                } else if constexpr (EdgeType != core::packages::ImportType::Normal) {
+                    packageGraph.setTestSCCId(poppedPkgName, sccId);
+
+                    // TODO(trevor): when test-packages is fully rolled out, this can go away as we'll only have one
+                    // kind of SCC ID.
+                    if (!gs.packageDB().getPackageInfo(poppedPkgName).file.data(gs).isTestPackage(gs)) {
+                        // Add an implicit dependency from the test SCC to the application SCC.
+                        // All packages (including test-only) now have sccID_ set from the Normal pass.
+                        auto appSccId = packageGraph.getSCCId(poppedPkgName);
+                        condensationNode.imports.insert(appSccId);
+                    }
+                }
+            } while (poppedPkgName != pkgName);
+
+            // Iterate the imports of each member, building the edges of the condensation. This step is performed after
+            // we've visited all members of the SCC once, to ensure that their ids have all been populated.
+            for (auto name : condensationNode.members) {
+                for (auto &i : packageGraph.getImports(name)) {
+                    // The mangled name won't exist if the import was to a package that doesn't exist.
+                    if (!i.mangledName.exists()) {
+                        continue;
+                    }
+
+                    int impId = 0;
+
+                    if constexpr (EdgeType == core::packages::ImportType::Normal) {
+                        if (i.type != core::packages::ImportType::Normal) {
+                            continue;
+                        }
+                        impId = packageGraph.getSCCId(i.mangledName);
+                    } else {
+                        // If we're processing imports from a test package, we can't tell if those imports are used only
+                        // at application time, or application and test time. Conservatively, we consider the import to
+                        // be to the test package, which transitively depends on the application code, ensuring the
+                        // correct ordering for test packages.
+                        impId = packageGraph.getTestSCCId(i.mangledName);
+                    }
+
+                    if (impId == sccId) {
+                        continue;
+                    }
+
+                    condensationNode.imports.insert(impId);
+                }
+            }
+        }
+    }
+
+    // Tarjan's algorithm for finding strongly connected components
+    template <core::packages::ImportType EdgeType, typename P> void tarjan(P &packageGraph) {
+        ENFORCE(this->stack.empty());
+        for (auto package : gs.packageDB().packages()) {
+            // TODO(trevor): we can remove this check once we have migrated fully to test-packages.
+            if constexpr (EdgeType == core::packages::ImportType::Normal) {
+                // TODO(trevor): We only look at the path of the __package.rb file and not whether it had `test!` while
+                // we have both packaging systems present, as we might have a package in a test directory that lacks a
+                // `test!` annotation (an old-style test package).
+                if (gs.packageDB().getPackageInfo(package).file.data(gs).isTestPackage(gs)) {
+                    continue;
+                }
+            } else {
+                // We skip packages on the second pass if they are not test packages, but their package info marks them
+                // as using test packages, as that means they have a test package split out.
+                auto &info = gs.packageDB().getPackageInfo(package);
+                if (info.usesTestPackages && !info.file.data(gs).isTestPackage(gs)) {
+                    continue;
+                }
+            }
+
+            auto &info = this->nodeMap[package];
+            if (info.index == NodeInfo::UNVISITED) {
+                this->strongConnect<EdgeType>(package, info, packageGraph);
+            }
+        }
+    }
+
+public:
+    // NOTE: This function must be called every time an import is added or removed from a package.
+    // It is relatively fast, so calling it on every __package.rb edit is an okay overapproximation for simplicity.
+    template <typename P> static core::packages::Condensation run(core::GlobalState &gs, P &packageGraph) {
+        Timer timeit(gs.tracer(), "packager::computeSCCs");
+        ComputePackageSCCs scc(gs);
+
+        // First, compute the SCCs for application code, and then for test code. This allows us to have more granular
+        // SCCs, as test_import edges aren't subject to the same restrictions that import edges are.
+        scc.tarjan<core::packages::ImportType::Normal>(packageGraph);
+
+        // TODO(trevor): we can remove everything up to the `return` after fully migrating to test-packages
+        // We clean out all nodes that aren't marked as `usesTestPackages`, as those will need to have their test SCCs
+        // computed. Everything that is marked `usesTestPackages` at this point will have an explicit test package, and
+        // its SCC can be reused as its test SCC.
+        absl::erase_if(scc.nodeMap, [&gs, &packageGraph](auto &pair) {
+            auto pkg = pair.first;
+            auto &info = gs.packageDB().getPackageInfo(pkg);
+            if (!info.exists() || !info.usesTestPackages) {
+                return true;
+            }
+
+            auto sccId = packageGraph.getSCCId(pkg);
+            packageGraph.setTestSCCId(pkg, sccId);
+
+            return false;
+        });
+
+        // TODO(trevor): once we have fully migrated to test packages, this additional call to scc.tarjan can go
+        // away.
+        scc.tarjan<core::packages::ImportType::TestHelper>(packageGraph);
+
+        // TODO(trevor): once we have fully migrated to test packages, we can remove the testSCCId. For now, we make
+        // sure the two match.
+        for (auto pkg : gs.packageDB().packages()) {
+            auto &info = gs.packageDB().getPackageInfo(pkg);
+            if (!info.usesTestPackages) {
+                continue;
+            }
+            if (!info.sccID().has_value()) {
+                auto testSCCId = packageGraph.getTestSCCId(pkg);
+                packageGraph.setSCCId(pkg, testSCCId);
+            }
+        }
+
+        return scc.condensation.build();
+    }
+};
+
+} // namespace sorbet::packager
+
+#endif

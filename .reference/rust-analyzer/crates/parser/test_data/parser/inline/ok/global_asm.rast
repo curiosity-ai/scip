@@ -1,0 +1,8 @@
+SOURCE_FILE
+  ASM_EXPR
+    GLOBAL_ASM_KW "k#global_asm"
+    L_PAREN "("
+    LITERAL
+      STRING "\"\""
+    R_PAREN ")"
+  WHITESPACE "\n"

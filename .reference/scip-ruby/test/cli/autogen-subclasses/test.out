@@ -1,0 +1,18 @@
+--- autogen-subclasses ---
+c Bopus::Parent
+ c Bopus::AbstractChild abstract_child.rb a
+ c Bopus::Child child.rb c
+ c Bopus::ChildAgain child_again.rb c
+ c Bopus::ChildOfAbstractChild1 child_of_abstract_child.rb a
+ c Bopus::ChildOfAbstractChild2 child_of_abstract_child.rb c
+ c Bopus::ChildOfChild1 child_of_child.rb c
+ c Bopus::ChildOfChild2 child_of_child.rb c
+m MyMixin
+ c MyClass a.rb c
+m Opus::Mixin
+ c Opus::Mixed a.rb c
+ c Opus::MixedDescendant a.rb c
+ m Opus::MixedModule a.rb c
+c Opus::Parent
+ c Opus::Child a.rb c
+ c Opus::DupChild a.rb c

@@ -1,0 +1,89 @@
+# typed: strict
+
+module Wrong
+     # ^^^^^ error: File belongs to package `Root::Nested` but defines a constant that does not match this namespace
+  class Inside; end
+end
+
+Root::Nested::Foo::Bar = nil
+::Allowed::TopLevel = nil # error: requires this package to be marked `prelude!`
+
+  NotAllowed::Foo::Bar = nil
+# ^^^^^^^^^^^^^^^^^^^^ error: File belongs to package `Root::Nested` but defines a constant that does not match this namespace
+
+module Root::Nested
+
+  ALLOWED_CONST = T.let(1, Integer)
+  A::B = 2
+
+  class Inner
+    CONST = T.let(1, Integer)
+
+    sig {returns(T::Boolean)}
+    def method
+      true
+    end
+  end
+end
+
+module Root
+  module Nested
+    class SomeClass
+      class Deeper; end
+    end
+
+    class OtherClass
+      class Deep2; end
+    end
+
+    sig { void }
+    def example
+      NOT_IN_PACKAGE
+    # ^^^^^^^^^^^^^^ error: `Root` is not imported
+    end
+  end
+end
+
+  class Root::Stringy < String
+#       ^^^^^^^^^^^^^ error: File belongs to package `Root::Nested` but defines a constant that does not match this namespace
+#                       ^^^^^^ error: Superclasses may only be set on constants in the package that owns them
+end
+
+class Root::Nested::Stringy < String
+end
+
+module Root
+  NOT_IN_PACKAGE = T.let(1, Integer)
+# ^^^^^^^^^^^^^^ error: File belongs to package `Root::Nested` but defines a constant that does not match this namespace
+
+  sig {returns(NilClass)}
+# ^^^^^^^^^^^^^^^^^^^^^^^ error: This file must only define behavior in enclosing package `Root::Nested`
+  def self.method
+# ^^^^^^^^^^^^^^^ error: This file must only define behavior in enclosing package `Root::Nested`
+    nil
+  end
+end
+
+
+top_level_local = 2
+
+sig {returns(String)}
+def top_level_method
+  'top'
+end
+
+module Root::ModNotInPackage
+     # ^^^^^^^^^^^^^^^^^^^^^ error: File belongs to package `Root::Nested` but defines a constant that does not match this namespace
+end
+
+class Root::ClassNotInPackage
+    # ^^^^^^^^^^^^^^^^^^^^^^^ error: File belongs to package `Root::Nested` but defines a constant that does not match this namespace
+end
+
+module ::TopLevel # error: requires this package to be marked `prelude!`
+  class Foo
+    sig {void}
+    def foo
+    end
+  end
+end

@@ -1,0 +1,190 @@
+ClassDef{
+  kind = class
+  name = EmptyTree
+  symbol = <C <U <root>>>
+  ancestors = [ConstantLit{
+      symbol = (class ::<todo sym>)
+      orig = nullptr
+    }]
+  rhs = [
+    ClassDef{
+      kind = class
+      name = ConstantLit{
+        symbol = (class ::A)
+        orig = UnresolvedConstantLit{
+          cnst = <C <U A>>
+          scope = EmptyTree
+        }
+      }
+      symbol = <C <U A>>
+      ancestors = [ConstantLit{
+          symbol = (class ::<todo sym>)
+          orig = nullptr
+        }]
+      rhs = [
+        MethodDef{
+          flags = {}
+          name = <U has_while><<U has_while>>
+          params = [Local{
+              localVariable = <U <blk>>
+            }]
+          rhs = While{
+            cond = Literal{ value = 1 }
+            body = Send{
+              flags = {privateOk}
+              recv = Self
+              fun = <U has_while>
+              block = nullptr
+              pos_args = 0
+              args = [
+              ]
+            }
+          }
+        }
+
+        MethodDef{
+          flags = {}
+          name = <U has_constant_with_resolution_scope><<U has_constant_with_resolution_scope>>
+          params = [Local{
+              localVariable = <U <blk>>
+            }]
+          rhs = ConstantLit{
+            symbol = (module ::Sorbet::Private::Static::<StubModule>)
+            orig = UnresolvedConstantLit{
+              cnst = <C <U DOES_NOT_EXIST>>
+              scope = EmptyTree
+            }
+            resolutionScopes = [::A, ::<root>]
+          }
+        }
+
+        MethodDef{
+          flags = {}
+          name = <U has_global_field><<U has_global_field>>
+          params = [Local{
+              localVariable = <U <blk>>
+            }]
+          rhs = UnresolvedIdent{
+            kind = Global
+            name = <U $S>
+          }
+        }
+
+        MethodDef{
+          flags = {}
+          name = <U has_class_field><<U has_class_field>>
+          params = [Local{
+              localVariable = <U <blk>>
+            }]
+          rhs = UnresolvedIdent{
+            kind = Class
+            name = <U @@f>
+          }
+        }
+
+        MethodDef{
+          flags = {}
+          name = <U has_next><<U has_next>>
+          params = [Local{
+              localVariable = <U <blk>>
+            }]
+          rhs = Send{
+            flags = {privateOk}
+            recv = Self
+            fun = <U loop>
+            block = Block {
+              params = [
+              ]
+              body = Next{ expr = EmptyTree }
+            }
+            pos_args = 0
+            args = [
+            ]
+          }
+        }
+
+        MethodDef{
+          flags = {}
+          name = <U has_break><<U has_break>>
+          params = [Local{
+              localVariable = <U <blk>>
+            }]
+          rhs = Send{
+            flags = {privateOk}
+            recv = Self
+            fun = <U loop>
+            block = Block {
+              params = [
+              ]
+              body = Break{ expr = EmptyTree }
+            }
+            pos_args = 0
+            args = [
+            ]
+          }
+        }
+
+        MethodDef{
+          flags = {}
+          name = <U has_return><<U has_return>>
+          params = [Local{
+              localVariable = <U <blk>>
+            }]
+          rhs = Return{ expr = Literal{ value = 1 } }
+        }
+
+        MethodDef{
+          flags = {}
+          name = <U has_cast><<U has_cast>>
+          params = [Local{
+              localVariable = <U <blk>>
+            }]
+          rhs = Cast{
+              cast = <U cast>,
+              arg = Literal{ value = nil }
+              type = T.nilable(Integer),
+              typeExpr = Send{
+                flags = {}
+                recv = ConstantLit{
+                  symbol = (module ::T)
+                  orig = UnresolvedConstantLit{
+                    cnst = <C <U T>>
+                    scope = EmptyTree
+                  }
+                }
+                fun = <U nilable>
+                block = nullptr
+                pos_args = 1
+                args = [
+                  ConstantLit{
+                    symbol = (class ::Integer)
+                    orig = UnresolvedConstantLit{
+                      cnst = <C <U Integer>>
+                      scope = EmptyTree
+                    }
+                  }
+                ]
+              },
+          }
+
+        }
+
+        <runtime method definition of has_while>
+
+        <runtime method definition of has_constant_with_resolution_scope>
+
+        <runtime method definition of has_global_field>
+
+        <runtime method definition of has_class_field>
+
+        <runtime method definition of has_next>
+
+        <runtime method definition of has_break>
+
+        <runtime method definition of has_return>
+
+        <runtime method definition of has_cast>
+      ]
+    }
+  ]
+}

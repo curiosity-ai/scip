@@ -1,0 +1,12 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  module ::A<<C A>> < ()
+    def Foo(<blk>)
+      <emptyTree>
+    end
+
+    <runtime method definition of Foo>
+
+    class ::A::Foo<<C Foo>> < (::<todo sym>)
+    end
+  end
+end

@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json.schemastore.org/renovate",
+  "extends": [
+    "config:recommended"
+  ],
+  "automerge": true,
+  "semanticCommits": "disabled",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^bin/docker-setup\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)\\n[A-Z_]+_VERSION=(?<currentValue>\\S+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["custom.regex"],
+      "automerge": false
+    },
+    {
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["coursier/coursier"],
+      "extractVersion": "^v(?<version>\\d+\\.\\d+\\.\\d+)$"
+    },
+    {
+      "matchDatasources": ["gradle-version"],
+      "matchPackageNames": ["gradle", "gradle/gradle"],
+      "groupName": "Gradle runtime",
+      "automerge": false
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["eclipse-temurin"],
+      "allowedVersions": "/^25(?:[.-]|$)/",
+      "automerge": false
+    },
+    {
+      "description": "Keep the shared Kotlin toolchain version on stable releases, not IntelliJ-specific builds from the Analysis API repository.",
+      "matchPackageNames": [
+        "org.jetbrains.kotlin:*",
+        "org.jetbrains.kotlin.jvm:org.jetbrains.kotlin.jvm.gradle.plugin"
+      ],
+      "allowedVersions": "/^\\d+\\.\\d+\\.\\d+$/"
+    },
+    {
+      "description": "The Analysis API engine pin is managed manually: it lives in the JetBrains intellij-dependencies repository, uses IDE-aligned version schemes, and must move in lockstep with the `kotlin` toolchain version.",
+      "matchPackageNames": [
+        "org.jetbrains.kotlin:kotlin-compiler",
+        "*-for-ide",
+        "com.intellij.platform:*"
+      ],
+      "enabled": false
+    }
+  ]
+}

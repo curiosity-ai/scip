@@ -1,0 +1,382 @@
+package org.scip_code.scip_java.gradle;
+
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.gradle.api.Plugin;
+import org.gradle.api.Project;
+import org.gradle.api.Task;
+import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.file.FileCollection;
+import org.gradle.api.initialization.Settings;
+import org.gradle.api.internal.GradleInternal;
+import org.gradle.api.invocation.Gradle;
+import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.SourceSet;
+import org.gradle.api.tasks.SourceSetContainer;
+import org.gradle.api.tasks.TaskProvider;
+import org.gradle.api.tasks.TaskState;
+import org.gradle.api.tasks.compile.CompileOptions;
+import org.gradle.api.tasks.compile.JavaCompile;
+import org.gradle.process.CommandLineArgumentProvider;
+
+public class ScipGradlePlugin implements Plugin<Project> {
+
+  private static final List<String> ANDROID_PLUGINS =
+      List.of(
+          "com.android.application",
+          "com.android.library",
+          "com.android.test",
+          "com.android.dynamic-feature");
+
+  private static final List<String> ANDROID_ANNOTATION_PROCESSORS =
+      List.of("annotationProcessor", "testAnnotationProcessor", "androidTestAnnotationProcessor");
+
+  @Override
+  public void apply(Project project) {
+    project.afterEvaluate(this::configureProject);
+  }
+
+  private void configureProject(Project project) {
+    // See https://github.com/gradle/gradle/issues/27260
+    Settings settings = ((GradleInternal) (project.getGradle())).getSettings();
+
+    if (settings.getDependencyResolutionManagement().getRepositories().isEmpty()) {
+      // Inject Maven Central/local so the indexer (and plugins like protobuf that
+      // resolve their own artifacts) can resolve dependencies even when the build
+      // being indexed doesn't declare any repositories of its own.
+      project.getRepositories().add(project.getRepositories().mavenCentral());
+      project.getRepositories().add(project.getRepositories().mavenLocal());
+    } else {
+      // repositories are declared in settings instead, so the injection isn't needed (issue #847).
+      project.getLogger().info("scip-java: not injecting Maven Central/local repositories");
+    }
+
+    Map<String, Object> extraProperties =
+        project.getExtensions().getExtraProperties().getProperties();
+
+    String targetRoot = requiredExtra(extraProperties, "scipTarget").toString();
+    // The directory the root build was started in, not project.getRootDir():
+    // buildSrc and included builds have their own root directory.
+    Gradle rootBuild = project.getGradle();
+    while (rootBuild.getParent() != null) rootBuild = rootBuild.getParent();
+    String sourceRoot = rootBuild.getStartParameter().getCurrentDir().toString();
+
+    // Compilation tasks we need to trigger to index all the sources we care
+    // about. Built up as we detect the java and kotlin plugins.
+    List<String> triggers = new ArrayList<>();
+
+    boolean isAndroid = ANDROID_PLUGINS.stream().anyMatch(id -> project.getPlugins().hasPlugin(id));
+
+    if (project.getPlugins().hasPlugin("java") || isAndroid) {
+      if (!isAndroid) {
+        triggers.add("compileJava");
+        triggers.add("compileTestJava");
+      }
+
+      Object javacPluginDep = project.files(requiredExtra(extraProperties, "javacPluginJar"));
+      // Android compile tasks belong to variants rather than source sets, so
+      // there the plugin is added to all of them or to none.
+      boolean androidPluginAdded = isAndroid && tryAddAndroidJavacPlugin(project, javacPluginDep);
+      Set<String> pluginTasks = isAndroid ? Set.of() : addJavacPlugin(project, javacPluginDep);
+
+      project
+          .getTasks()
+          .withType(JavaCompile.class)
+          .configureEach(
+              task -> {
+                // Disable incremental compilation so the random timestamp added
+                // below forces a full recompile and Gradle doesn't cache stale
+                // SCIP state.
+                task.getOptions().setIncremental(false);
+
+                if (androidPluginAdded || pluginTasks.contains(task.getName())) {
+                  // An argument provider rather than compilerArgs, because builds
+                  // may replace compilerArgs after we run (Spring's conventions
+                  // call setCompilerArgs in afterEvaluate), which would silently
+                  // drop the plugin.
+                  // The random timestamp ensures the sources are _always_
+                  // recompiled, so Gradle doesn't cache any state.
+                  // TODO: before this plugin is published to Maven Central, we
+                  // will need to revert this change - as it can have
+                  // detrimental effect on people's builds.
+                  task.getOptions()
+                      .getCompilerArgumentProviders()
+                      .add(
+                          new JavacPluginArgument(
+                              task.getOptions(),
+                              "-Xplugin:scip -targetroot:"
+                                  + targetRoot
+                                  + " -sourceroot:"
+                                  + sourceRoot
+                                  + " -randomtimestamp="
+                                  + System.nanoTime()));
+                }
+              });
+    }
+
+    boolean isKotlinMultiplatform = false;
+    for (Plugin<?> plugin : project.getPlugins()) {
+      if (plugin.getClass().getName().contains("KotlinMultiplatform")) {
+        isKotlinMultiplatform = true;
+        break;
+      }
+    }
+
+    if (project.getPlugins().hasPlugin("kotlin") || isKotlinMultiplatform) {
+      if (isKotlinMultiplatform) {
+        triggers.add("compileKotlinJvm");
+        triggers.add("compileTestKotlinJvm");
+      } else {
+        triggers.add("compileKotlin");
+        triggers.add("compileTestKotlin");
+      }
+    }
+
+    // Kotlin sources are not indexed inside kotlinc: after the Kotlin compile
+    // tasks, their sources and classpath are dumped for the scip-java CLI to
+    // index after the build, decoupling indexing from the build's Kotlin
+    // compiler version. The dump is a finalizer rather than an action of the
+    // compile tasks, because Gradle skips their actions when they are up to
+    // date or restored from the build cache, while the CLI deletes the
+    // targetroot before every build. The finalizer declares no outputs, so
+    // Gradle runs it every time.
+    List<Task> kotlinCompileTasks = new ArrayList<>();
+    TaskProvider<Task> kotlinConfigs =
+        project
+            .getTasks()
+            .register(
+                "scipKotlinConfigs",
+                export ->
+                    export.doLast(
+                        ignored -> {
+                          for (Task task : kotlinCompileTasks) {
+                            // Only tasks of this build that succeeded; up-to-date
+                            // and cached tasks count as executed.
+                            TaskState state = task.getState();
+                            if (state.getExecuted() && state.getFailure() == null) {
+                              writeKotlinConfig(task, sourceRoot, targetRoot);
+                            }
+                          }
+                        }));
+    // Not limited to the plugin checks above: AGP 9's built-in Kotlin adds
+    // Kotlin compile tasks to Android modules without applying a Kotlin plugin.
+    project
+        .getTasks()
+        .configureEach(
+            task -> {
+              if (task.getClass().getSimpleName().contains("KotlinCompile")) {
+                kotlinCompileTasks.add(task);
+                task.finalizedBy(kotlinConfigs);
+              }
+            });
+
+    project.getTasks().create("scipCompileAll").dependsOn(triggers);
+
+    project.getTasks().create("scipPrintDependencies", WriteDependencies.class);
+  }
+
+  /**
+   * javac discovers {@code -Xplugin:} plugins from the annotation processor path when {@code
+   * -processorpath} is set, and only falls back to the classpath when it isn't. Gradle populates
+   * {@code -processorpath} from each source set's annotation processor configuration ({@code
+   * annotationProcessor} for main, {@code testAnnotationProcessor} for test), so whenever one of
+   * them declares a processor we must add the SCIP javac plugin to that same configuration or the
+   * corresponding compile task fails with "plug-in not found: scip". The configurations are
+   * independent (test does not extend main), so each is checked separately.
+   */
+  private static boolean hasAnnotationProcessors(Project project, String configurationName) {
+    try {
+      Configuration config = project.getConfigurations().getByName(configurationName);
+      // All dependencies, including inherited ones: the Error Prone Gradle
+      // plugin makes annotationProcessor extend its own configuration.
+      return config.isCanBeResolved() && !config.getAllDependencies().isEmpty();
+    } catch (Exception exc) {
+      return false;
+    }
+  }
+
+  private static boolean tryAddAndroidJavacPlugin(Project project, Object javacPluginDep) {
+    try {
+      project.getDependencies().add("compileOnly", javacPluginDep);
+      project.getDependencies().add("testCompileOnly", javacPluginDep);
+      // AGP always passes -processorpath, so javac only finds the plugin there.
+      for (String name : ANDROID_ANNOTATION_PROCESSORS) {
+        if (project.getConfigurations().findByName(name) != null) {
+          project.getDependencies().add(name, javacPluginDep);
+        }
+      }
+      return true;
+    } catch (Exception exc) {
+      // The `compileOnly` configuration has likely already been resolved by
+      // another plugin or buildscript, so we can no longer add new dependencies
+      // to it. The project will be skipped (no SCIP output) and the post-build
+      // check in `GradleBuildTool` will surface a clearer error.
+      project
+          .getLogger()
+          .warn(
+              "scip-java: failed to attach SCIP compiler plugin to project '"
+                  + project.getName()
+                  + "' ("
+                  + exc.getClass().getSimpleName()
+                  + ": "
+                  + exc.getMessage()
+                  + "). This subproject will not be indexed.");
+      return false;
+    }
+  }
+
+  /**
+   * Adds the SCIP javac plugin to each source set and returns the names of the compile tasks of the
+   * source sets it was added to. A failure only skips that source set, because the other source
+   * sets' configurations may still accept new dependencies.
+   */
+  private static Set<String> addJavacPlugin(Project project, Object javacPluginDep) {
+    Set<String> pluginTasks = new HashSet<>();
+    for (SourceSet sourceSet : project.getExtensions().getByType(SourceSetContainer.class)) {
+      try {
+        project.getDependencies().add(sourceSet.getCompileOnlyConfigurationName(), javacPluginDep);
+        String processors = sourceSet.getAnnotationProcessorConfigurationName();
+        if (hasAnnotationProcessors(project, processors)) {
+          project.getDependencies().add(processors, javacPluginDep);
+        }
+        pluginTasks.add(sourceSet.getCompileJavaTaskName());
+      } catch (Exception exc) {
+        // The source set's configurations have likely already been resolved by
+        // another plugin or buildscript, so we can no longer add new
+        // dependencies to them. The source set will be skipped (no SCIP output)
+        // and, if no source set is indexed, the post-build check in
+        // `GradleBuildTool` will surface a clearer error.
+        project
+            .getLogger()
+            .warn(
+                "scip-java: failed to attach SCIP compiler plugin to source set '"
+                    + sourceSet.getName()
+                    + "' of project '"
+                    + project.getName()
+                    + "' ("
+                    + exc.getClass().getSimpleName()
+                    + ": "
+                    + exc.getMessage()
+                    + "). This source set will not be indexed.");
+      }
+    }
+    return pluginTasks;
+  }
+
+  /**
+   * Dumps the sources and classpath of a Kotlin compile task to {@code
+   * kotlin-configs/<task>-<hash>.txt}.
+   */
+  private static void writeKotlinConfig(Task task, String sourceRoot, String targetRoot) {
+    try {
+      List<String> lines = new ArrayList<>();
+      lines.add("sourceroot " + sourceRoot);
+
+      // Referring to KotlinCompile directly triggers NoClassDefFoundError -
+      // the plugin classpath is murky and we deliberately don't bundle the
+      // Kotlin Gradle plugin. So we commit the sins of reflection.
+      FileCollection libraries;
+      try {
+        libraries = (FileCollection) task.getClass().getMethod("getLibraries").invoke(task);
+      } catch (ReflectiveOperationException exc) {
+        libraries = (FileCollection) task.getClass().getMethod("getClasspath").invoke(task);
+      }
+      for (File entry : libraries.getFiles()) {
+        lines.add("classpath " + entry.getAbsolutePath());
+      }
+
+      int sources = 0;
+      for (File file : task.getInputs().getSourceFiles().getFiles()) {
+        if (file.getName().endsWith(".kt") || file.getName().endsWith(".kts")) {
+          lines.add("source " + file.getAbsolutePath());
+          sources++;
+        }
+      }
+      // Java sources of the same module are listed too, so Kotlin
+      // references to them resolve. The indexer only emits Kotlin files.
+      try {
+        FileCollection javaSources =
+            (FileCollection) task.getClass().getMethod("getJavaSources").invoke(task);
+        for (File file : javaSources.getFiles()) {
+          if (file.getName().endsWith(".java")) {
+            lines.add("source " + file.getAbsolutePath());
+          }
+        }
+      } catch (ReflectiveOperationException exc) {
+        // Kotlin Gradle Plugin without javaSources (pre 1.7).
+      }
+      if (sources == 0) {
+        return;
+      }
+
+      Path configDir = Paths.get(targetRoot, "kotlin-configs");
+      Files.createDirectories(configDir);
+      // Task paths are only unique within one build, and every build of a
+      // composite (included builds, buildSrc) writes here, so the build's
+      // root directory is part of the identity. Hashing, unlike sanitizing,
+      // keeps ":a-b:x" and ":a:b:x" apart; NUL cannot occur in a path.
+      String identity = task.getProject().getRootDir().getAbsolutePath() + "\0" + task.getPath();
+      byte[] hash =
+          MessageDigest.getInstance("SHA-256").digest(identity.getBytes(StandardCharsets.UTF_8));
+      String fileName = task.getName() + "-" + HexFormat.of().formatHex(hash, 0, 8) + ".txt";
+      Files.write(configDir.resolve(fileName), lines);
+    } catch (Exception exc) {
+      throw new RuntimeException(
+          "scip-java: failed to extract Kotlin compile configuration for task '"
+              + task.getName()
+              + "': "
+              + exc,
+          exc);
+    }
+  }
+
+  private static Object requiredExtra(Map<String, Object> extraProperties, String name) {
+    Object value = extraProperties.get(name);
+    if (value == null) {
+      throw new IllegalStateException(
+          name + " extra property must be set by the scip-java Gradle init script");
+    }
+    return value;
+  }
+
+  /** Passes the SCIP javac plugin argument, unless the build already passes one itself. */
+  private static class JavacPluginArgument implements CommandLineArgumentProvider {
+    private final CompileOptions options;
+    private final String argument;
+
+    JavacPluginArgument(CompileOptions options, String argument) {
+      this.options = options;
+      this.argument = argument;
+    }
+
+    @Input
+    public String getArgument() {
+      return argument;
+    }
+
+    @Override
+    public Iterable<String> asArguments() {
+      // Groovy build scripts can append interpolated strings (GString) to
+      // compilerArgs, so despite the List<String> signature the list may hold
+      // non-String elements. Iterate through a wildcard reference so elements
+      // are not implicitly cast to String, which throws ClassCastException
+      // (issue #801).
+      List<?> args = options.getCompilerArgs();
+
+      // javac rejects the plugin configuration if it's given more than once.
+      boolean alreadyAdded =
+          args.stream().anyMatch(arg -> String.valueOf(arg).startsWith("-Xplugin:scip"));
+      return alreadyAdded ? List.of() : List.of(argument);
+    }
+  }
+}

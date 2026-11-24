@@ -1,0 +1,22 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  class ::Other<<C Other>> < (::<todo sym>)
+  end
+
+  class ::Test<<C Test>> < (::Other, ::Test::Mixin, ::Test::Other)
+    module ::Test::Mixin<<C Mixin>> < ()
+    end
+
+    module ::Test::Other<<C Other>> < ()
+    end
+
+    <self>.include(::Test::Mixin)
+
+    <self>.include(::Test::Other)
+  end
+
+  <cast:assert_type!>(::Test.new(), Test::Mixin, ::Test::Mixin)
+
+  <cast:assert_type!>(::Test.new(), Test::Other, ::Test::Other)
+
+  <cast:assert_type!>(::Test.new(), Other, ::Other)
+end

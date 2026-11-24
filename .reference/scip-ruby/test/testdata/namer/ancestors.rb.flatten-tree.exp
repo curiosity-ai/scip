@@ -1,0 +1,19 @@
+class <emptyTree><<C <root>>> < (::<todo sym>)
+  module ::Mixin1<<C Mixin1>> < ()
+  end
+
+  module ::Mixin2<<C Mixin2>> < ()
+  end
+
+  class ::Parent<<C Parent>> < (::<todo sym>, ::Mixin1)
+    <self>.include(::Mixin1)
+  end
+
+  class ::Child<<C Child>> < (::Parent, ::Mixin2)
+    <self>.include(::Mixin2)
+  end
+
+  class ::MultipleInclude<<C MultipleInclude>> < (::<todo sym>, ::Mixin2, ::Mixin1)
+    <self>.include(::Mixin1, ::Mixin2)
+  end
+end

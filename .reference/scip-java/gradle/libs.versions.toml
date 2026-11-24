@@ -1,0 +1,54 @@
+[versions]
+clikt = "5.2.1"
+gradle-api = "8.11.1"
+guava = "33.7.2-jre"
+junit-jupiter = "5.11.4"
+kotlin = "2.4.21"
+kotlin-analysis-api = "2.4.0"
+kotlinx-collections-immutable = "0.5.2"
+kotlinx-coroutines-intellij = "1.8.0-intellij-13"
+kotlinx-serialization = "1.13.0"
+lombok = "1.18.48"
+maven-plugin-annotations = "3.16.0"
+maven-plugin-api = "3.10.2"
+maven-project = "2.2.1"
+protobuf = "4.34.2"
+protobuf-plugin = "0.10.1"
+scip-bindings = "0.10.0"
+shadow = "9.6.1"
+spotless = "8.12.0"
+vanniktech-maven-publish = "0.37.0"
+
+[libraries]
+caffeine = { module = "com.github.ben-manes.caffeine:caffeine", version = "3.3.1" }
+clikt-jvm = { module = "com.github.ajalt.clikt:clikt-jvm", version.ref = "clikt" }
+gradle-api = { module = "dev.gradleplugins:gradle-api", version.ref = "gradle-api" }
+gradle-test-kit = { module = "dev.gradleplugins:gradle-test-kit", version.ref = "gradle-api" }
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+kotlin-analysis-api-api = { module = "org.jetbrains.kotlin:analysis-api-for-ide", version.ref = "kotlin-analysis-api" }
+kotlin-analysis-api-impl-base = { module = "org.jetbrains.kotlin:analysis-api-impl-base-for-ide", version.ref = "kotlin-analysis-api" }
+kotlin-analysis-api-k2 = { module = "org.jetbrains.kotlin:analysis-api-k2-for-ide", version.ref = "kotlin-analysis-api" }
+kotlin-analysis-api-platform-interface = { module = "org.jetbrains.kotlin:analysis-api-platform-interface-for-ide", version.ref = "kotlin-analysis-api" }
+kotlin-analysis-api-standalone = { module = "org.jetbrains.kotlin:analysis-api-standalone-for-ide", version.ref = "kotlin-analysis-api" }
+kotlin-analysis-compiler = { module = "org.jetbrains.kotlin:kotlin-compiler", version.ref = "kotlin-analysis-api" }
+kotlin-analysis-low-level-api-fir = { module = "org.jetbrains.kotlin:low-level-api-fir-for-ide", version.ref = "kotlin-analysis-api" }
+kotlin-analysis-symbol-light-classes = { module = "org.jetbrains.kotlin:symbol-light-classes-for-ide", version.ref = "kotlin-analysis-api" }
+kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin" }
+kotlinx-collections-immutable-jvm = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm", version.ref = "kotlinx-collections-immutable" }
+kotlinx-coroutines-core-jvm = { module = "com.intellij.platform:kotlinx-coroutines-core-jvm", version.ref = "kotlinx-coroutines-intellij" }
+kotlinx-serialization-json-jvm = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm", version.ref = "kotlinx-serialization" }
+lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+maven-plugin-annotations = { module = "org.apache.maven.plugin-tools:maven-plugin-annotations", version.ref = "maven-plugin-annotations" }
+maven-plugin-api = { module = "org.apache.maven:maven-plugin-api", version.ref = "maven-plugin-api" }
+maven-project = { module = "org.apache.maven:maven-project", version.ref = "maven-project" }
+scip-java-bindings = { module = "org.scip-code:scip-java-bindings", version.ref = "scip-bindings" }
+scip-kotlin-bindings = { module = "org.scip-code:scip-kotlin-bindings", version.ref = "scip-bindings" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+protobuf = { id = "com.google.protobuf", version.ref = "protobuf-plugin" }
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+vanniktech-maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "vanniktech-maven-publish" }

@@ -1,0 +1,199 @@
+#include "parser/prism/Parser.h"
+#include "absl/types/span.h"
+#include "core/errors/parser.h"
+#include "parser/prism/Helpers.h"
+
+using namespace std;
+
+namespace sorbet::parser::Prism {
+
+using namespace std::literals::string_view_literals;
+
+Prism::ParseResult Parser::run(core::MutableContext ctx, bool preserveConcreteSyntax) {
+    auto parser = make_unique<Prism::Parser>(ctx.file.data(ctx).source());
+    pm_node_t *root = pm_parse(parser->getRawParserPointer());
+
+    bool collectComments = ctx.state.cacheSensitiveOptions.rbsEnabled;
+    vector<core::LocOffsets> comments;
+    if (collectComments) {
+        comments = parser->collectCommentLocations();
+    }
+
+    auto errors = parser->collectErrors();
+    for (auto &error : errors) {
+        if (error.id != PM_ERR_UNEXPECTED_TOKEN_CLOSE_CONTEXT) {
+            auto loc = core::Loc(ctx.file, parser->translateLocation(error.location));
+            if (auto e = ctx.state.beginError(loc, core::errors::Parser::ParserError)) {
+                e.setHeader("{}", error.message);
+            }
+        }
+    }
+
+    return ParseResult{move(parser), root, move(comments)};
+}
+
+pm_parser_t *Parser::getRawParserPointer() {
+    return &parser;
+}
+
+core::LocOffsets Parser::translateLocation(pm_location_t location) const {
+    return translateLocation(location.start, location.end);
+}
+
+core::LocOffsets Parser::translateLocation(const uint8_t *start, const uint8_t *end) const {
+    uint32_t startPos = static_cast<uint32_t>(start - parser.start);
+    uint32_t endPos = static_cast<uint32_t>(end - parser.start);
+
+    return core::LocOffsets{startPos, endPos};
+}
+
+string_view Parser::resolveConstant(pm_constant_id_t constantId) const {
+    ENFORCE(constantId != PM_CONSTANT_ID_UNSET,
+            "resolveConstant called with PM_CONSTANT_ID_UNSET (anonymous parameter name). "
+            "Caller must check for PM_CONSTANT_ID_UNSET before calling.");
+    pm_constant_t *constant = pm_constant_pool_id_to_constant(&parser.constant_pool, constantId);
+
+    return cast_prism_string(constant->start, constant->length);
+}
+
+string_view Parser::extractString(pm_string_t *string) const {
+    return cast_prism_string(pm_string_source(string), pm_string_length(string));
+}
+
+pm_location_t Parser::getZeroWidthLocation() const {
+    return {.start = parser.start, .end = parser.start};
+}
+
+pm_location_t Parser::convertLocOffsets(core::LocOffsets loc) const {
+    return {.start = parser.start + loc.beginPos(), .end = parser.start + loc.endPos()};
+}
+
+vector<ParseError> Parser::collectErrors() {
+    vector<ParseError> parseErrors{};
+    parseErrors.reserve(parser.error_list.size);
+
+    auto errorList = parser.error_list;
+
+    for (auto *node = errorList.head; node != nullptr; node = node->next) {
+        auto *error = reinterpret_cast<pm_diagnostic_t *>(node);
+        auto level = static_cast<pm_error_level_t>(error->level);
+
+        parseErrors.emplace_back(error->diag_id, string(error->message), error->location, level);
+    }
+
+    return parseErrors;
+}
+
+vector<core::LocOffsets> Parser::collectCommentLocations() {
+    auto commentList = parser.comment_list;
+    vector<core::LocOffsets> commentLocations{};
+    commentLocations.reserve(parser.comment_list.size);
+
+    for (auto *node = commentList.head; node != nullptr; node = node->next) {
+        auto *comment = reinterpret_cast<pm_comment_t *>(node);
+        ENFORCE(comment != nullptr);
+
+        core::LocOffsets location = translateLocation(comment->location);
+
+        commentLocations.push_back(location);
+    }
+
+    return commentLocations;
+}
+
+bool Parser::isTUntyped(pm_node_t *node) const {
+    pm_call_node_t *call = down_cast<pm_call_node_t>(node);
+    if (!call) {
+        return false;
+    }
+
+    auto methodName = resolveConstant(call->name);
+
+    return methodName == "untyped"sv && isT(call->receiver);
+}
+
+bool Parser::isT(pm_node_t *node) const {
+    if (!node) {
+        return false;
+    }
+
+    if (auto *constNode = down_cast<pm_constant_read_node_t>(node)) { // T
+        auto name = resolveConstant(constNode->name);
+        return name == "T";
+    } else if (auto *pathNode = down_cast<pm_constant_path_node_t>(node)) { // ::T
+        auto name = resolveConstant(pathNode->name);
+        return name == "T" && pathNode->parent == nullptr;
+    }
+
+    return false;
+}
+
+bool Parser::isSetterCall(pm_node_t *node) const {
+    auto *call = down_cast<pm_call_node_t>(node);
+    if (!call) {
+        return false;
+    }
+
+    auto methodName = resolveConstant(call->name);
+
+    return !methodName.empty() && methodName.back() == '=';
+}
+
+bool Parser::isSafeNavigationCall(pm_node_t *node) const {
+    return isa_node<pm_call_node_t>(node) && PM_NODE_FLAG_P(node, PM_CALL_NODE_FLAGS_SAFE_NAVIGATION);
+}
+
+bool Parser::isMethodDefModifierCall(pm_node_t *node, const core::GlobalState &gs) const {
+    auto *call = down_cast<pm_call_node_t>(node);
+    if (!call) {
+        return false;
+    }
+
+    // Must have no receiver (implicit self)
+    if (call->receiver != nullptr) {
+        return false;
+    }
+
+    // Must have exactly one argument
+    if (call->arguments == nullptr || call->arguments->arguments.size != 1) {
+        return false;
+    }
+
+    // That argument must be a method definition
+    pm_node_t *arg = call->arguments->arguments.nodes[0];
+    if (!isa_node<pm_def_node>(arg)) {
+        return false;
+    }
+
+    auto methodName = resolveConstant(call->name);
+    return gs.lookupNameUTF8(methodName).isMethodDefModifierName();
+}
+
+bool Parser::isAttrAccessorCall(pm_node_t *node) const {
+    auto *call = down_cast<pm_call_node_t>(node);
+    if (!call) {
+        return false;
+    }
+
+    // Must have no receiver or self receiver
+    if (call->receiver != nullptr && !isa_node<pm_self_node>(call->receiver)) {
+        return false;
+    }
+
+    // Check if the method name is attr_reader, attr_writer, or attr_accessor
+    auto methodName = resolveConstant(call->name);
+    return methodName == "attr_reader"sv || methodName == "attr_writer"sv || methodName == "attr_accessor"sv;
+}
+
+string Parser::prettyPrint(pm_node_t *node) const {
+    pm_buffer_t buffer{};
+    pm_prettyprint(&buffer, const_cast<pm_parser_t *>(&parser), node);
+    string result(buffer.value, buffer.length);
+    pm_buffer_free(&buffer);
+    return result;
+}
+
+void Parser::destroyNode(pm_node_t *node) {
+    pm_node_destroy(&parser, node);
+}
+}; // namespace sorbet::parser::Prism

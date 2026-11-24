@@ -1,0 +1,42 @@
+FROM --platform=linux/amd64 \
+    ruby:3.4.13-slim-trixie@sha256:2139ce9a85d720a874952570ae8537a506cb31737155fd6baf62cf2f3fdca7ee
+
+# This is the base Docker image for scip-ruby with common dependencies
+
+# Version argument to be passed during build
+ARG SCIP_RUBY_VERSION
+
+# Fail if SCIP_RUBY_VERSION is not provided
+RUN test -n "${SCIP_RUBY_VERSION}" || \
+    (echo "ERROR: SCIP_RUBY_VERSION build arg is required" && exit 1)
+
+# ca-certificates is listed so the build picks up trust store fixes from
+# trixie-security (e.g. 20250419+deb13u1 distrusts the compromised eMudhra chains).
+# The other deps are used by the autoindex script and to build C extensions in gems.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        wget \
+        git \
+        build-essential \
+        automake \
+        autoconf && \
+    rm -rf /var/lib/apt/lists/*
+
+# Use a release binary instead of building from source
+# because release builds are very time-consuming.
+#
+# The release version is verified by tools/scripts/publish-scip-ruby.sh
+# The binary at this version is guaranteed to exist because this workflow runs either:
+# 1. Manually with a specific tag that already has a release
+# 2. After the Release workflow completes (which creates the release and uploads the binary)
+#
+# `scip-ruby --version` fails the build if the binary can't run on this base
+# (e.g. it needs a newer glibc).
+RUN wget https://github.com/sourcegraph/scip-ruby/releases/download/scip-ruby-v${SCIP_RUBY_VERSION}/scip-ruby-x86_64-linux \
+    -O /usr/bin/scip-ruby && \
+    chmod +x /usr/bin/scip-ruby && \
+    scip-ruby --version
+
+# Set working directory for sources
+WORKDIR /sources

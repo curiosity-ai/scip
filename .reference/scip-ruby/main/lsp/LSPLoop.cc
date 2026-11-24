@@ -1,0 +1,406 @@
+#include "main/lsp/LSPLoop.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
+#include "common/EarlyReturnWithCode.h"
+#include "common/concurrency/WorkerPool.h"
+#include "common/kvstore/KeyValueStore.h"
+#include "common/statsd/statsd.h"
+#include "common/timers/Timer.h"
+#include "common/web_tracer_framework/tracing.h"
+#include "core/lsp/PreemptionTaskManager.h"
+#include "core/lsp/TypecheckEpochManager.h"
+#include "main/lsp/LSPConfiguration.h"
+#include "main/lsp/LSPInput.h"
+#include "main/lsp/LSPOutput.h"
+#include "main/lsp/LSPPreprocessor.h"
+#include "main/lsp/LSPTask.h"
+#include "main/lsp/json_types.h"
+#include "main/lsp/notifications/sorbet_workspace_edit.h"
+#include "main/lsp/watchman/WatchmanProcess.h"
+
+using namespace std;
+
+namespace sorbet::realmain::lsp {
+
+LSPLoop::LSPLoop(unique_ptr<core::GlobalState> initialGS, WorkerPool &workers,
+                 const shared_ptr<LSPConfiguration> &config, unique_ptr<KeyValueStore> kvstore)
+    : config(config), taskQueue(make_shared<TaskQueue>()), epochManager(initialGS->epochManager),
+      preprocessor(config, taskQueue),
+      typecheckerCoord(config, make_shared<core::lsp::PreemptionTaskManager>(initialGS->epochManager), workers,
+                       taskQueue),
+      indexer(config, move(initialGS), move(kvstore)), emptyWorkers(WorkerPool::create(0, *config->logger)),
+      lastMetricUpdateTime(chrono::steady_clock::now()) {}
+
+constexpr chrono::minutes STATSD_INTERVAL = chrono::minutes(5);
+
+bool LSPLoop::shouldSendCountersToStatsd(chrono::time_point<chrono::steady_clock> currentTime) const {
+    // If --web-trace-file, always flush after every task (probably: someone is debugging).
+    // Otherwise, batch up connections to hitting statsd (probably: normal mode of operation).
+    // Note: passing --web-trace-file will override the "only send every STATSD_INTERVAL" for
+    // statsd reporting. So it's *likely* bad to pass all of `--lsp`, `--statsd-host`, and
+    // `--web-trace-file` at the same time.
+    return !config->opts.webTraceFile.empty() ||
+           (!config->opts.statsdHost.empty() && (currentTime - lastMetricUpdateTime) > STATSD_INTERVAL);
+}
+
+void LSPLoop::sendCountersToStatsd(chrono::time_point<chrono::steady_clock> currentTime) {
+    Timer timeit(config->logger, "LSPLoop::sendCountersToStatsd");
+    ENFORCE(this_thread::get_id() == mainThreadId, "sendCounterToStatsd can only be called from the main LSP thread.");
+    const auto &opts = config->opts;
+    // Record process and version stats. Do this BEFORE clearing the thread counters!
+    StatsD::addStandardMetrics();
+    auto counters = getAndClearThreadCounters();
+    if (!opts.statsdHost.empty()) {
+        lastMetricUpdateTime = currentTime;
+        auto prefix = fmt::format("{}.lsp.counters", opts.statsdPrefix);
+        StatsD::submitCounters(counters, opts.statsdHost, opts.statsdPort, prefix);
+    }
+
+    if (!opts.webTraceFile.empty()) {
+        timeit.setTag("webtracefile", "true");
+        web_tracer_framework::Tracing::storeTraces(counters, opts.webTraceFile);
+    } else {
+        timeit.setTag("webtracefile", "false");
+    }
+}
+
+namespace {
+class NotifyNotificationOnDestruction {
+    absl::Notification &notification;
+
+public:
+    NotifyNotificationOnDestruction(absl::Notification &notif) : notification(notif){};
+    ~NotifyNotificationOnDestruction() {
+        if (!notification.HasBeenNotified()) {
+            notification.Notify();
+        }
+    }
+};
+
+} // namespace
+
+void LSPLoop::processRequest(const string &json) {
+    vector<unique_ptr<LSPMessage>> messages;
+    messages.push_back(LSPMessage::fromClient(json));
+    LSPLoop::processRequests(move(messages));
+}
+
+void LSPLoop::processRequest(unique_ptr<LSPMessage> msg) {
+    vector<unique_ptr<LSPMessage>> messages;
+    messages.push_back(move(msg));
+    processRequests(move(messages));
+}
+
+void LSPLoop::processRequests(vector<unique_ptr<LSPMessage>> messages) {
+    for (auto &message : messages) {
+        preprocessor.preprocessAndEnqueue(move(message));
+    }
+
+    vector<unique_ptr<LSPTask>> tasks;
+    while (true) {
+        {
+            absl::MutexLock lck(taskQueue->getMutex());
+            ENFORCE(!taskQueue->isPaused(), "__PAUSE__ not supported in single-threaded mode.");
+            auto &queuedTasks = taskQueue->tasks();
+            tasks.reserve(queuedTasks.size());
+            for (auto &task : queuedTasks) {
+                tasks.emplace_back(move(task));
+            }
+            queuedTasks.clear();
+        }
+
+        if (tasks.empty()) {
+            break;
+        }
+
+        for (auto &task : tasks) {
+            runTask(std::move(task));
+        }
+        tasks.clear();
+    }
+}
+
+void LSPLoop::runTask(unique_ptr<LSPTask> task) {
+    prodCategoryCounterInc("lsp.messages.processed", task->methodString());
+    {
+        Timer timeit(config->logger, "LSPTask::index");
+        timeit.setTag("method", task->methodString());
+        task->index(this->indexer);
+    }
+    if (task->finalPhase() == LSPTask::Phase::INDEX) {
+        // Task doesn't need the typechecker.
+        return;
+    }
+
+    // Check if the task is a dangerous task, as those are scheduled specially.
+    if (auto *dangerousTask = dynamic_cast<LSPDangerousTypecheckerTask *>(task.get())) {
+        if (auto *editTask = dynamic_cast<SorbetWorkspaceEditTask *>(dangerousTask)) {
+            unique_ptr<SorbetWorkspaceEditTask> edit(editTask);
+            (void)task.release();
+            switch (edit->getTypecheckingPath(indexer)) {
+                case TypecheckingPath::Fast: {
+                    // Can run on fast path synchronously; it should complete quickly.
+                    typecheckerCoord.syncRun(move(edit));
+                    break;
+                }
+                case TypecheckingPath::Slow: {
+                    // Must run on slow path; this method is async in multithreaded environments, and blocks in
+                    // single threaded environments.
+                    typecheckerCoord.typecheckOnSlowPath(move(edit));
+                    break;
+                }
+            }
+
+        } else {
+            // Must be a new type of dangerous task we don't know about.
+            // Please do not add new dangerous tasks to the codebase. Try to surface whatever functionality you
+            // require safely through LSPTypecheckerCoordinator.
+            ENFORCE(false);
+        }
+    } else {
+        // Run synchronously.
+        typecheckerCoord.syncRun(move(task));
+    }
+}
+
+optional<unique_ptr<core::GlobalState>> LSPLoop::runLSP(shared_ptr<LSPInput> input) {
+    // Naming convention: thread that executes this function is called processing thread
+
+    // Message queue stores requests that arrive from the client and Watchman. No preprocessing is performed on
+    // these messages (e.g., edits are not merged).
+    absl::Mutex messageQueueMutex;
+    MessageQueueState messageQueue;
+
+    // Notifies threads once LSP is initialized. Used to prevent Watchman thread from enqueueing messages that mutate
+    // file state until after initialization.
+    absl::Notification initializedNotification;
+
+    auto typecheckThread = typecheckerCoord.startTypecheckerThread();
+
+    unique_ptr<watchman::WatchmanProcess> watchmanProcess;
+    const auto &opts = config->opts;
+    auto &logger = config->logger;
+    if (!opts.disableWatchman) {
+        if (opts.rawInputDirNames.empty() ||
+            (opts.rawInputDirNames.size() > 1 && !opts.forciblySilenceLspMultipleDirError) ||
+            !opts.rawInputFileNames.empty()) {
+            string msg =
+                opts.forciblySilenceLspMultipleDirError
+                    ? "Watchman support requires at least one input directory and does not accept input files."
+                    : "Watchman support currently only works when Sorbet is run with a single input directory.";
+            msg += " If Watchman is not needed, run Sorbet with `--disable-watchman`.";
+            logger->error(msg);
+            auto params = make_unique<ShowMessageParams>(MessageType::Error, msg);
+            config->output->write(make_unique<LSPMessage>(
+                make_unique<NotificationMessage>("2.0", LSPMethod::WindowShowMessage, move(params))));
+            throw EarlyReturnWithCode(1);
+        }
+
+        watchmanProcess = make_unique<watchman::WatchmanProcess>(
+            logger, opts.watchmanPath, opts.rawInputDirNames.at(0), vector<string>({"rb", "rbi"}), messageQueue,
+            messageQueueMutex, initializedNotification, this->config, opts.watchmanNamespace);
+    }
+
+    auto readerThread =
+        runInAThread("lspReader", [&messageQueue, &messageQueueMutex, logger = logger, input = move(input)] {
+            // Thread that executes this lambda is called reader thread.
+            // This thread _intentionally_ does not capture `this`.
+            MessageQueueState::NotifyOnDestruction notify(messageQueue, messageQueueMutex);
+            auto timeit = make_unique<Timer>(logger, "getNewRequest");
+            while (true) {
+                auto readResult = input->read();
+                if (readResult.result == FileOps::ReadResult::ErrorOrEof) {
+                    // Exit loop if there is an error reading from input.
+                    break;
+                }
+                {
+                    absl::MutexLock lck(&messageQueueMutex); // guards guardedState.
+                    auto &msg = readResult.message;
+                    if (msg) {
+                        msg->tagNewRequest(*logger);
+                        messageQueue.counters = mergeCounters(move(messageQueue.counters));
+                        messageQueue.pendingRequests.push_back(move(msg));
+                        // Reset span now that we've found a request.
+                        timeit = make_unique<Timer>(logger, "getNewRequest");
+                    }
+                    // Check if it's time to exit.
+                    if (messageQueue.terminate) {
+                        // Another thread exited.
+                        break;
+                    }
+                }
+            }
+            logger->debug("Reader thread terminating");
+        });
+
+    // Bridges the gap between the {reader, watchman} threads and the typechecking thread.
+    auto preprocessingThread = preprocessor.runPreprocessor(messageQueue, messageQueueMutex);
+
+    mainThreadId = this_thread::get_id();
+    {
+        // Ensure Watchman thread gets unstuck when thread exits prior to initialization.
+        NotifyNotificationOnDestruction notify(initializedNotification);
+        // Ensure preprocessor, reader, and watchman threads get unstuck when thread exits.
+        MessageQueueState::NotifyOnDestruction notifyIncoming(messageQueue, messageQueueMutex);
+        while (true) {
+            unique_ptr<LSPTask> task;
+            {
+                Timer timeit(logger, "idle");
+                absl::MutexLock lck(taskQueue->getMutex(), absl::Condition(taskQueue.get(), &TaskQueue::ready));
+                ENFORCE(!taskQueue->isPaused());
+                if (taskQueue->isTerminated()) {
+                    if (taskQueue->getErrorCode() != 0) {
+                        // Abnormal termination. Exit immediately.
+                        typecheckerCoord.shutdown();
+                        throw EarlyReturnWithCode(taskQueue->getErrorCode());
+                    } else if (taskQueue->tasks().empty()) {
+                        // Normal termination. Wait until all pending requests finish.
+                        break;
+                    }
+                }
+
+                // Before giving up the lock, check if the typechecker is running a slow path and if the task at the
+                // head of the queue can preempt. If it is, we may be able to schedule a preemption.
+                // Don't bother scheduling tasks to preempt that only need the indexer.
+                // N.B.: We check `canPreempt` last as it is mildly expensive for edits (it hashes the files)
+                auto &frontTask = taskQueue->tasks().front();
+
+                // If the task can preempt, we may be able to schedule a preemption. Don't bother scheduling tasks to
+                // preempt that only need the indexer.
+                // N.B.: We check `canPreempt` last as it is mildly expensive for edits (it hashes the files)
+                if (frontTask->finalPhase() == LSPTask::Phase::RUN && epochManager->getStatus().slowPathRunning &&
+                    frontTask->canPreempt(indexer)) {
+                    absl::Notification finished;
+                    string methodStr = convertLSPMethodToString(frontTask->method);
+                    auto scheduleToken = typecheckerCoord.trySchedulePreemption(finished, *taskQueue, indexer);
+
+                    if (scheduleToken != nullptr) {
+                        logger->debug("[Processing] Preempting slow path for task {}", methodStr);
+                        // Preemption scheduling success!
+                        // In this if statement **only**, `taskQueue::stateMutex` protects all accesses to LSPIndexer.
+                        // This is needed to linearize the indexing of edits, which may happen in the typechecking
+                        // thread if a fast path edit preempts, with the `canPreempt` checks of edits in this thread.
+                        auto noPreemptionTasksRemain = [&indexer = this->indexer,
+                                                        &tasks = this->taskQueue->tasks()]() -> bool {
+                            // The capture of `tasks` here is safe because the only caller of this closure is the
+                            // `Await` below, which will lock the mutex that guards `tasks` for its duration.
+                            return !indexer.preemptionPossible(tasks);
+                        };
+                        // Wait until the head of the queue turns into a non-preemptible task to resume processing the
+                        // queue.
+                        taskQueue->getMutex()->Await(absl::Condition(&noPreemptionTasksRemain));
+
+                        // The queue is now empty or has a task that cannot preempt. There are two possibilities here:
+                        // 1) The scheduled work is now irrelevant because the task that was scheduled is now gone
+                        // (e.g., the request was canceled or, in the case of an edit, merged w/ a slow path edit)
+                        // 2) The scheduled work has already started (and may have finished).
+                        // Pessimistically assume 1) and try to cancel the scheduled preemption.
+                        if (!typecheckerCoord.tryCancelPreemption(scheduleToken)) {
+                            // Cancelation failed: 2) must be the case. Unlock the queue and wait until task finishes to
+                            // avoid races.
+                            taskQueue->getMutex()->Unlock();
+                            finished.WaitForNotification();
+                            taskQueue->getMutex()->Lock();
+                            logger->debug("[Processing] Preemption for task {} complete", methodStr);
+                        } else {
+                            logger->debug("[Processing] Canceled scheduled preemption for task {}", methodStr);
+                        }
+
+                        // At this point, we know that the preemption task has either run or been cancelled. If it was
+                        // cancelled because we detected a new slow path edit in the queue, move all edits between the
+                        // front of the queue and the slow path edit to the front of the queue, and merge them together.
+                        auto &tasks = this->taskQueue->tasks();
+
+                        // If the front of the queue cannot preempt, then we ran to completion and there are no tasks to
+                        // move.
+                        if (tasks.empty() || !tasks.front()->canPreempt(indexer)) {
+                            continue;
+                        }
+
+                        // If the first task that cannot preempt is not an edit, there are no tasks to move.
+                        auto cannotPreempt = absl::c_find_if(
+                            tasks, [&indexer = this->indexer](auto &task) { return !task->canPreempt(indexer); });
+                        if (cannotPreempt == tasks.end() ||
+                            dynamic_cast<SorbetWorkspaceEditTask *>(cannotPreempt->get()) == nullptr) {
+                            continue;
+                        }
+
+                        config->logger->debug("[Processing] Promoting slow path edits");
+
+                        // As we might have more than one edit between the front of the queue and the slow path edit,
+                        // migrate all the edits to the front of the queue and preserve their order so that we can merge
+                        // them into a single edit.
+                        auto firstNonEdit = std::stable_partition(tasks.begin(), cannotPreempt + 1, [](auto &task) {
+                            return dynamic_cast<SorbetWorkspaceEditTask *>(task.get()) != nullptr;
+                        });
+
+                        // If we only moved a single edit, we're done.
+                        auto numEdits = std::distance(tasks.begin(), firstNonEdit);
+                        if (numEdits <= 1) {
+                            prodCategoryCounterInc("lsp.preemption.cancelation", "single");
+                            continue;
+                        }
+
+                        config->logger->debug("[Processing] Merging {} promoted edits", numEdits);
+                        prodCategoryCounterInc("lsp.preemption.cancelation", "merged");
+
+                        // At this point, we can assume that the front of the queue is an edit. Merge all of the
+                        // newer edits into it to ensure that the front of the queue is a single slow path edit.
+                        auto *oldestEdit = dynamic_cast<SorbetWorkspaceEditTask *>(tasks.front().get());
+                        ENFORCE(oldestEdit != nullptr);
+
+                        auto second = tasks.begin() + 1;
+                        for (auto it = second; it != firstNonEdit; ++it) {
+                            auto *newerEdit = dynamic_cast<SorbetWorkspaceEditTask *>(it->get());
+                            oldestEdit->mergeNewer(*newerEdit);
+                        }
+
+                        tasks.erase(second, firstNonEdit);
+
+                        continue;
+                    }
+                    // If preemption scheduling failed, then the slow path probably finished just now. Continue as
+                    // normal.
+                }
+
+                task = move(taskQueue->tasks().front());
+                taskQueue->tasks().pop_front();
+
+                // Test only: Collect counters from other threads into this thread for reporting.
+                if (task->method == LSPMethod::GETCOUNTERS && !taskQueue->getCounters().hasNullCounters()) {
+                    counterConsume(move(taskQueue->getCounters()));
+                }
+            }
+
+            logger->trace("[Processing] Running task {} normally", convertLSPMethodToString(task->method));
+            runTask(move(task));
+
+            if (config->isInitialized() && !initializedNotification.HasBeenNotified()) {
+                initializedNotification.Notify();
+            }
+
+            auto currentTime = chrono::steady_clock::now();
+            if (shouldSendCountersToStatsd(currentTime)) {
+                {
+                    // Merge counters from worker threads.
+                    absl::MutexLock counterLck(taskQueue->getMutex());
+                    if (!taskQueue->getCounters().hasNullCounters()) {
+                        counterConsume(move(taskQueue->getCounters()));
+                    }
+                }
+                sendCountersToStatsd(currentTime);
+            }
+            logger->flush();
+        }
+    }
+
+    logger->debug("Processor terminating");
+    auto gs = typecheckerCoord.shutdown();
+    if (gs) {
+        return gs;
+    } else {
+        return nullopt;
+    }
+}
+
+} // namespace sorbet::realmain::lsp
