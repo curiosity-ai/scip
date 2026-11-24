@@ -90,8 +90,9 @@ public static class NativeProjectIndexer
                             if (!info.Relationships.Any(r => r.Symbol == o)) info.Relationships.Add(new Relationship { Symbol = o, IsImplementation = true, IsReference = true });
                         }
                     }
-                    writer.WriteDocument(doc);
                 }
+                RelationshipMerger.Merge(documents);
+                foreach (var doc in documents) writer.WriteDocument(doc);
                 foreach (var ext in ExternalSymbols(documents, indexers)) writer.WriteExternalSymbol(ext);
             }
             File.Move(tmp, output, overwrite: true);

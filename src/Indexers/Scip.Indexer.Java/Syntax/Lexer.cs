@@ -116,10 +116,29 @@ public static class Lexer
 
     private static int LexNumber(string s, int i)
     {
+        var start = i;
         if (s[i] == '0' && i + 1 < s.Length && (s[i + 1] is 'x' or 'X' or 'b' or 'B'))
         {
             i += 2;
             while (i < s.Length && (char.IsAsciiHexDigit(s[i]) || s[i] is '_' or 'L' or 'l')) i++;
+            if (s[start + 1] is 'x' or 'X')
+            {
+                // hexadecimal floating point literal: 0x1.8p3, 0x1p31, 0x.8p-2f
+                var j = i;
+                if (j < s.Length && s[j] == '.')
+                {
+                    j++;
+                    while (j < s.Length && (char.IsAsciiHexDigit(s[j]) || s[j] == '_')) j++;
+                }
+                if (j < s.Length && s[j] is 'p' or 'P')
+                {
+                    j++;
+                    if (j < s.Length && s[j] is '+' or '-') j++;
+                    while (j < s.Length && (char.IsDigit(s[j]) || s[j] == '_')) j++;
+                    if (j < s.Length && s[j] is 'f' or 'F' or 'd' or 'D') j++;
+                    return j;
+                }
+            }
             return i;
         }
         while (i < s.Length && (char.IsDigit(s[i]) || s[i] == '_')) i++;

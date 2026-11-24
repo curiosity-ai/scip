@@ -287,7 +287,7 @@ public sealed class Parser
                 }
                 t.Segs.Add(seg);
             }
-            while (At(".") && PeekTok().Kind == Tk.Ident && !AtAt(1, "class") && !AtAt(1, "this") && !AtAt(1, "new"));
+            while (At(".") && (PeekTok().Kind == Tk.Ident || AtAt(1, "@")) && !AtAt(1, "class") && !AtAt(1, "this") && !AtAt(1, "new"));
         }
         if (allowDims)
         {
@@ -1172,7 +1172,7 @@ public sealed class Parser
         }
 
         // array / generic type method refs and class literals: String[]::new, List<String>::new, int[].class
-        if ((AtAt(1, "[") && AtAt(2, "]")) || AtAt(1, "<"))
+        if ((AtAt(1, "[") && AtAt(2, "]")) || AtAt(1, "<") || DottedGenericAhead())
         {
             var tr = Speculate<Expr>(() =>
             {
@@ -1180,6 +1180,7 @@ public sealed class Parser
                 if (At("::"))
                 {
                     Next();
+                    SkipExplicitTypeArgs();
                     var n = At("new") ? Next() : ExpectIdent();
                     return Fin(new MethodRef { TargetType = ty, Name = n.Text, NameStart = n.Start }, start);
                 }
@@ -1192,6 +1193,24 @@ public sealed class Parser
         var id = ExpectIdent();
         if (At("(")) return Fin(CallOf(null, id.Text, id.Start, ParseArgs()), start);
         return Fin(new NameExpr { Name = id.Text }, start);
+    }
+
+    /// <summary>True for <c>a.b.C&lt;</c>: a qualified name directly followed by type arguments (e.g. <c>Map.Entry&lt;K, V&gt;::new</c>).</summary>
+    private bool DottedGenericAhead()
+    {
+        var i = 1;
+        if (!AtAt(1, ".")) return false;
+        while (AtAt(i, ".") && PeekTok(i + 1).Kind == Tk.Ident) i += 2;
+        return i > 1 && AtAt(i, "<");
+    }
+
+    /// <summary>Skips the explicit type arguments of <c>Type::&lt;K, V&gt;method</c>.</summary>
+    private void SkipExplicitTypeArgs()
+    {
+        if (!At("<")) return;
+        Next();
+        do ParseType(); while (Accept(","));
+        Expect(">");
     }
 
     private static Call CallOf(Expr? target, string name, int nameStart, List<Expr> args)
@@ -1269,6 +1288,24 @@ public sealed class Parser
                 if (At("(")) e = Fin(CallOf(e, n.Text, n.Start, ParseArgs()), start);
                 else e = Fin(new FieldAccess { Target = e, Name = n.Text, NameStart = n.Start }, start);
             }
+            else if (At("[") && AtAt(1, "]") && e is NameExpr or FieldAccess)
+            {
+                // qualified array type: Map.Entry[].class, Outer.Inner[]::new
+                var ty = ExprToType(e);
+                while (At("[") && AtAt(1, "]")) { Next(); Next(); ty.Dims++; }
+                if (At("::"))
+                {
+                    Next();
+                    var n = At("new") ? Next() : ExpectIdent();
+                    e = Fin(new MethodRef { TargetType = ty, Name = n.Text, NameStart = n.Start }, start);
+                }
+                else
+                {
+                    Expect(".");
+                    Expect("class");
+                    e = Fin(new ClassLit { Type = ty }, start);
+                }
+            }
             else if (At("["))
             {
                 Next();
@@ -1287,6 +1324,7 @@ public sealed class Parser
             else if (At("::"))
             {
                 Next();
+                SkipExplicitTypeArgs();
                 var n = At("new") ? Next() : ExpectIdent();
                 e = Fin(new MethodRef { Target = e, Name = n.Text, NameStart = n.Start }, start);
             }
