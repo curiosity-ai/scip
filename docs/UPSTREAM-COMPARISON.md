@@ -43,3 +43,33 @@ and indexes only 50 of 235 documents; ours matches it on those 50 and covers the
 `composer require davidrjenni/scip-php` (+ `composer install --no-dev` inside the package and in the target project);
 `dotnet tool install scip-dotnet` (`DOTNET_ROLL_FORWARD=Major`); scip-java from Maven Central (`com.sourcegraph:scip-java_2.13:0.12.3`,
 run `com.sourcegraph.scip_java.ScipJava index` with `JAVA_TOOL_OPTIONS` unset and `-Werror` relaxed for gson on JDK 21).
+
+
+## After the alignment pass (merged build, 791 tests passing, all 36 validation projects lint-clean)
+
+Re-measured with the same script on the same upstream indexes. "descr" = symbol descriptor identical at the same range;
+"exact" = whole symbol string identical (differs where the package/version part intentionally differs, e.g. Python/TypeScript/Ruby package metadata).
+
+| Project | Defs P / R | Refs P / R | descr % | exact % | roles overlap % | docs % ours/upstream | relationships ours/upstream |
+|---|---|---|---|---|---|---|---|
+| serilog (dotnet) | 100 / 100 | 100 / 99.7 | 99.0 | 99.0 | 100 | 99 / 100 | 635 / 70 |
+| monolog (php) | 98.4 / 100 | 99.9 / 95.1 | 100 | n/a (package prefix) | 100 | 98 / 100 | 0 / 0 |
+| gson (java) | 100 / 100 | 100 / 99.1 | 99.9 | 97.5 | 100 | 7 / 16 (generated sources absent) | 1,666 / 5,898 (same on shared docs) |
+| express (ts) | 100 / 99.8 | 99.9 / 96.4 | 98.8 | n/a | 100 | 97 / 100 | 0 / 0 |
+| zod (ts) | 98.8 / 99.5 | 99.8 / 98.8 | 98.9 | 93.1 | 99.6 | 95 / 100 | 100 / 100 |
+| requests (python) | 99.1 / 99.9 | 99.6 / 94.2 | 98.6 | n/a | 99.8 | 50 / 71 | 58 / 64 |
+| flask (python) | 99.8 / 100 | 100 / 95.8 | 99.2 | n/a | 99.9 | 56 / 68 | 116 / 119 |
+| rack (ruby) | 97.5 / 99.5 | 97.4 / 89.6 | 97.9 | n/a | 99.9 | 100 / 96 | 29 / 46 |
+| sinatra (ruby) | 98.6 / 99.5 | 96.3 / 86.4 | 93.5 | n/a | 99.9 | 99 / 95 | 58 / 62 |
+| ripgrep (rust) | 99.2 / 99.4 | 99.6 / 84.7 | 99.7 | 85.4 | 100 | 17 / 18 | 0 / 0 |
+
+Dart (upstream `scip_dart ./` skips its own package; `scip_dart .` works — shelf was an artifact of that): collection / bloc / http —
+definition recall 99 / 100 / 100 %, reference recall 92 / 89 / 90 %, relationships 645 vs 702 / 446 vs 449 / 104 vs 107.
+C/C++ remains uncompared (scip-clang binaries cannot be downloaded in this environment).
+
+### Remaining known differences
+- Reference recall: Ruby 86–90 % and Rust 84.7 % (type inference), Python 94–96 %, Java external-module classpaths (~217 guava occurrences), TypeScript JS expando members (`this.x =`, `exports.x =`) and union narrowing.
+- Python: docstring→markdown conversion; return-type inference beyond None/literals; external symbols 583 vs 273 (our lint needs entries upstream omits); version falls back to the git hash when pyproject parsing fails, as upstream's 0.6.8 TOML parser does.
+- Java: upstream's class-signature format in 0.12.3 differs from the goldens in `.reference` (we follow the goldens); snapshot test normalises scheme/docs/package refs/enclosing_symbol.
+- Rust: naming mirrors the installed rust-analyzer 1.97 binary rather than `moniker.rs`; references into external crates, `*` deref and `..` range refs missing.
+- Ruby: gem version `latest` unless `--gem-metadata` is given (as upstream).

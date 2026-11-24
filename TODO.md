@@ -68,7 +68,8 @@ Each needs: a design note in `docs/PORTING.md`, implementation, ported tests/sna
 - [x] Large-project fix pass (Ruby, TypeScript, Dart, PHP, Java, .NET) — see docs/VALIDATION.md
 - [ ] Python: invalid local symbols on home-assistant/core (364 lint errors) — in progress
 - [x] Diff indexer output against upstream indexers on shared projects (sanity check: docs/UPSTREAM-COMPARISON.md)
-- [ ] (open, not started) Findings from the upstream comparison: TS/Ruby hover docs, Ruby read-access role, Python import role, Rust root-module naming, Java overload disambiguators + relationships, TS reference recall, clang/dart not comparable
+- [x] Upstream-comparison findings addressed (docs/UPSTREAM-COMPARISON.md, 'After the alignment pass')
+- [ ] Remaining upstream gaps: reference recall (Ruby/Rust type inference, TS expando members), Python docstring markdown, Java per-module classpaths, Rust external-crate refs; clang still uncompared
 - [ ] Reduce memory/time on very large Python/Java projects (ha-core 4.9 GB / 117 s)
 - [~] (lint errors fixed everywhere; open: relationship-ordering decision) Fix findings from real-project validation (`docs/VALIDATION.md`): dotnet project loading (Serilog) + non-zero exit on failure; SymbolInformation for locals (TS, Ruby); external SymbolInformation (Java); duplicate/dangling SymbolInformation & relationships (Python, Java); make every validation index pass `scip lint`
 - [ ] Cross-check outputs against Go `scip` CLI on shared fixtures (golden files)
