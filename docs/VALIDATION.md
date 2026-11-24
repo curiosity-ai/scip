@@ -64,30 +64,35 @@ To pass it, the Java indexer drops cross-file inverse relationships that cannot 
 restores the full output but fails lint), Python drops relationships left pointing at a later document (import cycles), and
 Dart/Clang order documents definitions-first. Decision pending: keep this, or make the lint order-independent and keep all relationships.
 
-## Large-project batch (build at commit ee58cab, lint order-independent)
+## Final re-validation (merged build, 707 tests passing)
 
-| Lang | Project | Time / peak RSS | Index | Lint (errors / warnings) |
-|---|---|---|---|---|
-| java | spring-framework | 37 s / 2.0 GB | 204 MB | 0 / 0 |
-| java | guava | 16 s / 1.1 GB | 71 MB | 0 / 7,560 (duplicate relationships) |
-| typescript | vuejs/core | 8 s / 0.5 GB | 13 MB | 0 / 0 |
-| typescript | nestjs/nest | 7 s / 0.3 GB | 12 MB | 0 / 0 |
-| typescript | microsoft/playwright (`--infer-tsconfig`) | 13 s / 0.9 GB | 44 MB | 0 / 0 (72 parser syntax-error warnings) |
-| typescript | angular/angular (`--infer-tsconfig`) | **crash**: stack overflow in `Checker.ResolveEntityExpression`; 13 parser syntax errors before it | | |
-| python | django | 19 s / 0.9 GB | 97 MB | 0 / 0 |
-| python | home-assistant/core | 102 s / 5.0 GB | 638 MB | 0 / 0 |
-| ruby | discourse | 18 s / 1.5 GB | 75 MB | 0 / 0 |
-| ruby | rails/rails | **crash**: stack overflow in `RubyProject.LookupInstance` | | |
-| rust | tokio, starship | 2 s / 0.2 GB each | 6 / 5 MB | 0 / 0 |
-| clang | curl, redis, nlohmann/json | 14 s, 27 s, 6 s | 8 / 24 / 3 MB | 0 / 0 |
-| clang | abseil-cpp | 88 s / 2.0 GB | 21 MB | 0 / 0 |
-| dart | flutter `packages/flutter` | 14 s / 1.1 GB | 82 MB | 2,136 / 2,038 |
-| dart | riverpod `packages/riverpod` | 1 s | 2.5 MB | 439 / 24 |
-| php | laravel/framework | 9 s / 0.5 GB | 38 MB | 11 / 0 |
-| php | symfony/symfony | 22 s / 1.5 GB | 102 MB | 69 / 0 (invalid U+FFFD symbols from non-UTF-8 sources) |
-| dotnet | Humanizer | | | 0 / 25 (duplicate documents per target framework) |
-| dotnet | Newtonsoft.Json (with relaxed `Src/global.json`) | 13 s / 0.3 GB | 5 MB | 0 / 20 (repeated SymbolInformation per TFM) |
+All 36 runs exit 0. 35 of 36 have **0 lint errors and 0 warnings** (lint is order-independent; `local N` scoped per document).
 
-Lint change made along the way: `scip lint` is now order-independent for relationships, and `local N` symbols are scoped per document in the duplicate-relationship check
-(most "multiple relationships" warnings on gson/commons-lang/zod were this false positive).
-Fix pass for the remaining items is tracked in TODO.md.
+| Lang | Project | Time / peak RSS | Index |
+|---|---|---|---|
+| java | spring-framework | 33 s / 2.0 GB | 208 MB |
+| java | guava | 17 s / 1.4 GB | 105 MB |
+| java | commons-lang / gson | 7 s / 0.4 GB, 3 s / 0.25 GB | 30 / 8 MB |
+| java (agent runs) | apache/kafka, elasticsearch `server` | 37 s / 2.7 GB, 44 s / 3.2 GB | clean |
+| typescript | angular | 36 s / 2.8 GB | 138 MB |
+| typescript | playwright, vue-core, nest, zod, express | 11 s, 8 s, 5 s, 7 s, 1 s | 45, 13, 12, 12, 1 MB |
+| typescript (agent runs) | typeorm, excalidraw | | clean |
+| python | django | 21 s / 0.9 GB | 97 MB |
+| python | **home-assistant/core** | 117 s / 4.9 GB | 638 MB — **364 errors, 2 warnings** (invalid `local Nname.` symbols, `reached end of symbol while parsing <scheme>`); fix in progress |
+| python | flask, requests | 1 s | 2, 1 MB |
+| ruby | rails, discourse | 15 s / 0.65 GB, 18 s / 1.5 GB | 41, 75 MB |
+| ruby (agent runs) | fastlane, gitlabhq | 9 s, 67 s / 2.7 GB | clean |
+| ruby | sinatra, rack | <1 s | 1 MB |
+| rust | tokio, starship, ripgrep | 2 s | 6, 5, 6 MB |
+| clang | abseil-cpp, redis, curl, nlohmann/json | 93 s / 1.8 GB, 20 s, 11 s, 5 s | 21, 24, 8, 3 MB |
+| clang | zlib, fmt | 1 s | 2, 3 MB |
+| dart | flutter `packages/flutter` | 15 s / 1.1 GB | 82 MB |
+| dart | riverpod, shelf | <1 s | 2, 0.2 MB |
+| dart (agent runs) | bloc, flutter_bloc, go_router, video_player | | clean |
+| php | symfony, laravel | 26 s / 1.5 GB, 9 s | 102, 38 MB |
+| php (agent runs) | phpMyAdmin, WordPress | 5 s, 8.5 s | clean |
+| dotnet | humanizer, newtonsoft, serilog | 42 s, 22 s, 23 s | 21, 7, 3 MB |
+| dotnet (agent runs) | jellyfin, Avalonia.Base | 87 s / 1.2 GB, 42 s | clean |
+
+Fixes made during the large-project pass: Ruby cyclic-`alias` stack overflow; TypeScript checker recursion guards and a recovering parser (instantiation expressions, `using`, `infer … extends`, etc.); Dart implicit constructors and test-local names; PHP non-UTF-8 sources, non-ASCII identifiers, anonymous classes, PHP 8.4 syntax; Java index-wide `RelationshipMerger` and parser gaps; .NET `DocumentMerger` for files shared by several projects.
+Caveat: none of these indexes has been diffed against the upstream indexers' output; the checks are "runs, lint-clean, self-consistent".
