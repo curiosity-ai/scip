@@ -17,12 +17,12 @@ Legend: `[x]` done · `[ ]` open. Upstream paths are relative to `.reference/`.
 - [x] `SymbolParser` (`symbol_parser.go`, `symbol.go`) + tests
 - [x] `SymbolFormatter` (`symbol_formatter.go`) + tests
 - [x] `IndexWriter` (streaming index output)
-- [ ] `IsLocalSymbol`/`IsGlobalSymbol` helpers on `Symbol`-string extension (currently on `SymbolParser`)
-- [ ] `Position` / `Range` / `OccurrenceRange` (`position.go`, `occurrence_range.go`) + tests
-- [ ] Position encodings (UTF-8/UTF-16/UTF-32) and `SourceFile` helpers (`source_file.go`)
-- [ ] Sorting & canonicalization (`sort.go`, `canonicalize.go`)
-- [ ] Sanitize (`sanitize.go`), flatten (`flatten.go`), symbol table (`symbol_table.go`)
-- [ ] Port remaining Go tests, incl. `testutil` and `memtest`
+- [x] `IsLocalSymbol`/`IsGlobalSymbol` helpers on `Symbol`-string extension (currently on `SymbolParser`)
+- [x] `Position` / `Range` / `OccurrenceRange` (`position.go`, `occurrence_range.go`) + tests
+- [x] Position encodings (UTF-8/UTF-16/UTF-32) and `SourceFile` helpers (`source_file.go`)
+- [x] Sorting & canonicalization (`sort.go`, `canonicalize.go`)
+- [x] Sanitize (`sanitize.go`), flatten (`flatten.go`), symbol table (`symbol_table.go`)
+- [ ] Port remaining Go tests: `testutil/format.go` done (`SnapshotFormatter`); `test_runner.go`, `snapshot_testing.go` and `memtest` remain (CLI `test`)
 - [ ] Invalid UTF-16 (lone surrogate) rejection in `SymbolParser` to match Go's UTF-8 validation
 - [ ] Benchmarks (BenchmarkDotNet) for symbol parsing vs. Go `parseSymbolV2`
 - [ ] Decide fate of upstream `bindings/{java,kotlin,rust,typescript,haskell,dotnet}` (likely: not ported; protobuf covers them)
