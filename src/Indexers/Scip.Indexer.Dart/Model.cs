@@ -33,6 +33,12 @@ internal sealed class Decl(DeclKind kind, string name, Decl? parent, Token nameT
 
     public string File { get; } = file;
 
+    /// <summary>Set when the declaration belongs to a dependency or the SDK rather than the indexed package.</summary>
+    public ExternalPackage? External { get; init; }
+
+    /// <summary>For top-level declarations of an external library: the library that declares it.</summary>
+    public ExtLibrary? Lib { get; set; }
+
     /// <summary>Descriptors below the file namespace, outermost first.</summary>
     public List<(string Name, SymbolDescriptor.Types.Suffix Suffix)> Path { get; init; } = [];
 
@@ -76,13 +82,25 @@ internal sealed class Decl(DeclKind kind, string name, Decl? parent, Token nameT
 }
 
 /// <summary>An import/export/part directive with a literal URI.</summary>
-internal sealed record DirectiveRef(Token Uri, string Text);
+internal sealed record DirectiveRef(Token Uri, string Text)
+{
+    public string? Prefix { get; set; }
+
+    public List<string>? Show { get; set; }
+
+    public List<string>? Hide { get; set; }
+}
+
+/// <summary>A package other than the one being indexed (a dependency or an SDK library).</summary>
+internal sealed record ExternalPackage(string Name, string Version);
 
 /// <summary>A <c>this.x</c> field formal parameter: a reference to field <c>x</c> of the enclosing class.</summary>
 internal sealed record ThisFieldRef(Token Name, Decl Class);
 
 internal sealed class FileModel(string relativePath)
 {
+    public ExternalPackage? External { get; init; }
+
     public string RelativePath { get; } = relativePath;
 
     public List<Token> Tokens { get; set; } = [];
