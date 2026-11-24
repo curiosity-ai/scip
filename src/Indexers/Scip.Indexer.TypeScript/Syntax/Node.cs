@@ -3,7 +3,7 @@ namespace Scip.Indexer.TypeScript.Syntax;
 /// <summary>Node kinds. Names follow the TypeScript compiler's <c>SyntaxKind</c> so upstream logic ports 1:1.</summary>
 public enum SK
 {
-    SourceFile, Identifier, PrivateIdentifier, StringLiteral, NumericLiteral, RegexLiteral, KeywordLiteral,
+    TsSourceFile, Identifier, PrivateIdentifier, StringLiteral, NumericLiteral, RegexLiteral, KeywordLiteral,
     TemplateExpression, TaggedTemplate, This, Super,
     VariableStatement, VariableDeclarationList, VariableDeclaration,
     FunctionDeclaration, FunctionExpression, ArrowFunction, ClassDeclaration, ClassExpression,
@@ -48,7 +48,7 @@ public sealed class Node(SK kind, int pos)
 
     public Node? Parent { get; set; }
 
-    public SourceFile? File { get; set; }
+    public TsSourceFile? File { get; set; }
 
     /// <summary>Identifier name, literal value, operator text, ...</summary>
     public string Text { get; set; } = "";
@@ -141,7 +141,7 @@ public sealed class Node(SK kind, int pos)
     public override string ToString() => $"{Kind}({Start}..{End}) {Text}";
 }
 
-public sealed class SourceFile
+public sealed class TsSourceFile
 {
     public required string FileName { get; init; }
     public required string Text { get; init; }

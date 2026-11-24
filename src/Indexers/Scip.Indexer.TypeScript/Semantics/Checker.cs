@@ -179,7 +179,7 @@ public sealed class Checker(TsProgram program)
     public List<Node>? ResolveAlias(Node alias, int depth = 0)
     {
         if (depth > MaxDepth) { return null; }
-        SourceFile? target;
+        TsSourceFile? target;
         string name;
         switch (alias.Kind)
         {
@@ -227,7 +227,7 @@ public sealed class Checker(TsProgram program)
         return leftDecls is null ? null : MemberDecls(ContainersOfDecls(leftDecls, depth + 1), right.Text);
     }
 
-    public List<Node>? LookupExport(SourceFile file, string name, HashSet<SourceFile> visited)
+    public List<Node>? LookupExport(TsSourceFile file, string name, HashSet<TsSourceFile> visited)
     {
         if (!visited.Add(file)) { return null; }
         var b = Program.BinderFor(file);
@@ -279,7 +279,7 @@ public sealed class Checker(TsProgram program)
         return null;
     }
 
-    private List<Node> ExpandExport(SourceFile file, List<Node> decls)
+    private List<Node> ExpandExport(TsSourceFile file, List<Node> decls)
     {
         var result = new List<Node>();
         foreach (var d in decls)
@@ -319,7 +319,7 @@ public sealed class Checker(TsProgram program)
             List<Node> found = [];
             switch (c.Kind)
             {
-                case SK.SourceFile:
+                case SK.TsSourceFile:
                     var export = LookupExport(c.File!, name, []);
                     if (export is not null) { found.AddRange(export); }
                     break;
@@ -449,7 +449,7 @@ public sealed class Checker(TsProgram program)
         {
             case SK.ClassDeclaration or SK.ClassExpression:
                 return asValue ? [StaticSide(d)] : [d];
-            case SK.InterfaceDeclaration or SK.EnumDeclaration or SK.ModuleDeclaration or SK.SourceFile
+            case SK.InterfaceDeclaration or SK.EnumDeclaration or SK.ModuleDeclaration or SK.TsSourceFile
                 or SK.TypeLiteral or SK.ObjectLiteralExpression:
                 return [d];
             case SK.TypeAliasDeclaration:
@@ -459,7 +459,7 @@ public sealed class Checker(TsProgram program)
             case SK.VariableDeclaration or SK.Parameter or SK.PropertyDeclaration or SK.PropertySignature or SK.GetAccessor:
                 if (d.Type is not null) { return ContainersOfType(d.Type, depth + 1); }
                 if (d.Initializer is not null) { return ContainersOfExpression(d.Initializer, depth + 1); }
-                if (d.Kind == SK.Parameter && d.Parent is { } fn && fn.Kind != SK.SourceFile) { return ContextualParameterContainers(d, depth + 1); }
+                if (d.Kind == SK.Parameter && d.Parent is { } fn && fn.Kind != SK.TsSourceFile) { return ContextualParameterContainers(d, depth + 1); }
                 if (d.Kind == SK.GetAccessor && d.Body is not null) { return ReturnedContainers(d, depth + 1); }
                 return [];
             case SK.PropertyAssignment:

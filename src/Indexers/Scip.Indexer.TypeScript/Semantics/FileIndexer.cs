@@ -18,7 +18,7 @@ public sealed class FileIndexer(
     Dictionary<Node, ScipSymbol> globalSymbolTable,
     Dictionary<Node, bool> globalConstructorTable,
     Packages packages,
-    SourceFile sourceFile,
+    TsSourceFile sourceFile,
     Action<string> log)
 {
     private int _localCounter = -1;
@@ -401,7 +401,7 @@ public sealed class FileIndexer(
     {
         if (globalSymbolTable.TryGetValue(node, out var fromCache) || _localSymbolTable.TryGetValue(node, out fromCache)) { return fromCache; }
         if (node.Kind == SK.Block) { return ScipSymbol.Empty; }
-        if (node.Kind == SK.SourceFile)
+        if (node.Kind == SK.TsSourceFile)
         {
             var package = packages.Symbol(node.File!.FileName);
             return Cached(node, package.IsEmpty ? ScipSymbol.AnonymousPackage() : package);
@@ -434,7 +434,7 @@ public sealed class FileIndexer(
     }
 
     private static bool IsTypeSymbolDeclaration(Node d) =>
-        d.Kind is SK.ClassDeclaration or SK.FunctionDeclaration or SK.InterfaceDeclaration or SK.EnumDeclaration or SK.ModuleDeclaration or SK.SourceFile;
+        d.Kind is SK.ClassDeclaration or SK.FunctionDeclaration or SK.InterfaceDeclaration or SK.EnumDeclaration or SK.ModuleDeclaration or SK.TsSourceFile;
 
     private ScipSymbol NewLocalSymbol(Node node)
     {

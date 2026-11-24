@@ -7,7 +7,7 @@ namespace Scip.Indexer.TypeScript.Semantics;
 /// project files and <c>node_modules</c> declaration files resolve without being indexed.</summary>
 public sealed class TsProgram
 {
-    private readonly Dictionary<string, SourceFile?> _files = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TsSourceFile?> _files = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Binder> _binders = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _moduleCache = new(StringComparer.Ordinal);
 
@@ -15,11 +15,11 @@ public sealed class TsProgram
 
     public static string Normalize(string path) => Path.GetFullPath(path).Replace('\\', '/');
 
-    public SourceFile? GetFile(string fileName)
+    public TsSourceFile? GetFile(string fileName)
     {
         fileName = Normalize(fileName);
         if (_files.TryGetValue(fileName, out var existing)) { return existing; }
-        SourceFile? parsed = null;
+        TsSourceFile? parsed = null;
         try
         {
             if (File.Exists(fileName))
@@ -30,7 +30,7 @@ public sealed class TsProgram
         catch (SyntaxException e)
         {
             var text = File.ReadAllText(fileName);
-            var (line, ch) = new SourceFile { FileName = fileName, Text = text }.LineAndCharacter(Math.Min(e.Position, text.Length));
+            var (line, ch) = new TsSourceFile { FileName = fileName, Text = text }.LineAndCharacter(Math.Min(e.Position, text.Length));
             Warn?.Invoke($"warning: syntax error in {fileName}:{line + 1}:{ch + 1}: {e.Message}");
         }
         catch (IOException e)
@@ -42,7 +42,7 @@ public sealed class TsProgram
         return parsed;
     }
 
-    public Binder BinderFor(SourceFile file)
+    public Binder BinderFor(TsSourceFile file)
     {
         if (!_binders.TryGetValue(file.FileName, out var b))
         {
@@ -118,7 +118,7 @@ public sealed class TsProgram
     }
 
     /// <summary>Resolves a module specifier as TypeScript's node module resolution would (simplified).</summary>
-    public SourceFile? ResolveModule(SourceFile from, string specifier)
+    public TsSourceFile? ResolveModule(TsSourceFile from, string specifier)
     {
         var dir = Path.GetDirectoryName(from.FileName)!;
         var key = dir + "\0" + specifier;

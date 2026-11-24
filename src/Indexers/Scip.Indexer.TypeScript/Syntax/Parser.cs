@@ -7,21 +7,21 @@ namespace Scip.Indexer.TypeScript.Syntax;
 public sealed partial class Parser
 {
     private readonly Scanner _s;
-    private readonly SourceFile _file;
+    private readonly TsSourceFile _file;
 
-    private Parser(SourceFile file)
+    private Parser(TsSourceFile file)
     {
         _file = file;
         _s = new Scanner(file.Text);
         _s.Next();
     }
 
-    public static SourceFile Parse(string fileName, string text)
+    public static TsSourceFile Parse(string fileName, string text)
     {
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
-        var file = new SourceFile { FileName = fileName, Text = text, IsJavaScript = ext is ".js" or ".jsx" or ".mjs" or ".cjs" };
+        var file = new TsSourceFile { FileName = fileName, Text = text, IsJavaScript = ext is ".js" or ".jsx" or ".mjs" or ".cjs" };
         var parser = new Parser(file);
-        var root = new Node(SK.SourceFile, 0) { File = file };
+        var root = new Node(SK.TsSourceFile, 0) { File = file };
         while (parser._s.Kind != T.Eof)
         {
             root.Elements.Add(parser.ParseStatement());
@@ -40,7 +40,7 @@ public sealed partial class Parser
         (n.Kind == SK.ImportEqualsDeclaration && n.Expression?.Kind == SK.ExternalModuleReference) ||
         n.Has(Mods.Export);
 
-    private static void SetParents(Node node, SourceFile file)
+    private static void SetParents(Node node, TsSourceFile file)
     {
         node.File = file;
         foreach (var child in node.Children)

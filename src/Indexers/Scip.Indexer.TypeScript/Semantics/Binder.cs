@@ -22,13 +22,13 @@ public enum Meaning { Value = 1, Type = 2, Any = 3 }
 public sealed class Binder
 {
     public TsProgram Program { get; }
-    public SourceFile File { get; }
+    public TsSourceFile File { get; }
     public Scope FileScope { get; }
     private readonly Dictionary<Node, Scope> _scopeOf = [];
     private readonly Dictionary<Node, Dictionary<string, List<Node>>> _exports = [];
     private readonly Dictionary<Node, List<Node>> _exportDeclarations = [];
 
-    public Binder(TsProgram program, SourceFile file)
+    public Binder(TsProgram program, TsSourceFile file)
     {
         Program = program;
         File = file;
@@ -235,7 +235,7 @@ public sealed class Binder
         SK.ImportSpecifier or SK.ImportClause or SK.NamespaceImport or SK.ImportEqualsDeclaration or SK.ExportSpecifier => Meaning.Any,
         SK.EnumMember or SK.PropertyDeclaration or SK.PropertySignature or SK.MethodDeclaration or SK.MethodSignature or SK.PropertyAssignment
             or SK.ShorthandPropertyAssignment or SK.GetAccessor or SK.SetAccessor => Meaning.Value,
-        SK.SourceFile => Meaning.Any,
+        SK.TsSourceFile => Meaning.Any,
         _ => Meaning.Any,
     };
 

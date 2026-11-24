@@ -24,5 +24,9 @@
     <Project Path="tests/Scip.Indexer.DotNet.Tests/Scip.Indexer.DotNet.Tests.csproj" />
     <Project Path="tests/Scip.Indexer.Ruby.Tests/Scip.Indexer.Ruby.Tests.csproj" />
     <Project Path="tests/Scip.Indexer.Rust.Tests/Scip.Indexer.Rust.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Clang.Tests/Scip.Indexer.Clang.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Php.Tests/Scip.Indexer.Php.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Python.Tests/Scip.Indexer.Python.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.TypeScript.Tests/Scip.Indexer.TypeScript.Tests.csproj" />
   </Folder>
 </Solution>
