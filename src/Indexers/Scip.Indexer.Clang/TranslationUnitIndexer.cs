@@ -23,6 +23,7 @@ public sealed class TranslationUnitIndexer : IOccurrenceSink
 {
     private readonly FileTable _files;
     private readonly TranslationUnitResult _result = new();
+    private readonly Dictionary<int, CommentIndex?> _comments = [];
 
     private TranslationUnitIndexer(string root) => _files = new FileTable(root);
 
@@ -212,7 +213,18 @@ public sealed class TranslationUnitIndexer : IOccurrenceSink
         doc.Occurrences.Add((at.Line, at.Col, at.Col + at.Len, entity.Symbol, definition ? (int)SymbolRole.Definition : 0));
         if (definition && !doc.Symbols.ContainsKey(entity.Symbol))
         {
-            doc.Symbols[entity.Symbol] = new SymbolInformation { Symbol = entity.Symbol, Kind = entity.SymbolKind, DisplayName = entity.Name };
+            var info = new SymbolInformation { Symbol = entity.Symbol, Kind = entity.SymbolKind, DisplayName = entity.Name };
+            if (!_comments.TryGetValue(at.File, out var comments))
+            {
+                _comments[at.File] = comments = CommentIndex.TryLoad(_files.Path(at.File));
+            }
+
+            if (comments?.DocFor(at.Line, at.Col, at.Line) is { } text)
+            {
+                info.Documentation.Add(text);
+            }
+
+            doc.Symbols[entity.Symbol] = info;
         }
     }
 }

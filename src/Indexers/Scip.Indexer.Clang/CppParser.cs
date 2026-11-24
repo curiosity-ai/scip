@@ -1430,6 +1430,12 @@ public sealed partial class CppParser
                 stop = e;
             }
 
+            if (ent.Type is null && kind is EKind.Local or EKind.Var && !isTypedef && typeStart >= 0 && P(q, "=") && stop > q + 1
+                && Enumerable.Range(typeStart, Math.Max(0, typeEnd - typeStart)).Any(x => Id(x) && _t[x].Text == "auto"))
+            {
+                ent.Type = InferAuto(lexical, q + 1, stop);
+            }
+
             if (kind is EKind.Local or EKind.Var && !isTypedef && typeStart >= 0)
             {
                 var qq = q;

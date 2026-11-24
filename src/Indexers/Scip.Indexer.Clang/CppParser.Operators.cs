@@ -501,4 +501,37 @@ public sealed partial class CppParser
 
         return n;
     }
+
+    /// <summary>Type of <c>auto x = init;</c> from the initialiser when it is a construction, call, <c>new T</c> or a typed variable/member.</summary>
+    private TypeRef? InferAuto(Scope scope, int a, int b)
+    {
+        if (P(a, "new") && a + 1 < b)
+        {
+            var e = a + 1;
+            while (e < b && !(_t[e].Kind == TokKind.Punct && _t[e].Text is "(" or "{" or "["))
+            {
+                e++;
+            }
+
+            if (P(a + 1, "(") && M(a + 1) > a + 1)
+            {
+                a = M(a + 1); // placement new
+                e = a + 1;
+                while (e < b && !(_t[e].Kind == TokKind.Punct && _t[e].Text is "(" or "{" or "["))
+                {
+                    e++;
+                }
+            }
+
+            return MakeTypeRef(scope, a + 1, e) is { } nt ? nt with { Indirect = true } : null;
+        }
+
+        var et = TypeOfExprEnding(scope, a, b - 1);
+        if (et.Cls is null)
+        {
+            return null;
+        }
+
+        return new TypeRef(Root(scope), [.. TypeCanon.QualName(et.Cls).Split("::")], true, et.IsPointer);
+    }
 }

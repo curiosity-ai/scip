@@ -168,4 +168,53 @@ public class FeatureTests
             """);
         await Assert.That(doc.Occurrences.Any(o => o.Symbol.Contains("operator\"\"_km", StringComparison.Ordinal) && (o.SymbolRoles & 1) == 0)).IsTrue();
     }
+
+    [Test]
+    public async Task DocumentationCommentsBecomeSymbolDocumentation()
+    {
+        var (_, doc) = await IndexAsync("""
+            /// Leading line one
+            /// line two
+            struct S {};
+
+            enum class E {
+              /** Block
+               * second */
+              A,
+              B, // trailing
+              //! Maknae
+              C,
+            };
+            """);
+        string DocOf(string suffix) => string.Join("\n", doc.Symbols.Single(s => s.Symbol.EndsWith(suffix, StringComparison.Ordinal)).Documentation);
+        await Assert.That(DocOf("S#")).IsEqualTo("Leading line one\nline two");
+        await Assert.That(DocOf("E#A.")).IsEqualTo("Block\nsecond");
+        await Assert.That(DocOf("E#B.")).IsEqualTo("trailing");
+        await Assert.That(DocOf("E#C.")).IsEqualTo("Maknae");
+        await Assert.That(DocOf("`<file>/a.cc`/")).IsEqualTo("File: a.cc");
+    }
+
+    [Test]
+    public async Task AutoVariablesAndMemberChainsResolveThroughDeclaredTypes()
+    {
+        var (_, doc) = await IndexAsync("""
+            struct Table { int value; int get() { return value; } };
+            struct Holder { Table t; Table make() { return t; } };
+            Holder build() { return Holder(); }
+            void f() {
+              auto h = build();
+              auto t = h.make();
+              t.get();
+              auto *p = new Table();
+              p->value = 1;
+              auto &r = h;
+              r.t.value;
+            }
+            """);
+        int Refs(string suffix) => doc.Occurrences.Count(o => o.Symbol.Contains(suffix, StringComparison.Ordinal) && (o.SymbolRoles & 1) == 0);
+        await Assert.That(Refs("Holder#make(")).IsEqualTo(1);
+        await Assert.That(Refs("Table#get(")).IsEqualTo(1);
+        await Assert.That(Refs("Table#value.")).IsEqualTo(3);
+        await Assert.That(Refs("Holder#t.")).IsEqualTo(2);
+    }
 }
