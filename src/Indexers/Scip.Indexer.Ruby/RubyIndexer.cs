@@ -54,7 +54,7 @@ public sealed class RubyIndexer : IIndexer
         }
 
         var files = EnumerateRubyFiles(root).ToList();
-        var documents = Index(root, files, gem, cancellationToken, out var symbolInfos);
+        var documents = Index(root, files, gem, cancellationToken, out _, out var externals);
 
         var output = Path.GetFullPath(options.OutputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -72,12 +72,20 @@ public sealed class RubyIndexer : IIndexer
             writer.WriteDocument(doc);
         }
 
-        _ = symbolInfos;
+        foreach (var ext in externals)
+        {
+            writer.WriteExternalSymbol(ext);
+        }
+
         return 0;
     }
 
     /// <summary>Indexes the given files (paths relative to <paramref name="root"/>) into SCIP documents.</summary>
     public static List<Document> Index(string root, IEnumerable<string> relativePaths, GemMetadata gem, CancellationToken ct, out int symbolCount)
+        => Index(root, relativePaths, gem, ct, out symbolCount, out _);
+
+    /// <summary>As above, also returning <c>external_symbols</c> for referenced symbols defined in no document (core/stdlib/unresolved).</summary>
+    public static List<Document> Index(string root, IEnumerable<string> relativePaths, GemMetadata gem, CancellationToken ct, out int symbolCount, out List<SymbolInformation> externals)
     {
         var project = new RubyProject(gem);
         var models = new List<DocModel>();
@@ -90,11 +98,15 @@ public sealed class RubyIndexer : IIndexer
             models.Add(model);
         }
 
-        return Build(project, models, out symbolCount);
+        return Build(project, models, out symbolCount, out externals);
     }
 
     /// <summary>Indexes in-memory sources (used by tests).</summary>
     public static List<Document> IndexSources(IEnumerable<(string Path, string Text)> sources, GemMetadata gem)
+        => IndexSources(sources, gem, out _);
+
+    /// <summary>As above, also returning <c>external_symbols</c>.</summary>
+    public static List<Document> IndexSources(IEnumerable<(string Path, string Text)> sources, GemMetadata gem, out List<SymbolInformation> externals)
     {
         var project = new RubyProject(gem);
         var models = new List<DocModel>();
@@ -105,14 +117,16 @@ public sealed class RubyIndexer : IIndexer
             models.Add(model);
         }
 
-        return Build(project, models, out _);
+        return Build(project, models, out _, out externals);
     }
 
-    private static List<Document> Build(RubyProject project, List<DocModel> models, out int symbolCount)
+    private static List<Document> Build(RubyProject project, List<DocModel> models, out int symbolCount, out List<SymbolInformation> externals)
     {
         project.InvalidateAncestors();
         var docs = new List<Document>();
         var total = 0;
+        var defined = new HashSet<string>(StringComparer.Ordinal);
+        var referenced = new Dictionary<string, SymbolInformation.Types.Kind>(StringComparer.Ordinal);
         foreach (var model in models)
         {
             var lines = model.Text.Split('\n');
@@ -151,9 +165,27 @@ public sealed class RubyIndexer : IIndexer
                 }
 
                 doc.Occurrences.Add(o);
-                if ((occ.Roles & (int)SymbolRole.Definition) != 0 && !symbol.StartsWith("local ", StringComparison.Ordinal) && !infos.ContainsKey(symbol))
+                var isLocal = symbol.StartsWith("local ", StringComparison.Ordinal);
+                var isDef = (occ.Roles & (int)SymbolRole.Definition) != 0;
+                if (isLocal || isDef)
                 {
-                    infos[symbol] = new SymbolInformation { Symbol = symbol, Kind = occ.Kind };
+                    if (!infos.TryGetValue(symbol, out var existing))
+                    {
+                        infos[symbol] = new SymbolInformation { Symbol = symbol, Kind = occ.Kind };
+                    }
+                    else if (isDef && existing.Kind == SymbolInformation.Types.Kind.UnspecifiedKind)
+                    {
+                        existing.Kind = occ.Kind;
+                    }
+
+                    if (isDef && !isLocal)
+                    {
+                        defined.Add(symbol);
+                    }
+                }
+                else
+                {
+                    referenced.TryAdd(symbol, GuessKind(symbol));
                 }
             }
 
@@ -163,8 +195,25 @@ public sealed class RubyIndexer : IIndexer
         }
 
         symbolCount = total;
+        externals = [];
+        foreach (var (sym, kind) in referenced.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            if (!defined.Contains(sym))
+            {
+                externals.Add(new SymbolInformation { Symbol = sym, Kind = kind });
+            }
+        }
+
         return docs;
     }
+
+    private static SymbolInformation.Types.Kind GuessKind(string symbol) => symbol switch
+    {
+        _ when symbol.EndsWith(").", StringComparison.Ordinal) => SymbolInformation.Types.Kind.Method,
+        _ when symbol.EndsWith('#') => SymbolInformation.Types.Kind.Class,
+        _ when symbol.EndsWith('.') => SymbolInformation.Types.Kind.Constant,
+        _ => SymbolInformation.Types.Kind.UnspecifiedKind,
+    };
 
     private static int Utf8Col(string[] lines, int line, int utf16Col)
     {

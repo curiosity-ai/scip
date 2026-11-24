@@ -50,4 +50,20 @@ public class UpstreamSnapshotTests
         await Assert.That(fixtures).IsGreaterThan(100);
         await Assert.That((defs - missing) / (double)defs).IsGreaterThan(0.88);
     }
+
+    /// <summary>Mirrors <c>scip lint</c>: every occurrence symbol has SymbolInformation in a document or in external_symbols.</summary>
+    [Test]
+    public async Task EveryOccurrenceSymbolHasInformation()
+    {
+        var missing = new List<string>();
+        foreach (var name in SnapshotRunner.FixtureNames())
+        {
+            var snapshot = SnapshotFile.Parse(File.ReadAllText(Path.Combine(SnapshotRunner.FixtureDirectory, name + ".snapshot.rb")));
+            var docs = RubyIndexer.IndexSources([(name + ".rb", snapshot.Source)], new GemMetadata("snapshot", "0.0.1"), out var externals);
+            var known = docs.SelectMany(d => d.Symbols).Concat(externals).Select(s => s.Symbol).ToHashSet();
+            missing.AddRange(docs.SelectMany(d => d.Occurrences).Where(o => !known.Contains(o.Symbol)).Select(o => $"{name}: {o.Symbol}").Distinct());
+        }
+
+        await Assert.That(string.Join('\n', missing)).IsEqualTo("");
+    }
 }
