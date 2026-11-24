@@ -35,7 +35,31 @@ internal sealed partial class DartParser
         var (tokens, docs) = DartLexer.Lex(source);
         var model = new FileModel(relativePath) { Tokens = tokens };
         new DartParser(source, tokens, docs, model).ParseFile();
+        DemoteDuplicates(model);
         return model;
+    }
+
+    /// <summary>
+    /// Local functions (and their parameters), or other tolerantly parsed declarations, can share a symbol path with an
+    /// earlier declaration of the same file. Every later duplicate becomes a <c>local N</c> symbol so each global symbol
+    /// is defined exactly once per document.
+    /// </summary>
+    private static void DemoteDuplicates(FileModel model)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var d in model.AllDecls)
+        {
+            if (d.IsLocal)
+            {
+                continue;
+            }
+
+            var key = string.Join('\u0001', d.Path.Select(x => x.Name + (int)x.Suffix));
+            if (!seen.Add(key) || (d.Kind is DeclKind.Parameter or DeclKind.TypeParameter && d.Parent is { IsLocal: true, Kind: DeclKind.Function or DeclKind.Method }))
+            {
+                d.IsLocal = true;
+            }
+        }
     }
 
     private Token At(int i) => i >= 0 && i < _t.Count ? _t[i] : Eof;

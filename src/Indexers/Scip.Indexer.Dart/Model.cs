@@ -44,7 +44,7 @@ internal sealed class Decl(DeclKind kind, string name, Decl? parent, Token nameT
     public string Signature { get; set; } = "";
 
     /// <summary>When true, the symbol is a <c>local N</c> symbol (private names, positional parameters).</summary>
-    public bool IsLocal { get; init; }
+    public bool IsLocal { get; set; }
 
     public bool IsStatic { get; set; }
 
