@@ -48,17 +48,18 @@ Legend: `[x]` done · `[ ]` open. Upstream paths are relative to `.reference/`.
 ## 4. Language indexers
 Each needs: a design note in `docs/PORTING.md`, implementation, ported tests/snapshots.
 
-- [ ] **dotnet** ← `scip-dotnet` (C#/VB) — natural fit: Roslyn (`Microsoft.CodeAnalysis`); start here
-- [ ] **typescript** ← `scip-typescript` (TS/JS; depends on the TypeScript compiler API)
-- [ ] **java** ← `scip-java` (Java/Scala/Kotlin; Gradle/Maven integration, semanticdb)
-- [ ] **rust** ← `rust-analyzer` (`crates/rust-analyzer/src/cli/scip.rs` only — SCIP emission)
-- [ ] **clang** ← `scip-clang` (C/C++; clang tooling, compilation databases)
-- [ ] **ruby** ← `scip-ruby` (Sorbet fork)
-- [ ] **python** ← `scip-python` (Pyright fork)
-- [ ] **dart** ← `scip-dart` (analyzer package)
-- [ ] **php** ← `scip-php` (php-parser based)
-- [ ] Shared indexing helpers in `Scip.Indexing` (document builder, symbol-table/occurrence helpers, package metadata)
-- [ ] Decide per language: native port vs. orchestrating the upstream language toolchain
+- [x] **dotnet** ← `scip-dotnet` (Roslyn, MSBuildWorkspace; needs .NET SDK at runtime to load projects). Open: WPF fixture, case-distinct paths test, logging-env test; consider native project-file loading
+- [~] **typescript** ← `scip-typescript`: native TS/TSX/JS/JSX parser+binder+resolver. 42/~54 snapshot docs match. Open: type inference (generics/callbacks/Promise), lib.d.ts/globals, JSX intrinsics, Svelte, CommonJS, parser error recovery
+- [~] **java** ← `scip-java`: native Java 21 parser/resolver, class/jar/JDK-modules readers, pom/gradle/scip-java.json. 25/26 snapshots match. Open: Kotlin, Scala, annotation processing (Lombok), full inference, real Gradle/Maven resolution
+- [~] **rust** ← `rust-analyzer` SCIP emission: native Cargo.toml + token-level scanner. Open: real name resolution/type inference, cross-crate refs, external symbols, generics/closure params
+- [~] **clang** ← `scip-clang`: native preprocessor + tolerant C++ parser. Open: type checker, upstream-compatible function disambiguator hashes, system headers, templates, relationships, docs, using-decls
+- [~] **ruby** ← `scip-ruby`: native lexer/resolver. 37/113 snapshot fixtures exact (~76% defs, ~50% refs). Open: type inference, core/RBI payload, DSL rewriters, keyword params, relationships/docs, --gem-map-path
+- [~] **python** ← `scip-python`: native tokenizer/parser/binder/import resolver. 22 upstream snapshots (6 divergent, documented). Open: typeshed/hover, generics/narrowing/flow analysis, match patterns, CLI option forwarding (--project-name etc.)
+- [~] **dart** ← `scip-dart`: native syntactic indexer. Defs match upstream snapshots; refs precision >90%/recall >50%. Open: type resolution, SDK/3rd-party symbols, instance members, locals
+- [x] **php** ← `scip-php`: native lexer/parser/resolver, Composer. 10/10 upstream goldens exact. Open: phpstorm-stubs for built-ins, parse error recovery, property hooks
+- [ ] Forward indexer-specific CLI options (e.g. --project-name, --plugin, --jobs) from `scip index <lang>` to indexers
+- [ ] Shared indexing helpers in `Scip.Indexing` (document builder, package metadata) — extract duplication across the nine indexers
+- [x] Decision: pure native C# for all indexers (no runtime compilers/toolchains; see CLAUDE.md)
 
 ## 5. Quality
 - [ ] Cross-check outputs against Go `scip` CLI on shared fixtures (golden files)

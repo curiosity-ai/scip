@@ -28,5 +28,6 @@
     <Project Path="tests/Scip.Indexer.Php.Tests/Scip.Indexer.Php.Tests.csproj" />
     <Project Path="tests/Scip.Indexer.Python.Tests/Scip.Indexer.Python.Tests.csproj" />
     <Project Path="tests/Scip.Indexer.TypeScript.Tests/Scip.Indexer.TypeScript.Tests.csproj" />
+    <Project Path="tests/Scip.Indexer.Java.Tests/Scip.Indexer.Java.Tests.csproj" />
   </Folder>
 </Solution>

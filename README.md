@@ -4,8 +4,8 @@ A C# / .NET 11 port of [SCIP](https://github.com/scip-code/scip), the Code Intel
 library, the `scip` CLI, and the per-language indexers
 (Java, TypeScript, Rust, C/C++, Ruby, Python, C#, Dart, PHP).
 
-> **Status: early port.** The core symbol parser/formatter, streaming index writer and a CLI skeleton are working
-> and tested. Language indexers are stubs. See [TODO.md](TODO.md) for the roadmap.
+> **Status: working port, partial fidelity.** The core library, the `scip` CLI commands and all nine indexers are implemented
+> and tested. All nine language indexers exist as pure-C# ports of varying completeness (see TODO.md). See [TODO.md](TODO.md) for the roadmap.
 
 ## Layout
 
