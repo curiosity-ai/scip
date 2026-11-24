@@ -53,6 +53,38 @@ public class SnapshotTests
         await Assert.That(ok.Count).IsGreaterThanOrEqualTo(MinimumMatching);
     }
 
+    [Test]
+    public async Task EverySymbolHasInformation()
+    {
+        var reference = ParserTests.FindReference();
+        if (reference is null) return;
+        var sourceRoot = Path.Combine(reference, "scip-snapshots", "cases", "java", "common");
+        var output = Path.Combine(Directory.CreateTempSubdirectory("scipjava-lint").FullName, "index.scip");
+        var project = new ProjectDiscovery(new ArtifactLocator()).Discover(sourceRoot);
+        var rc = await NativeProjectIndexer.RunAsync(project, output, "17", [], new AggregatorReporter(), CancellationToken.None, lintSafeRelationships: true);
+        await Assert.That(rc).IsEqualTo(0);
+        var index = Index.Parser.ParseFrom(File.ReadAllBytes(output));
+        var external = index.ExternalSymbols.Select(s => s.Symbol).ToHashSet();
+        var order = new Dictionary<string, int>();
+        for (var i = 0; i < index.Documents.Count; i++) foreach (var s in index.Documents[i].Symbols) order.TryAdd(s.Symbol, i);
+        var missing = index.Documents.SelectMany(d => d.Occurrences).Select(o => o.Symbol)
+            .Where(s => !s.StartsWith("local ", StringComparison.Ordinal) && !external.Contains(s) && !order.ContainsKey(s)).Distinct().ToList();
+        await Assert.That(missing).IsEmpty();
+        var badRelations = new List<string>();
+        for (var i = 0; i < index.Documents.Count; i++)
+        {
+            foreach (var info in index.Documents[i].Symbols)
+            {
+                foreach (var rel in info.Relationships)
+                {
+                    var ok = order.TryGetValue(rel.Symbol, out var at) ? at <= i : external.Contains(rel.Symbol);
+                    if (!ok) badRelations.Add(info.Symbol + " -> " + rel.Symbol);
+                }
+            }
+        }
+        await Assert.That(badRelations).IsEmpty();
+    }
+
     // LombokBuilder.java needs annotation processing (generated code) and is the one known mismatch.
     private const int MinimumMatching = 25;
 

@@ -30,7 +30,66 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         };
         doc.Occurrences.AddRange(_occurrences.OrderBy(kv => kv.Key.Item1).ThenBy(kv => kv.Key.Item2).Select(kv => kv.Value));
         foreach (var s in _infoOrder) doc.Symbols.Add(_infos[s]);
+        _occurrences.Clear();
+        _infos.Clear();
+        _infoOrder.Clear();
         return doc;
+    }
+
+    /// <summary>Global symbols this document named, with the entity each denotes.</summary>
+    public IReadOnlyDictionary<string, object> Entities => _names.Entities;
+
+    /// <summary>Builds the <c>SymbolInformation</c> of a referenced symbol that is defined outside the indexed sources.</summary>
+    public SymbolInformation? ExternalInfo(string symbol)
+    {
+        if (!_names.Entities.TryGetValue(symbol, out var entity)) return null;
+        var info = new SymbolInformation { Symbol = symbol };
+        switch (entity)
+        {
+            case TypeInfo t:
+                info.DisplayName = t.Simple;
+                info.Kind = t.Kind switch
+                {
+                    TypeKind.Enum => Kind.Enum,
+                    TypeKind.Interface or TypeKind.Annotation => Kind.Interface,
+                    TypeKind.Class or TypeKind.Record => Kind.Class,
+                    _ => Kind.UnspecifiedKind,
+                };
+                if (t.Kind == TypeKind.Annotation) info.Kind = Kind.Interface;
+                info.SignatureDocumentation = new Signature { Language = "java", Text = ExternalClassSignature(t) };
+                break;
+            case ClassLiteralEntity cl:
+                info.DisplayName = "class";
+                info.Kind = Kind.StaticField;
+                info.SignatureDocumentation = new Signature { Language = "java", Text = $"public static final Class<{cl.Type.Simple}> class" };
+                break;
+            case PackageEntity p:
+                info.DisplayName = p.Name[(p.Name.LastIndexOf('/') + 1)..];
+                info.Kind = Kind.Package;
+                break;
+            case MethodInfo m:
+                info.DisplayName = m.Name;
+                info.Kind = m.IsCtor ? Kind.Constructor : m.IsStatic ? Kind.StaticMethod
+                    : (m.Flags & Mod.Abstract) != 0 && (m.Flags & Mod.Default) == 0 ? Kind.AbstractMethod : Kind.Method;
+                info.SignatureDocumentation = new Signature { Language = "java", Text = FormatMethod(m, null, null!) };
+                break;
+            case FieldInfo f:
+                info.DisplayName = f.Name;
+                info.Kind = f.IsStatic ? Kind.StaticField : Kind.Field;
+                info.SignatureDocumentation = new Signature { Language = "java", Text = FormatField(f, null, null!) };
+                break;
+            default:
+                return null;
+        }
+        return info;
+    }
+
+    private string ExternalClassSignature(TypeInfo t)
+    {
+        var kw = t.Kind switch { TypeKind.Enum => "enum", TypeKind.Interface => "interface", TypeKind.Annotation => "@interface", TypeKind.Record => "record", _ => "class" };
+        var access = FormatAccess(t.Flags);
+        var tps = t.TypeParams.Count > 0 ? "<" + string.Join(", ", t.TypeParams) + ">" : "";
+        return (access.Length > 0 ? access + " " : "") + kw + " " + t.Simple + tps;
     }
 
     // ------------------------------------------------------------------ occurrence plumbing
@@ -156,7 +215,11 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
                 TypeKind.Interface or TypeKind.Annotation => Kind.Interface,
                 _ => Kind.UnspecifiedKind,
             }, FormatClass(ti, d), d.Doc, EnclosingSymbolOf(ti));
-            foreach (var parent2 in ParentTypes(ti)) info.Relationships.Add(new Relationship { Symbol = _names.Type(parent2), IsImplementation = true });
+            foreach (var parent2 in ParentTypes(ti))
+            {
+                var ps = _names.Type(parent2);
+                if (!info.Relationships.Any(r => r.Symbol == ps)) info.Relationships.Add(new Relationship { Symbol = ps, IsImplementation = true });
+            }
         }
         for (var i = 0; i < d.TypeParams.Count; i++)
         {
@@ -269,7 +332,8 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
             {
                 foreach (var ov in OverriddenMethods(m, scope))
                 {
-                    info.Relationships.Add(new Relationship { Symbol = _names.Method(ov), IsImplementation = true, IsReference = true });
+                    var os = _names.Method(ov);
+                    if (!info.Relationships.Any(r => r.Symbol == os)) info.Relationships.Add(new Relationship { Symbol = os, IsImplementation = true, IsReference = true });
                 }
             }
         }

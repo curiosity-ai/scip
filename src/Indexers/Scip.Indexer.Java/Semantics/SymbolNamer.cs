@@ -10,6 +10,15 @@ public sealed class SymbolNamer
     private readonly Dictionary<(object, string), string> _tparams = [];
     private int _counter;
 
+    /// <summary>Every global symbol handed out, with the entity it names (used to synthesize external symbol information).</summary>
+    public Dictionary<string, object> Entities { get; } = new(StringComparer.Ordinal);
+
+    private string Note(string symbol, object entity)
+    {
+        if (!symbol.StartsWith("local ", StringComparison.Ordinal)) Entities.TryAdd(symbol, entity);
+        return symbol;
+    }
+
     private string LocalTypeParam(object owner, string name)
     {
         if (_tparams.TryGetValue((owner, name), out var s)) return s;
@@ -48,11 +57,16 @@ public sealed class SymbolNamer
         return owner + JavaSymbols.EncodeName(t.Simple) + "#";
     }
 
-    public string Type(TypeInfo t) => Full(Top(t).Origin, BareType(t));
+    public string Type(TypeInfo t) => Note(Full(Top(t).Origin, BareType(t)), t);
 
-    public string ClassLiteral(TypeInfo t) => Full(Top(t).Origin, BareType(t) + "class.");
+    public string ClassLiteral(TypeInfo t)
+    {
+        var bare = BareType(t);
+        if (bare.StartsWith("local ", StringComparison.Ordinal)) return "";
+        return Note(Full(Top(t).Origin, bare + "class."), new ClassLiteralEntity(t));
+    }
 
-    public string Package(string pkg) => Full(JavaPackage.Empty, PackageBare(pkg));
+    public string Package(string pkg) => Note(Full(JavaPackage.Empty, PackageBare(pkg)), new PackageEntity(pkg));
 
     public static string Disambiguator(MethodInfo m)
     {
@@ -72,7 +86,7 @@ public sealed class SymbolNamer
         return owner + JavaSymbols.EncodeName(m.Name) + Disambiguator(m) + ".";
     }
 
-    public string Method(MethodInfo m) => Full(Top(m.Owner).Origin, BareMethod(m));
+    public string Method(MethodInfo m) => Note(Full(Top(m.Owner).Origin, BareMethod(m)), m);
 
     public string BareField(FieldInfo f)
     {
@@ -81,7 +95,7 @@ public sealed class SymbolNamer
         return owner + JavaSymbols.EncodeName(f.Name) + ".";
     }
 
-    public string Field(FieldInfo f) => Full(Top(f.Owner).Origin, BareField(f));
+    public string Field(FieldInfo f) => Note(Full(Top(f.Owner).Origin, BareField(f)), f);
 
     public string TypeParameter(TypeInfo owner, string name)
     {
@@ -99,3 +113,9 @@ public sealed class SymbolNamer
 
     public string Variable(LocalVar v) => Local(v);
 }
+
+/// <summary>Entity behind a <c>Foo#class.</c> class-literal symbol.</summary>
+public sealed record ClassLiteralEntity(TypeInfo Type);
+
+/// <summary>Entity behind a package symbol.</summary>
+public sealed record PackageEntity(string Name);
