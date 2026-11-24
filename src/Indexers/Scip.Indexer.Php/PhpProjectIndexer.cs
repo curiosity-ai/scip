@@ -59,6 +59,8 @@ public sealed class PhpProjectIndexer
         var projectFiles = composer.ProjectFiles;
         types.Collect(projectFiles);
 
+        var defined = new HashSet<string>(StringComparer.Ordinal);
+        var referenced = new HashSet<string>(StringComparer.Ordinal);
         var ext = new Dictionary<string, SymbolInformation>(StringComparer.Ordinal);
         foreach (var file in projectFiles)
         {
@@ -96,8 +98,33 @@ public sealed class PhpProjectIndexer
                 ext[symbol] = info;
             }
 
+            foreach (var occ in doc.Occurrences)
+            {
+                if (!occ.Symbol.StartsWith("local ", StringComparison.Ordinal))
+                {
+                    referenced.Add(occ.Symbol);
+                }
+            }
+
+            defined.UnionWith(indexer.Symbols.Keys);
             onDocument(doc);
             fs.Forget(file);
+        }
+
+        // Safety net: every occurrence symbol needs a SymbolInformation somewhere (lint). Anything referenced but not
+        // defined by a document (e.g. a function name differing only in case) becomes an external symbol.
+        // Conversely, a symbol defined by the project (e.g. a polyfill of a built-in function) must not also be external.
+        foreach (var symbol in defined)
+        {
+            ext.Remove(symbol);
+        }
+
+        foreach (var symbol in referenced)
+        {
+            if (!defined.Contains(symbol) && !ext.ContainsKey(symbol))
+            {
+                ext[symbol] = new SymbolInformation { Symbol = symbol };
+            }
         }
 
         return (metadata, [.. ext.Values]);

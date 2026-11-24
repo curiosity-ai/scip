@@ -29,6 +29,91 @@ internal sealed class SymbolNamer(ComposerProject composer)
         return desc == "" ? null : desc;
     }
 
+    private static bool IsSimple(string s)
+    {
+        foreach (var c in s)
+        {
+            if (!(c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '-' or '+' or '$'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Makes the descriptor part of a symbol conform to scip.proto: identifier runs containing characters outside the
+    /// simple-identifier set (non-ASCII PHP identifiers) are wrapped in backticks.
+    /// </summary>
+    public static string Escape(string symbol)
+    {
+        var d = 0;
+        for (var spaces = 0; d < symbol.Length && spaces < 4; d++)
+        {
+            if (symbol[d] == ' ')
+            {
+                spaces++;
+            }
+        }
+
+        var needs = false;
+        for (var i = d; i < symbol.Length; i++)
+        {
+            var c = symbol[i];
+            if (!(c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '-' or '+' or '$' or '/' or '#' or '.' or '(' or ')'))
+            {
+                needs = true;
+                break;
+            }
+        }
+
+        if (!needs)
+        {
+            return symbol;
+        }
+
+        var b = new System.Text.StringBuilder(symbol.Length + 8);
+        b.Append(symbol, 0, d);
+        var run = new System.Text.StringBuilder();
+
+        void Flush()
+        {
+            if (run.Length == 0)
+            {
+                return;
+            }
+
+            var text = run.ToString();
+            run.Clear();
+            if (IsSimple(text))
+            {
+                b.Append(text);
+            }
+            else
+            {
+                b.Append('`').Append(text.Replace("`", "``", StringComparison.Ordinal)).Append('`');
+            }
+        }
+
+        for (var i = d; i < symbol.Length; i++)
+        {
+            var c = symbol[i];
+            if (c is '/' or '#' or '.' or '(' or ')')
+            {
+                Flush();
+                b.Append(c);
+            }
+            else
+            {
+                run.Append(c);
+            }
+        }
+
+        Flush();
+        return b.ToString();
+    }
+
     public string NameConst(string symbol, string c) => $"{symbol}{c}.";
 
     public string NameMeth(string symbol, string m) => $"{symbol}{m}().";
@@ -161,13 +246,24 @@ internal sealed class SymbolNamer(ComposerProject composer)
             return Desc(desc, "#");
         }
 
-        if (composer.IsFunc(name))
+        if (!IsClassContext(n) && composer.IsFunc(name))
         {
             return Desc(desc, "().");
         }
 
         return null;
     }
+
+    /// <summary>True when the name can only denote a class (e.g. <c>Event::listen()</c>, <c>new Event</c>, <c>use Event;</c>), never a function.</summary>
+    private static bool IsClassContext(Name n) => n.Parent switch
+    {
+        StaticCall sc => sc.Class == n,
+        StaticPropertyFetch sp => sp.Class == n,
+        ClassConstFetch cf => cf.Class == n,
+        NewExpr => true,
+        UseItem { Type: not 2 and not 3 } ui => ui.Parent is not UseStmt { Type: 2 or 3 },
+        _ => false,
+    };
 
     private static string NamespaceName(Node n)
     {

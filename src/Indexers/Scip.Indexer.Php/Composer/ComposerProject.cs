@@ -38,12 +38,13 @@ internal sealed class ComposerProject
         _root = fs.Realpath(projectRoot) ?? Path.GetFullPath(projectRoot);
 
         var jsonPath = Path.Combine(_root, "composer.json");
-        if (!File.Exists(jsonPath))
+        var jsonText = File.Exists(jsonPath) ? File.ReadAllText(jsonPath) : SynthesizeComposerJson(_root);
+        if (jsonText == null)
         {
             throw new InvalidOperationException($"Cannot read {jsonPath}.");
         }
 
-        using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath), new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+        using var doc = JsonDocument.Parse(jsonText, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
         var json = doc.RootElement;
 
         var vendor = "vendor";
@@ -85,6 +86,35 @@ internal sealed class ComposerProject
 
         LoadLockAutoloadFiles();
         IndexAutoloadFiles();
+    }
+
+    /// <summary>
+    /// Plain PHP projects (e.g. WordPress) have no <c>composer.json</c>. Index every PHP file below the root (except
+    /// <c>vendor</c>, <c>node_modules</c> and dot directories) as if it were listed in <c>autoload.files</c>.
+    /// Returns null when there is no PHP file at all.
+    /// </summary>
+    private static string? SynthesizeComposerJson(string root)
+    {
+        var files = new List<string>();
+        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.System };
+        foreach (var f in Directory.EnumerateFiles(root, "*.php", options).OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var rel = Path.GetRelativePath(root, f).Replace(Path.DirectorySeparatorChar, '/');
+            if (rel.StartsWith("vendor/", StringComparison.Ordinal) || rel.StartsWith("node_modules/", StringComparison.Ordinal)
+                || rel.StartsWith('.') || rel.Contains("/.", StringComparison.Ordinal) || rel.Contains("/node_modules/", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            files.Add(rel);
+        }
+
+        if (files.Count == 0)
+        {
+            return null;
+        }
+
+        return JsonSerializer.Serialize(new Dictionary<string, object> { ["autoload"] = new Dictionary<string, object> { ["files"] = files } });
     }
 
     public string PkgName { get; private set; }

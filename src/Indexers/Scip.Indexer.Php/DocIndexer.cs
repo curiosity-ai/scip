@@ -69,6 +69,22 @@ internal sealed class DocIndexer
                 }
 
                 return;
+            case ClassLike { Name: null } anon:
+            {
+                // Anonymous classes have no definition occurrence, but `static::`/`self::` and members refer to them.
+                if (_namer.Name(anon) is { } anonSymbol)
+                {
+                    anonSymbol = SymbolNamer.Escape(anonSymbol);
+                    if (!Symbols.ContainsKey(anonSymbol))
+                    {
+                        var anonInfo = new SymbolInformation { Symbol = anonSymbol };
+                        Symbols[anonSymbol] = anonInfo;
+                    }
+                }
+
+                return;
+            }
+
             case ClassLike { Name: { } cname } cl:
             {
                 Def(cl, cname, SyntaxKind.IdentifierType);
@@ -209,6 +225,7 @@ internal sealed class DocIndexer
             return;
         }
 
+        symbol = SymbolNamer.Escape(symbol);
         var info = new SymbolInformation { Symbol = symbol };
         info.Documentation.AddRange(_docGenerator.Create(n));
         Symbols[symbol] = info;
@@ -217,6 +234,7 @@ internal sealed class DocIndexer
 
     private void DocDef(string symbol, int start, int end)
     {
+        symbol = SymbolNamer.Escape(symbol);
         Symbols.TryAdd(symbol, new SymbolInformation { Symbol = symbol }); // lint: every definition needs SymbolInformation
         Occurrences.Add(MakeOccurrence(start, end, symbol, SymbolRole.Definition, SyntaxKind.Identifier));
     }
@@ -228,9 +246,11 @@ internal sealed class DocIndexer
             var ident = _namer.ExtractIdent(symbol);
             if (ident != null && _composer.IsDependency(ident))
             {
-                ExtSymbols[symbol] = new SymbolInformation { Symbol = symbol };
+                ExtSymbols[SymbolNamer.Escape(symbol)] = new SymbolInformation { Symbol = SymbolNamer.Escape(symbol) };
             }
         }
+
+        symbol = SymbolNamer.Escape(symbol);
 
         Occurrences.Add(MakeOccurrence(posNode.Start, posNode.End, symbol, SymbolRole.UnspecifiedSymbolRole, kind));
     }

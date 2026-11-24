@@ -1058,6 +1058,22 @@ internal sealed class PhpParser
 
             // `static`/`readonly`/... used as a name (e.g. `static::foo()`) is not a modifier here.
             Next();
+
+            // PHP 8.4 asymmetric visibility: `private(set)`, `protected(set)`, `public(set)` restrict writes only.
+            if (f is Mod.Public or Mod.Protected or Mod.Private && IsOp("(") && Peek().Kind == TK.Name
+                && Peek().Text.Equals("set", StringComparison.OrdinalIgnoreCase) && Peek(2).IsOp(")"))
+            {
+                Next();
+                Next();
+                Next();
+                if ((m & Mod.Visibility) == Mod.None)
+                {
+                    m |= Mod.Public; // `private(set) string $x` is publicly readable
+                }
+
+                continue;
+            }
+
             m |= f;
         }
 
@@ -1577,7 +1593,7 @@ internal sealed class PhpParser
                 Expr? mid = null;
                 if (!IsOp(":"))
                 {
-                    mid = ParseExpr(5 + 1);
+                    mid = ParseExpr(0);
                     // allow assignment / nested ternary in the middle
                 }
 

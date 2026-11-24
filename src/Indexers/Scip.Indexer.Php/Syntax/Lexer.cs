@@ -88,23 +88,51 @@ internal sealed class Lexer(string src)
 
     private static bool IsWs(char c) => c is ' ' or '\t' or '\n' or '\r' or '\f' or '\v';
 
+    /// <summary>
+    /// Decodes a byte-per-char (Latin-1) slice of source as UTF-8. Bytes that do not form valid UTF-8 (identifiers in
+    /// Latin-1 files) are kept one-to-one as U+0080..U+00FF instead of becoming U+FFFD, so distinct names stay distinct.
+    /// </summary>
     internal static string Decode(string latin1)
     {
-        foreach (var ch in latin1)
+        var i = 0;
+        while (i < latin1.Length && latin1[i] < '\x80')
         {
-            if (ch >= '\x80')
-            {
-                var bytes = new byte[latin1.Length];
-                for (var k = 0; k < latin1.Length; k++)
-                {
-                    bytes[k] = (byte)latin1[k];
-                }
+            i++;
+        }
 
-                return Encoding.UTF8.GetString(bytes);
+        if (i == latin1.Length)
+        {
+            return latin1;
+        }
+
+        var bytes = new byte[latin1.Length];
+        for (var k = 0; k < latin1.Length; k++)
+        {
+            bytes[k] = (byte)latin1[k];
+        }
+
+        var sb = new StringBuilder(latin1.Length);
+        sb.Append(latin1, 0, i);
+        while (i < bytes.Length)
+        {
+            if (bytes[i] < 0x80)
+            {
+                sb.Append((char)bytes[i++]);
+                continue;
+            }
+
+            if (System.Text.Rune.DecodeFromUtf8(bytes.AsSpan(i), out var rune, out var used) == System.Buffers.OperationStatus.Done)
+            {
+                sb.Append(rune);
+                i += used;
+            }
+            else
+            {
+                sb.Append((char)bytes[i++]);
             }
         }
 
-        return latin1;
+        return sb.ToString();
     }
 
     /// <summary>Consumes inline HTML up to and including the next open tag.</summary>
@@ -480,6 +508,59 @@ internal sealed class Lexer(string src)
         return true;
     }
 
+    /// <summary>Skips a <c>{$expr}</c> interpolation starting at the brace, including nested string literals; returns the index after the closing brace.</summary>
+    private int SkipBraceExpr(int j)
+    {
+        var depth = 0;
+        while (j < src.Length)
+        {
+            var c = src[j];
+            if (c == '{')
+            {
+                depth++;
+            }
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return j + 1;
+                }
+            }
+            else if (c == '\'')
+            {
+                j++;
+                while (j < src.Length && src[j] != '\'')
+                {
+                    j += src[j] == '\\' ? 2 : 1;
+                }
+            }
+            else if (c == '"')
+            {
+                j++;
+                while (j < src.Length && src[j] != '"')
+                {
+                    if (src[j] == '\\')
+                    {
+                        j += 2;
+                    }
+                    else if (src[j] == '{' && j + 1 < src.Length && src[j + 1] == '$')
+                    {
+                        j = SkipBraceExpr(j);
+                    }
+                    else
+                    {
+                        j++;
+                    }
+                }
+            }
+
+            j++;
+        }
+
+        return j;
+    }
+
     private void LexDoubleQuoted(List<Token> tokens, char quote)
     {
         var s = _i;
@@ -500,6 +581,8 @@ internal sealed class Lexer(string src)
             else if (src[j] == '{' && j + 1 < src.Length && src[j + 1] == '$')
             {
                 interpolated = true;
+                j = SkipBraceExpr(j);
+                continue;
             }
 
             j++;
