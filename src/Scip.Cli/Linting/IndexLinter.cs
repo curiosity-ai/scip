@@ -199,8 +199,14 @@ public static class IndexLinter
                     sym, $"symbols for file {path}", rel.Symbol, "external symbols or some other document");
             }
 
-            return _relationships.Add((sym, rel.Symbol)) ? null : new MultipleRelationshipWarning(sym, rel.Symbol);
+            // `local N` symbols are only unique within their document, so scope them by path.
+            return _relationships.Add((Scoped(sym, path), Scoped(rel.Symbol, path)))
+                ? null
+                : new MultipleRelationshipWarning(sym, rel.Symbol);
         }
+
+        private static string Scoped(string symbol, string path) =>
+            SymbolParser.IsLocalSymbol(symbol) ? path + "\0" + symbol : symbol;
 
         public LintDiagnostic? AddOccurrence(string path, Occurrence occ)
         {

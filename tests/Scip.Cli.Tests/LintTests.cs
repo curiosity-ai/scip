@@ -174,3 +174,26 @@ public class LintOrderIndependenceTests
         await Assert.That(diagnostics.Count).IsEqualTo(0);
     }
 }
+
+[NotInParallel]
+public class LintLocalScopeTests
+{
+    [Test]
+    public async Task SameLocalNameInTwoDocumentsIsNotADuplicateRelationship()
+    {
+        Document Doc(string path)
+        {
+            var d = new Document { RelativePath = path };
+            var si = new SymbolInformation { Symbol = "local 1" };
+            si.Relationships.Add(new Relationship { Symbol = "s a b 1 t/T#", IsImplementation = true });
+            d.Symbols.Add(si);
+            return d;
+        }
+
+        var target = new Document { RelativePath = "t.x" };
+        target.Symbols.Add(new SymbolInformation { Symbol = "s a b 1 t/T#" });
+        var index = new Index { Documents = { Doc("a.x"), Doc("b.x"), target } };
+
+        await Assert.That(IndexLinter.Lint(index).Count).IsEqualTo(0);
+    }
+}
