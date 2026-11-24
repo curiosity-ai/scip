@@ -139,7 +139,7 @@ public sealed class TypeScriptIndexer : IIndexer
 
         if (config.FileNames.Count == 0) { return; }
         var started = DateTime.UtcNow;
-        var program = new TsProgram { Warn = stderr.WriteLine };
+        var program = new TsProgram { Warn = stderr.WriteLine, Libs = LibStore.For(config), CustomConditions = config.CustomConditions ?? [], Paths = config.Paths, PathsBase = config.PathsBase };
         var checker = new Checker(program);
         var packages = new Packages(projectRoot);
         var symbolCache = new Dictionary<Node, ScipSymbol>();

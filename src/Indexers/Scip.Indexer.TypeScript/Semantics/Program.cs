@@ -13,6 +13,17 @@ public sealed class TsProgram
 
     public Action<string>? Warn { get; set; }
 
+    /// <summary>Conditions used to resolve package.json <c>exports</c> (besides <c>types</c>/<c>import</c>/<c>node</c>/<c>default</c>).</summary>
+    public List<string> CustomConditions { get; set; } = [];
+
+    /// <summary><c>paths</c> mappings of the tsconfig and the directory they are relative to.</summary>
+    public Dictionary<string, List<string>>? Paths { get; set; }
+
+    public string? PathsBase { get; set; }
+
+    /// <summary>The built-in lib declarations visible as globals in this program.</summary>
+    public LibSet Libs { get; set; } = LibSet.Empty;
+
     public static string Normalize(string path) => Path.GetFullPath(path).Replace('\\', '/');
 
     public TsSourceFile? GetFile(string fileName)
@@ -50,6 +61,7 @@ public sealed class TsProgram
 
     public Binder BinderFor(TsSourceFile file)
     {
+        if (file.IsLib && !ReferenceEquals(this, LibStore.Program)) { return LibStore.Program.BinderFor(file); }
         if (!_binders.TryGetValue(file.FileName, out var b))
         {
             b = new Binder(this, file);
@@ -132,7 +144,7 @@ public sealed class TsProgram
         var key = dir + "\0" + specifier;
         if (!_moduleCache.TryGetValue(key, out var resolved))
         {
-            resolved = ResolveModulePath(dir, specifier);
+            resolved = ResolveModulePath(dir, specifier, from.FileName);
             _moduleCache[key] = resolved;
         }
 
@@ -165,7 +177,7 @@ public sealed class TsProgram
         }
     }
 
-    private static string? ResolveModulePath(string dir, string specifier)
+    private string? ResolveModulePath(string dir, string specifier, string fromFile)
     {
         if (specifier.StartsWith("./", StringComparison.Ordinal) || specifier.StartsWith("../", StringComparison.Ordinal) || specifier is "." or ".." || Path.IsPathRooted(specifier))
         {
@@ -173,10 +185,34 @@ public sealed class TsProgram
         }
 
         if (specifier.StartsWith("node:", StringComparison.Ordinal)) { specifier = specifier[5..]; }
+        if (Paths is not null && PathsBase is not null)
+        {
+            var mapped = ResolvePaths(specifier);
+            if (mapped is not null) { return mapped; }
+        }
+
+        var (packageName, subpath) = SplitPackageSpecifier(specifier);
+        var isRequire = fromFile.EndsWith(".cts", StringComparison.Ordinal) || fromFile.EndsWith(".cjs", StringComparison.Ordinal);
         for (var d = new DirectoryInfo(dir); d is not null; d = d.Parent)
         {
+            // Self-reference: a package can import itself by name through its own `exports`.
+            var ownPackage = Path.Combine(d.FullName, "package.json");
+            if (File.Exists(ownPackage) && ReadPackage(ownPackage) is { } own && own.Name == packageName && own.Exports is { } ownExports)
+            {
+                var viaExports = ResolveExports(d.FullName, ownExports, subpath, isRequire);
+                if (viaExports is not null) { return RealPath(viaExports); }
+            }
+
             var nm = Path.Combine(d.FullName, "node_modules");
             if (!Directory.Exists(nm)) { continue; }
+            var packageDir = Path.Combine(nm, packageName);
+            var manifest = Path.Combine(packageDir, "package.json");
+            if (File.Exists(manifest) && ReadPackage(manifest) is { Exports: { } exports })
+            {
+                var viaExports = ResolveExports(packageDir, exports, subpath, isRequire);
+                if (viaExports is not null) { return RealPath(viaExports); }
+            }
+
             var r = TryResolveFileOrDirectory(Path.Combine(nm, specifier));
             if (r is not null) { return RealPath(r); }
             var typesName = specifier.StartsWith('@') ? specifier[1..].Replace("/", "__", StringComparison.Ordinal) : specifier;
@@ -185,5 +221,134 @@ public sealed class TsProgram
         }
 
         return null;
+    }
+
+    private string? ResolvePaths(string specifier)
+    {
+        foreach (var (pattern, targets) in Paths!)
+        {
+            string? star = null;
+            var star1 = pattern.IndexOf('*', StringComparison.Ordinal);
+            if (star1 < 0) { if (pattern != specifier) { continue; } }
+            else
+            {
+                var prefix = pattern[..star1];
+                var suffix = pattern[(star1 + 1)..];
+                if (specifier.Length < prefix.Length + suffix.Length || !specifier.StartsWith(prefix, StringComparison.Ordinal) || !specifier.EndsWith(suffix, StringComparison.Ordinal)) { continue; }
+                star = specifier[prefix.Length..^suffix.Length];
+            }
+
+            foreach (var target in targets)
+            {
+                var path = star is null ? target : target.Replace("*", star, StringComparison.Ordinal);
+                var r = TryResolveFileOrDirectory(Path.GetFullPath(Path.Combine(PathsBase!, path)));
+                if (r is not null) { return r; }
+            }
+        }
+
+        return null;
+    }
+
+    private static (string Package, string Subpath) SplitPackageSpecifier(string specifier)
+    {
+        var parts = specifier.Split('/');
+        var count = specifier.StartsWith('@') ? Math.Min(2, parts.Length) : 1;
+        var name = string.Join('/', parts.Take(count));
+        var rest = parts.Length > count ? "./" + string.Join('/', parts.Skip(count)) : ".";
+        return (name, rest);
+    }
+
+    private sealed record PackageManifest(string? Name, JsonElement? Exports);
+
+    private readonly Dictionary<string, PackageManifest?> _manifests = new(StringComparer.Ordinal);
+
+    private PackageManifest? ReadPackage(string path)
+    {
+        if (_manifests.TryGetValue(path, out var cached)) { return cached; }
+        PackageManifest? result = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                var name = root.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+                JsonElement? exports = root.TryGetProperty("exports", out var e) ? e.Clone() : null;
+                result = new PackageManifest(name, exports);
+            }
+        }
+        catch (Exception e) when (e is JsonException or IOException)
+        {
+            // unreadable manifest: treat as absent
+        }
+
+        _manifests[path] = result;
+        return result;
+    }
+
+    private string? ResolveExports(string packageDir, JsonElement exports, string subpath, bool isRequire)
+    {
+        JsonElement? target = null;
+        string? star = null;
+        if (exports.ValueKind == JsonValueKind.Object && exports.EnumerateObject().Any(p => p.Name.StartsWith('.')))
+        {
+            if (exports.TryGetProperty(subpath, out var direct)) { target = direct; }
+            else
+            {
+                foreach (var prop in exports.EnumerateObject())
+                {
+                    var i = prop.Name.IndexOf('*', StringComparison.Ordinal);
+                    if (i < 0) { continue; }
+                    var prefix = prop.Name[..i];
+                    var suffix = prop.Name[(i + 1)..];
+                    if (subpath.Length >= prefix.Length + suffix.Length && subpath.StartsWith(prefix, StringComparison.Ordinal) && subpath.EndsWith(suffix, StringComparison.Ordinal))
+                    {
+                        target = prop.Value;
+                        star = subpath[prefix.Length..^suffix.Length];
+                        break;
+                    }
+                }
+            }
+        }
+        else if (subpath == ".") { target = exports; }
+
+        return target is null ? null : ResolveExportTarget(packageDir, target.Value, star, isRequire, 0);
+    }
+
+    private string? ResolveExportTarget(string packageDir, JsonElement target, string? star, bool isRequire, int depth)
+    {
+        if (depth > 8) { return null; }
+        switch (target.ValueKind)
+        {
+            case JsonValueKind.String:
+            {
+                var t = target.GetString()!;
+                if (star is not null) { t = t.Replace("*", star, StringComparison.Ordinal); }
+                var full = Path.GetFullPath(Path.Combine(packageDir, t));
+                return TryResolveFileOrDirectory(full);
+            }
+
+            case JsonValueKind.Array:
+                foreach (var item in target.EnumerateArray())
+                {
+                    var r = ResolveExportTarget(packageDir, item, star, isRequire, depth + 1);
+                    if (r is not null) { return r; }
+                }
+
+                return null;
+            case JsonValueKind.Object:
+                foreach (var prop in target.EnumerateObject())
+                {
+                    var name = prop.Name;
+                    var active = name == "default" || name == "types" || name == "node" || name == (isRequire ? "require" : "import") || CustomConditions.Contains(name);
+                    if (!active) { continue; }
+                    var r = ResolveExportTarget(packageDir, prop.Value, star, isRequire, depth + 1);
+                    if (r is not null) { return r; }
+                }
+
+                return null;
+            default:
+                return null;
+        }
     }
 }

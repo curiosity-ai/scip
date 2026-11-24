@@ -316,6 +316,28 @@ public sealed class Checker(TsProgram program)
         return result;
     }
 
+    // ------------------------------------------------------------------ built-in (lib) containers
+    private List<Node> Lib(params string[] names)
+    {
+        var libs = Program.Libs;
+        var result = new List<Node>();
+        foreach (var n in names) { result.AddRange(libs.TypeDecls(n)); }
+        return result;
+    }
+
+    private List<Node> KeywordContainers(string keyword) => keyword switch
+    {
+        "string" => Lib("String"),
+        "number" => Lib("Number"),
+        "boolean" => Lib("Boolean"),
+        "symbol" => Lib("Symbol"),
+        "bigint" => Lib("BigInt"),
+        "object" => Lib("Object"),
+        _ => [],
+    };
+
+    private List<Node> FunctionContainers() => Lib("CallableFunction", "Function");
+
     // ------------------------------------------------------------------ members
     private static bool MemberNameMatches(Node member, string name) => Binder.NameText(member.Name) == name;
 
@@ -365,6 +387,12 @@ public sealed class Checker(TsProgram program)
                         if (inherited is not null) { found.AddRange(inherited); }
                     }
 
+                    if (found.Count == 0 && cls.HeritageClauses.Count == 0)
+                    {
+                        var fn = MemberDecls(Lib("NewableFunction", "CallableFunction", "Function"), name, visited, depth + 1);
+                        if (fn is not null) { found.AddRange(fn); }
+                    }
+
                     break;
                 }
 
@@ -406,7 +434,26 @@ public sealed class Checker(TsProgram program)
                     break;
             }
 
-            if (found.Count > 0) { return found; }
+            if (found.Count > 0)
+            {
+                // Declarations of one merged interface/class (e.g. `interface Array<T>` in several lib files) all belong
+                // to the same symbol: collect the member from each of them.
+                if (c.Kind is SK.InterfaceDeclaration or SK.ClassDeclaration && c.Name is not null)
+                {
+                    foreach (var other in containers)
+                    {
+                        if (ReferenceEquals(other, c) || other.Kind != c.Kind || other.Name?.Text != c.Name.Text || !visited.Add(other)) { continue; }
+                        foreach (var m in other.Members)
+                        {
+                            if (m.Kind is SK.IndexSignature or SK.CallSignature or SK.ConstructSignature or SK.ClassStaticBlock or SK.Constructor) { continue; }
+                            if (c.Kind == SK.ClassDeclaration && m.Has(Mods.Static)) { continue; }
+                            if (MemberNameMatches(m, name) && !found.Contains(m)) { found.Add(m); }
+                        }
+                    }
+                }
+
+                return found;
+            }
         }
 
         return null;
@@ -505,6 +552,8 @@ public sealed class Checker(TsProgram program)
                 return target is null ? [] : ContainersOfDecls(target, depth + 1, asValue);
             case SK.ExportAssignment:
                 return d.Expression is null ? [] : ContainersOfExpression(d.Expression, depth + 1);
+            case SK.FunctionDeclaration when asValue:
+                return FunctionContainers();
             default:
                 return [];
         }
@@ -558,6 +607,26 @@ public sealed class Checker(TsProgram program)
                 return ContainersOfEntity(t.Expression!, Meaning.Value, depth + 1);
             case SK.ThisType:
                 return EnclosingThisContainers(t);
+            case SK.KeywordType:
+                return KeywordContainers(t.Text);
+            case SK.LiteralType:
+                return t.Expression switch
+                {
+                    { Kind: SK.StringLiteral } => Lib("String"),
+                    { Kind: SK.NumericLiteral } or { Kind: SK.PrefixUnaryExpression } => Lib("Number"),
+                    { Kind: SK.KeywordLiteral, Text: "true" or "false" } => Lib("Boolean"),
+                    _ => [],
+                };
+            case SK.TemplateLiteralType:
+                return Lib("String");
+            case SK.ArrayType or SK.TupleType:
+                return Lib("Array");
+            case SK.TypeOperator when t.Text == "readonly":
+                return t.Type is { Kind: SK.ArrayType or SK.TupleType } ? Lib("ReadonlyArray") : ContainersOfType(t.Type!, depth + 1);
+            case SK.FunctionType:
+                return FunctionContainers();
+            case SK.ConstructorType:
+                return Lib("NewableFunction", "Function");
             case SK.ImportType when t.Name is null && t.Extra is { Kind: SK.LiteralType, Expression: { } lit }:
             {
                 var target = Program.ResolveModule(t.File!, lit.Text);
@@ -631,9 +700,20 @@ public sealed class Checker(TsProgram program)
             }
 
             case SK.NewExpression:
-                return ContainersOfExpression(e.Expression!, depth + 1)
-                    .Select(c => c.Kind == SK.TypeQuery ? c.Expression! : c)
-                    .Where(c => c.Kind is SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration).ToList();
+            {
+                var result = new List<Node>();
+                foreach (var c in ContainersOfExpression(e.Expression!, depth + 1))
+                {
+                    var cls = c.Kind == SK.TypeQuery ? c.Expression! : c;
+                    if (cls.Kind is SK.ClassDeclaration or SK.ClassExpression) { result.Add(cls); continue; }
+                    // `new Map()`: the interface of the constructor value (`MapConstructor`) declares construct signatures.
+                    var signatures = cls.Members.Where(m => m.Kind == SK.ConstructSignature && m.Type is not null).ToList();
+                    if (signatures.Count > 0) { foreach (var sig in signatures) { result.AddRange(ContainersOfType(sig.Type!, depth + 1)); } }
+                    else if (cls.Kind == SK.InterfaceDeclaration) { result.Add(cls); }
+                }
+
+                return result;
+            }
             case SK.CallExpression:
                 return CallResultContainers(e, depth + 1);
             case SK.ObjectLiteralExpression:
@@ -644,10 +724,51 @@ public sealed class Checker(TsProgram program)
                 return [.. ContainersOfExpression(e.Left!, depth + 1), .. ContainersOfExpression(e.Right!, depth + 1)];
             case SK.AwaitExpression:
                 return [];
+            case SK.StringLiteral or SK.TemplateExpression:
+                return Lib("String");
+            case SK.NumericLiteral:
+                return Lib("Number");
+            case SK.RegexLiteral:
+                return Lib("RegExp");
+            case SK.KeywordLiteral when e.Text is "true" or "false":
+                return Lib("Boolean");
+            case SK.ArrayLiteralExpression:
+                return Lib("Array");
+            case SK.FunctionExpression or SK.ArrowFunction:
+                return FunctionContainers();
+            case SK.TypeOfExpression:
+                return Lib("String");
+            case SK.PrefixUnaryExpression:
+                return e.Text switch { "!" => Lib("Boolean"), "++" or "--" or "-" or "+" or "~" => Lib("Number"), _ => [] };
+            case SK.PostfixUnaryExpression:
+                return Lib("Number");
+            case SK.BinaryExpression:
+                switch (e.Text)
+                {
+                    case "==" or "===" or "!=" or "!==" or "<" or ">" or "<=" or ">=" or "instanceof" or "in":
+                        return Lib("Boolean");
+                    case "-" or "*" or "/" or "%" or "**" or "&" or "|" or "^" or "<<" or ">>" or ">>>":
+                        return Lib("Number");
+                    case "+":
+                    {
+                        var l = ContainersOfExpression(e.Left!, depth + 1);
+                        var r = ContainersOfExpression(e.Right!, depth + 1);
+                        if (IsLib(l, "String") || IsLib(r, "String")) { return Lib("String"); }
+                        return IsLib(l, "Number") && IsLib(r, "Number") ? Lib("Number") : [];
+                    }
+
+                    case "=":
+                        return ContainersOfExpression(e.Right!, depth + 1);
+                    default:
+                        return [];
+                }
+
             default:
                 return [];
         }
     }
+
+    private static bool IsLib(List<Node> containers, string name) => containers.Count > 0 && containers.All(c => c.File!.IsLib && c.Name?.Text == name);
 
     private static Node? EnclosingClass(Node n)
     {
@@ -690,6 +811,18 @@ public sealed class Checker(TsProgram program)
                 return [];
             case SK.VariableDeclaration or SK.PropertyDeclaration or SK.PropertySignature or SK.Parameter:
                 if (d.Type is { Kind: SK.FunctionType } ft) { return ContainersOfType(ft.Type!, depth + 1); }
+                if (d.Type is { Kind: SK.TypeReference })
+                {
+                    // `declare var String: StringConstructor` with `(value?: any): string` call signatures.
+                    var viaSignature = new List<Node>();
+                    foreach (var c in ContainersOfType(d.Type, depth + 1))
+                    {
+                        foreach (var sig in c.Members.Where(m => m.Kind == SK.CallSignature && m.Type is not null)) { viaSignature.AddRange(ContainersOfType(sig.Type!, depth + 1)); }
+                    }
+
+                    if (viaSignature.Count > 0) { return viaSignature; }
+                }
+
                 if (d.Initializer is { Kind: SK.ArrowFunction or SK.FunctionExpression } fn) { return ReturnContainersOfCallable(fn, depth + 1); }
                 return [];
             case SK.PropertyAssignment when d.Initializer is { Kind: SK.ArrowFunction or SK.FunctionExpression } fn2:

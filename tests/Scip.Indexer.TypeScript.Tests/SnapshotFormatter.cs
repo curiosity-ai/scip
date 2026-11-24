@@ -109,6 +109,8 @@ public static class SnapshotFormatter
                 if (!showDocs) { return; }
                 foreach (var documentation in info.Documentation)
                 {
+                    // The legacy hover block duplicates signature_documentation, which the upstream snapshots show.
+                    if (documentation.StartsWith("```ts\n", StringComparison.Ordinal) && info.SignatureDocumentation is not null) { continue; }
                     PushLines("documentation", documentation.Split('\n'), external);
                 }
 

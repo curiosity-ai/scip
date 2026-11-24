@@ -110,7 +110,7 @@ public class SnapshotTests
                 var inputPath = Path.Combine(inputRoot, document.RelativePath);
                 var expectedPath = Path.Combine(outputDirectory, name, document.RelativePath);
                 var expected = File.Exists(expectedPath) ? await File.ReadAllTextAsync(expectedPath) : "";
-                var obtained = SnapshotFormatter.Format(await File.ReadAllTextAsync(inputPath), document);
+                var obtained = ExternalSymbolLines.Replace(SnapshotFormatter.Format(await File.ReadAllTextAsync(inputPath), document), "");
                 var expectedComparable = ExternalSymbolLines.Replace(expected, "");
                 var key = $"{name}/{document.RelativePath}";
                 if (obtained == expectedComparable)

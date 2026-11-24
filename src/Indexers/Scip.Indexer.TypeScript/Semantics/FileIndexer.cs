@@ -98,6 +98,7 @@ public sealed class FileIndexer(
             Symbol = symbol.Value,
             SignatureDocumentation = SignatureDocumentation($"module \"{moduleName}\""),
             Kind = SymbolInformation.Types.Kind.File,
+            Documentation = { FencedSignature($"module \"{moduleName}\"") },
         });
     }
 
@@ -245,17 +246,23 @@ public sealed class FileIndexer(
 
     private void AddSymbolInformation(Node node, List<Node> symbolDecls, Node declaration, ScipSymbol symbol)
     {
+        var signatureText = SanitizeDocumentation(SignatureForDocumentation(node, symbolDecls, declaration));
         var info = new SymbolInformation
         {
             Symbol = symbol.Value,
-            SignatureDocumentation = SignatureDocumentation(SanitizeDocumentation(SignatureForDocumentation(node, symbolDecls, declaration))),
+            SignatureDocumentation = SignatureDocumentation(signatureText),
             Kind = SymbolKindOf(declaration, symbolDecls),
         };
+        // Hover markdown as written by the published scip-typescript releases: a ```ts block, then the JSDoc text.
+        if (signatureText.Length > 0) { info.Documentation.Add(FencedSignature(signatureText)); }
         var doc = DocumentationOf(declaration);
         if (doc.Length > 0) { info.Documentation.Add(doc); }
         info.Relationships.AddRange(Relationships(declaration, symbol));
         PushSymbolInformation(info);
     }
+
+    /// <summary>The markdown code fence that hover consumers read from <c>documentation[0]</c>.</summary>
+    public static string FencedSignature(string text) => "```ts\n" + text + "\n```";
 
     private static Signature? SignatureDocumentation(string text) =>
         text.Length == 0 ? null : new Signature { Language = "typescript", Text = text };
@@ -419,6 +426,7 @@ public sealed class FileIndexer(
         if (node.Kind == SK.Block) { return ScipSymbol.Empty; }
         if (node.Kind == SK.TsSourceFile)
         {
+            if (node.File!.IsLib) { return Cached(node, LibStore.SymbolOf(node.File)); }
             var package = packages.Symbol(node.File!.FileName);
             return Cached(node, package.IsEmpty ? ScipSymbol.AnonymousPackage() : package);
         }

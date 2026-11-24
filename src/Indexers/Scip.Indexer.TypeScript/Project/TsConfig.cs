@@ -4,7 +4,8 @@ using System.Text.RegularExpressions;
 namespace Scip.Indexer.TypeScript.Project;
 
 /// <summary>A resolved tsconfig/jsconfig: the files it covers and the projects it references.</summary>
-public sealed record ParsedConfig(List<string> FileNames, List<string> References, bool AllowJs);
+public sealed record ParsedConfig(List<string> FileNames, List<string> References, bool AllowJs, List<string>? Lib = null, string? Target = null, bool NoLib = false,
+    List<string>? CustomConditions = null, string? PathsBase = null, Dictionary<string, List<string>>? Paths = null);
 
 /// <summary>
 /// Native tsconfig.json reader (JSONC, <c>extends</c>, <c>include</c>/<c>exclude</c>/<c>files</c>, <c>references</c>,
@@ -27,6 +28,13 @@ public static class TsConfig
         public string? ExcludeDir;
         public string? FilesDir;
         public bool? AllowJs;
+        public List<string>? Lib;
+        public string? Target;
+        public bool NoLib;
+        public List<string>? CustomConditions;
+        public string? BaseUrl;
+        public Dictionary<string, List<string>>? Paths;
+        public string? PathsDir;
         public string? OutDir;
         public List<string> References = [];
         public bool IsJsConfig;
@@ -90,21 +98,28 @@ public static class TsConfig
         }
 
         files.Sort(StringComparer.Ordinal);
-        return new ParsedConfig(files, raw.References, allowJs);
+        return new ParsedConfig(files, raw.References, allowJs, raw.Lib, raw.Target, raw.NoLib, raw.CustomConditions, raw.BaseUrl ?? raw.PathsDir, raw.Paths);
     }
 
+    /// <summary>
+    /// Files that shadow each other share a stem; <c>.ts/.tsx/.d.ts</c>, <c>.cts/.d.cts</c> and <c>.mts/.d.mts</c> are
+    /// separate families (TypeScript's <c>removeWildcardFilesWithLowerPriorityExtension</c>), as are the JS ones.
+    /// </summary>
     private static string StemOf(string f)
     {
-        foreach (var e in new[] { ".d.ts", ".d.mts", ".d.cts" })
+        foreach (var (e, family) in new[] { (".d.ts", "ts"), (".d.mts", "mts"), (".d.cts", "cts") })
         {
-            if (f.EndsWith(e, StringComparison.Ordinal)) { return f[..^e.Length]; }
+            if (f.EndsWith(e, StringComparison.Ordinal)) { return f[..^e.Length] + "\0" + family; }
         }
 
-        return f[..^Path.GetExtension(f).Length];
+        var ext = Path.GetExtension(f);
+        var family2 = ext switch { ".ts" or ".tsx" => "ts", ".mts" => "mts", ".cts" => "cts", ".js" or ".jsx" => "js", _ => ext };
+        return f[..^ext.Length] + "\0" + family2;
     }
 
-    private static int Priority(string f) => f.EndsWith(".ts", StringComparison.Ordinal) && !f.EndsWith(".d.ts", StringComparison.Ordinal) || f.EndsWith(".tsx", StringComparison.Ordinal) ? 0
-        : f.Contains(".d.", StringComparison.Ordinal) ? 1 : 2;
+    private static int Priority(string f) => f.Contains(".d.", StringComparison.Ordinal) ? 1
+        : f.EndsWith(".ts", StringComparison.Ordinal) || f.EndsWith(".tsx", StringComparison.Ordinal) || f.EndsWith(".mts", StringComparison.Ordinal) || f.EndsWith(".cts", StringComparison.Ordinal) ? 0
+        : 2;
 
     private static void Merge(Raw raw, string configFile, bool top, int depth)
     {
@@ -127,6 +142,21 @@ public static class TsConfig
         if (root.TryGetProperty("compilerOptions", out var co) && co.ValueKind == JsonValueKind.Object)
         {
             if (co.TryGetProperty("allowJs", out var aj) && aj.ValueKind is JsonValueKind.True or JsonValueKind.False) { raw.AllowJs = aj.GetBoolean(); }
+            if (co.TryGetProperty("lib", out var lb) && lb.ValueKind == JsonValueKind.Array) { raw.Lib = lb.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList(); }
+            if (co.TryGetProperty("target", out var tg) && tg.ValueKind == JsonValueKind.String) { raw.Target = tg.GetString(); }
+            if (co.TryGetProperty("noLib", out var nl) && nl.ValueKind is JsonValueKind.True or JsonValueKind.False) { raw.NoLib = nl.GetBoolean(); }
+            if (co.TryGetProperty("customConditions", out var cc) && cc.ValueKind == JsonValueKind.Array) { raw.CustomConditions = cc.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList(); }
+            if (co.TryGetProperty("baseUrl", out var bu) && bu.ValueKind == JsonValueKind.String) { raw.BaseUrl = Path.GetFullPath(Path.Combine(dir, bu.GetString()!)).Replace('\\', '/'); }
+            if (co.TryGetProperty("paths", out var pa) && pa.ValueKind == JsonValueKind.Object)
+            {
+                raw.Paths = [];
+                raw.PathsDir = dir;
+                foreach (var prop in pa.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.Array) { raw.Paths[prop.Name] = prop.Value.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList(); }
+                }
+            }
+
             if (co.TryGetProperty("outDir", out var od) && od.ValueKind == JsonValueKind.String) { raw.OutDir = od.GetString(); }
         }
 

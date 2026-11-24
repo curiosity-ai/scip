@@ -249,6 +249,7 @@ public sealed class Binder
             }
         }
 
-        return null;
+        // Script files and the lib declare globals; module files only see the lib.
+        return (File.IsLib ? File.Libs : Program.Libs)?.Lookup(name, meaning);
     }
 }
