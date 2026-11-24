@@ -373,6 +373,21 @@ internal sealed partial class RubyWalker
         }
     }
 
+    /// <summary>`foo(*)`, `foo(**)`, `foo(&)`: forwards the enclosing method's anonymous parameter.</summary>
+    private bool AnonymousForward(Token t)
+    {
+        var prev = Tok(_i - 1);
+        var next = Tok(_i + 1);
+        if (prev is not { Kind: Tk.Punct, Text: "(" or "," } || next is not { Kind: Tk.Punct, Text: ")" or "," } || Scope.Lookup(t.Text) is not { } id || id < 0)
+        {
+            return false;
+        }
+
+        Emit(t, LocalSym(id), (int)SymbolRole.ReadAccess);
+        _i++;
+        return true;
+    }
+
     private void Punct(Token t)
     {
         switch (t.Text)
@@ -382,6 +397,8 @@ internal sealed partial class RubyWalker
                 _lhsEnd = -1;
                 CloseEndlessDef();
                 _i++;
+                break;
+            case "*" or "**" or "&" when AnonymousForward(t):
                 break;
             case "(" or "[":
                 OpenParen(t);
@@ -544,6 +561,13 @@ internal sealed partial class RubyWalker
                 if (t is { Kind: Tk.Punct, Text: "*" or "**" or "&" })
                 {
                     _i++;
+                    if (Tok(_i) is { Kind: Tk.Punct, Text: "," or ")" or "|" } or { Kind: Tk.Newline })
+                    {
+                        // Anonymous splat/block parameter: upstream defines a local at the sigil itself.
+                        DefineLocal(t.Text, t, type: t.Text switch { "*" => "T::Array[T.untyped]", "**" => "T::Hash[Symbol, T.untyped]", _ => Untyped });
+                        atStart = false;
+                    }
+
                     continue;
                 }
 
@@ -902,7 +926,7 @@ internal sealed partial class RubyWalker
             }
 
             _i++;
-            if (Tok(_i) is { Kind: Tk.Punct, Text: "=" } eq && !eq.SpaceBefore && Tok(_i + 1) is { Kind: Tk.Punct, Text: "(" })
+            if (Tok(_i) is { Kind: Tk.Punct, Text: "=" } eq && !eq.SpaceBefore && Tok(_i + 1) is { Kind: Tk.Punct, Text: "(" } or { Kind: Tk.Newline })
             {
                 name += "=";
                 nameEnd = eq.EndCol;
@@ -957,6 +981,7 @@ internal sealed partial class RubyWalker
 
         var paramStart = _i;
         var paramEnd = _i;
+        var occsBefore = _doc.Occurrences.Count;
         if (Tok(_i) is { Kind: Tk.Punct, Text: "(" })
         {
             _i++;
@@ -975,6 +1000,19 @@ internal sealed partial class RubyWalker
         }
 
         var specs = ExtractParams(paramStart, paramEnd);
+        if (!frame.Endless && IsEmptyBody(_i))
+        {
+            // Sorbet drops the CFG of an empty method, and with it the definitions of its (necessarily unused) parameters.
+            for (var k = _doc.Occurrences.Count - 1; k >= occsBefore; k--)
+            {
+                var o = _doc.Occurrences[k];
+                if ((o.Roles & (int)SymbolRole.Definition) != 0 && o.Symbol?.StartsWith("local ", StringComparison.Ordinal) == true)
+                {
+                    _doc.Occurrences.RemoveAt(k);
+                }
+            }
+        }
+
         var methodMd = PrettyMethod(name, ownerSingleton, specs, sigInfo);
         WithDocs(defOcc, _ => methodMd);
 
@@ -1057,6 +1095,26 @@ internal sealed partial class RubyWalker
             return;
         }
 
+        if (segs.Length > 1 && !absolute && StatementStartBefore(start) && next is { Kind: Tk.Punct, Text: "=" or "||=" } && !InMethodBody())
+        {
+            // `Rack::NAME = value` defines NAME inside Rack; the qualifiers are ordinary (role-less) references.
+            string[] scopePath = [.. CurNamespace, .. segs[..^1]];
+            _project.Type(scopePath).Constants.Add(segs[^1]);
+            _project.InvalidateAncestors();
+            var scopeSpec = new RefSpec(CurCref, segs[..^1], absolute);
+            for (var k = 0; k < segs.Length - 1; k++)
+            {
+                var count = k + 1;
+                Emit(toks[k], null, NoRole, p => ConstSymbol(p, scopeSpec, count));
+            }
+
+            WithVarDocs(Emit(toks[^1], _project.ConstantSymbol([.. scopePath, segs[^1]]), (int)SymbolRole.Definition, null, SymbolInformation.Types.Kind.Constant),
+                segs[^1], ConstType(lastIdx + 2), comment: true);
+            BeginAssign(0, "const:" + RubyProject.Key([.. scopePath, segs[^1]]));
+            _i = lastIdx + 1;
+            return;
+        }
+
         var spec = new RefSpec(CurCref, segs, absolute);
         EmitConstRefs(start, lastIdx, spec, start == _superStart || IsCallStyleConstant(lastIdx));
         _lastChain = spec;
@@ -1066,6 +1124,18 @@ internal sealed partial class RubyWalker
     }
 
     private int _superStart = -1;
+
+    /// <summary>True when only newlines or `;` separate the end of a `def` header from its closing `end`.</summary>
+    private bool IsEmptyBody(int from)
+    {
+        var j = from;
+        while (Tok(j).Kind == Tk.Newline || Tok(j) is { Kind: Tk.Punct, Text: ";" })
+        {
+            j++;
+        }
+
+        return Tok(j) is { Kind: Tk.Keyword, Text: "end" };
+    }
 
     /// <summary>`class T.class_of(A) &lt; T.class_of(B)`: hover of the singleton class defined at `class &lt;&lt; self`.</summary>
     private static string? SingletonHeader(RubyProject p, string[] owner)
@@ -1286,7 +1356,9 @@ internal sealed partial class RubyWalker
         var isCall = next is { Kind: Tk.Punct, Text: "(" } && !next.SpaceBefore;
         if (!isCall && Scope.Lookup(t.Text) is { } id)
         {
-            Emit(t, LocalSym(id), IsAssignOp(next) ? LocalAssignRole(id, next.Text is not ("=" or "||=")) : TouchLocal(id));
+            var chained = _i >= 2 && _t[_i - 1] is { Kind: Tk.Punct, Text: "=" } && _t[_i - 2].Text == t.Text && next is { Kind: Tk.Punct, Text: "=" };
+            var role = IsAssignOp(next) ? LocalAssignRole(id, next.Text is not ("=" or "||=")) : TouchLocal(id);
+            Emit(t, LocalSym(id), chained && id >= 0 ? (int)SymbolRole.Definition : role);
             if (next is { Kind: Tk.Punct, Text: "=" or "||=" })
             {
                 BeginAssign(id, null);
@@ -1317,7 +1389,7 @@ internal sealed partial class RubyWalker
             CaptureSig(_i + 1);
         }
 
-        if (!isCall && InClassBody() && StatementStartBefore(_i) && TryDsl(t))
+        if (!isCall && (InClassBody() || _stack.Count == 1 && t.Text is "describe" or "context") && StatementStartBefore(_i) && TryDsl(t))
         {
             return;
         }
@@ -1516,7 +1588,13 @@ internal sealed partial class RubyWalker
         }
 
         // A read earlier in the same method makes a later assignment a plain write (upstream's CFG already has the local).
-        var again = !FieldScopeFrame().AssignedFields.Add(t.Text) && assign
+        var prev0 = _i > 0 ? _t[_i - 1] : default;
+        var bareCondition = !assign
+            && (prev0 is { Kind: Tk.Keyword, Text: "if" or "unless" or "elsif" or "while" or "until" }
+                    && next.Kind is Tk.Newline or Tk.Eof or Tk.Keyword && (next.Kind != Tk.Keyword || next.Text == "then")
+                || next is { Kind: Tk.Punct, Text: "?", SpaceBefore: true });
+        // A bare condition (`x if @flag`) is not a read of the CFG local, so it does not make a later assignment a write.
+        var again = (!bareCondition && !FieldScopeFrame().AssignedFields.Add(t.Text) && assign)
             || assign && (next.Text is not ("=" or "||=") && _i >= _lhsEnd || ReadsFieldOnRightHandSide(t));
         if (again)
         {
@@ -1525,11 +1603,6 @@ internal sealed partial class RubyWalker
         else
         {
             // A bare condition (`x if @flag`, `@flag ? a : b`) is emitted without a role by upstream.
-            var prev = _i > 0 ? _t[_i - 1] : default;
-            var bareCondition = !assign
-                && (prev is { Kind: Tk.Keyword, Text: "if" or "unless" or "elsif" or "while" or "until" }
-                        && next.Kind is Tk.Newline or Tk.Eof or Tk.Keyword && (next.Kind != Tk.Keyword || next.Text == "then")
-                    || next is { Kind: Tk.Punct, Text: "?", SpaceBefore: true });
             var fieldOcc = Emit(t, symbol, assign ? (int)SymbolRole.Definition : bareCondition ? NoRole : 0, null, assign ? SymbolInformation.Types.Kind.Field : SymbolInformation.Types.Kind.UnspecifiedKind);
             fieldOcc.Field = fieldKey0;
             if (assign && t.Kind == Tk.IVar && path is not ["Object"])

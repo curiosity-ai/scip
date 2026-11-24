@@ -140,6 +140,7 @@ public sealed class RubyIndexer : IIndexer
         var docs = new List<Document>();
         var total = 0;
         var defined = new HashSet<string>(StringComparer.Ordinal);
+        var emittedRelationships = new HashSet<(string, string)>();
         var referenced = new Dictionary<string, SymbolInformation.Types.Kind>(StringComparer.Ordinal);
         foreach (var model in models)
         {
@@ -195,7 +196,7 @@ public sealed class RubyIndexer : IIndexer
                     if (isDef)
                     {
                         AddDocumentation(project, occ, infos[symbol]);
-                        AddRelationships(project, occ, infos[symbol]);
+                        AddRelationships(project, occ, infos[symbol], emittedRelationships);
                     }
 
                     if (isDef && !isLocal)
@@ -211,7 +212,7 @@ public sealed class RubyIndexer : IIndexer
                         infos[symbol] = refInfo = new SymbolInformation { Symbol = symbol };
                     }
 
-                    AddRelationships(project, occ, refInfo);
+                    AddRelationships(project, occ, refInfo, emittedRelationships);
                     defined.Add(symbol);
                 }
                 else
@@ -238,7 +239,7 @@ public sealed class RubyIndexer : IIndexer
         return docs;
     }
 
-    private static void AddRelationships(RubyProject project, Occ occ, SymbolInformation info)
+    private static void AddRelationships(RubyProject project, Occ occ, SymbolInformation info, HashSet<(string, string)> emitted)
     {
         var rels = new List<Relationship>();
         if (occ.Field is { } field)
@@ -253,7 +254,13 @@ public sealed class RubyIndexer : IIndexer
 
         foreach (var rel in rels)
         {
-            if (!info.Relationships.Any(r => r.Symbol == rel.Symbol && r.IsDefinition == rel.IsDefinition && r.IsReference == rel.IsReference))
+            // One relationship per (symbol, target) over the whole index (scip lint merges symbols across documents).
+            if (info.Relationships.FirstOrDefault(r => r.Symbol == rel.Symbol) is { } existing)
+            {
+                existing.IsDefinition |= rel.IsDefinition;
+                existing.IsReference |= rel.IsReference;
+            }
+            else if (emitted.Add((info.Symbol, rel.Symbol)))
             {
                 info.Relationships.Add(rel);
             }

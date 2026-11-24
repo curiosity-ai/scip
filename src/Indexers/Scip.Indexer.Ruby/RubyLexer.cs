@@ -396,7 +396,7 @@ internal sealed class RubyLexer
                 return;
             case '<' when At(1) == '<' && TryHeredoc(space):
                 return;
-            case '?' when !PrevIsValue() && char.IsLetterOrDigit(At(1)) && !IsIdChar(At(2)):
+            case '?' when !PrevIsValue() && (char.IsLetterOrDigit(At(1)) || "/.,;:!@#$%^&*()-_=+[]{}<>|\"'`~".Contains(At(1))) && !IsIdChar(At(2)):
                 _pos += 2;
                 Add(Tk.Str, _s[start.._pos], start, _pos, space);
                 return;

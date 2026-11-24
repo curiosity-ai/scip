@@ -443,7 +443,8 @@ internal sealed class RubyProject(GemMetadata gem)
 
         foreach (var a in Ancestors(t))
         {
-            if (a.IsSpec || a.SingletonMethods.Contains("it") || a.SingletonMethods.Contains("describe") || a.Super is { Segments: ["Minitest", "Spec"] })
+            if (a.IsSpec || a.SingletonMethods.Contains("it") || a.SingletonMethods.Contains("describe") || a.Super is { Segments: ["Minitest", "Spec"] }
+                || a.Extends.Any(e => e.Segments is ["Minitest", "Spec"] or ["Minitest", "Spec", "DSL"] or ["Spec", "DSL"]))
             {
                 return true;
             }
