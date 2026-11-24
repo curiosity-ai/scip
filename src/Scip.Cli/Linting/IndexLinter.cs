@@ -47,18 +47,22 @@ public static class IndexLinter
             }
         }
 
+        // Deliberately order-independent (unlike the Go lint, which only accepts a relationship target from the same
+        // or an earlier document): first register every symbol of every document, then check all relationships.
         foreach (var (path, doc) in docs)
         {
             foreach (var sym in doc.Symbols)
             {
                 AddIfNotNull(errs, table.AddFileForSymbol(sym.Symbol, path));
             }
+        }
 
+        foreach (var (path, doc) in docs)
+        {
             foreach (var sym in doc.Symbols)
             {
                 foreach (var rel in sym.Relationships)
                 {
-                    // This has to run in a second pass so that all symbols are first populated.
                     AddIfNotNull(errs, table.AddRelationship(sym.Symbol, path, rel));
                 }
             }

@@ -149,3 +149,28 @@ public class LintTests
         }
     }
 }
+
+[NotInParallel]
+public class LintOrderIndependenceTests
+{
+    [Test]
+    public async Task RelationshipTargetMayLiveInALaterDocument()
+    {
+        SymbolInformation Info(string symbol, params Relationship[] rels)
+        {
+            var si = new SymbolInformation { Symbol = symbol };
+            si.Relationships.AddRange(rels);
+            return si;
+        }
+
+        var first = new Document { RelativePath = "a.x" };
+        first.Symbols.Add(Info("s a b 1 a/A#", new Relationship { Symbol = "s a b 1 b/B#", IsImplementation = true }));
+        var second = new Document { RelativePath = "b.x" };
+        second.Symbols.Add(Info("s a b 1 b/B#"));
+        var index = new Index { Documents = { first, second } };
+
+        var diagnostics = IndexLinter.Lint(index);
+
+        await Assert.That(diagnostics.Count).IsEqualTo(0);
+    }
+}
