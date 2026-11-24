@@ -24,13 +24,19 @@ glue that attaches the plugin. This port replaces each part natively:
 2. `Workspace` parses every file and declares its types (members are completed lazily); `ClassPath` loads everything else
    (jars, project output dirs, the JDK image) on demand.
 3. `DocumentIndexer` walks each file with lexical scopes, resolving names, field/method access (including inherited
-   members, generic substitution, overload selection by arity and argument types, lambda parameter inference from the
+   members, generic substitution, overload selection after JLS 15.12.2 (strict / loose / varargs phases, then most specific; method type-variable bounds), lambda parameter inference from the
    target functional interface, enum switch labels, imports/static imports, anonymous/local classes, type parameters and
    annotations) and emits definitions, references, enclosing ranges, kinds, signatures, javadoc and relationships.
 4. Documents are written with `IndexWriter` (UTF-16 position encoding), after inverse relationships are computed.
 
-Symbols follow upstream: `scip-java maven <maven/group/artifact|jdk|.> <version|.> descriptors`, locals are `local N` numbered
-per document in declaration order. Project sources get their module's Maven (or Gradle `group`/name/`version`) coordinates,
+Symbols follow the scip-java 0.12.3 binary: `semanticdb maven <maven/group/artifact|jdk|.> <version|.> descriptors` (the scheme
+the release writes, as seen in its output for gson), locals are `local N` numbered per document in declaration order.
+Named local classes (and their members) are global descriptors under the declaring method (`T#test().Dummy#`); only
+anonymous classes, locals and parameters are `local N`. Resource and pattern variables are global terms (`T#m().r.`).
+Method disambiguators follow semanticdb-javac: the index among same-named members in the owner's member order, which is
+declaration order for sources and class-file order for jars. For JDK classes compiled with `--release N` (read from the
+`maven.compiler.release` / `testRelease` properties, compiler-plugin configuration and JDK-activated profiles) the API is read
+from the JDK's `lib/ct.sym`, exactly as javac does, which fixes both member order and which members exist. Project sources get their module's Maven (or Gradle `group`/name/`version`) coordinates,
 else `maven . .`.
 
 ## Usage
@@ -59,14 +65,15 @@ javac plugin) and `javac-plugin --plugin-jar JAR` (run `javac -Xplugin:scip` on 
 * **Type inference is partial**: no full Java inference. Generic method type arguments are bound from arguments and lambda
   results; chained generic calls through inferred wildcard/intersection types, `var` with lambdas, switch-expression and
   conditional result typing, and overloads that depend on lambda shapes may resolve to the wrong overload or to nothing
-  (the reference is then simply omitted, never invented). Overload selection is a cost heuristic, not JLS 15.12.
+  (the reference is then simply omitted, never invented). Overload selection follows the JLS phases and most-specific rule but with the partial type information above.
 * **Gradle** support is regex based (no Groovy/Kotlin DSL evaluation, no version catalogs, no BOMs, no transitive
-  resolution); dependencies must already be in `~/.m2` or the Gradle cache. **Maven** reads local `.pom`s only (no download, no remote parents, no profiles, no `import` BOMs).
+  resolution); dependencies must already be in `~/.m2` or the Gradle cache. **Maven** reads local `.pom`s only (no download, no remote parents, only `<jdk>`-activated profiles, no `import` BOMs); all modules share one classpath (upstream resolves per module, so dependency versions can differ).
 * JDK classes come from `JAVA_HOME`/`java` on `PATH` (compressed jimage resources are not supported); `--jdk-version` only
-  relabels symbols. Multi-release jars use the base classes only. `module-info.java` and `package-info.java` are skipped.
+  relabels symbols. Multi-release jars use the base classes only. `module-info.java` is skipped (`package-info.java` is indexed: package annotations, package references).
 * Java 25 compact source files / unnamed classes are not parsed; `import module` is accepted but not resolved.
 * All documents are kept in memory until the end (needed for inverse relationships); very large projects need RAM.
-* Local variable `enclosing_symbol` and `text` are not emitted (matches upstream snapshots).
+* `enclosing_symbol` is emitted for local symbols only (as 0.12.3 does), `text` is not emitted. Class signatures keep the
+  newer `extends`/`implements` form of the golden snapshots, which 0.12.3 omits; javadoc is the raw javac text (leading space, trailing newline).
 * The CLI project (`src/Scip.Cli`) has an assembly named `scip` that collides case-insensitively with `Scip.dll`;
   running the built CLI currently fails with a `TypeLoadException` for every indexer that uses protobuf types
   (not caused by, and not fixable from, this project).
