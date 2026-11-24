@@ -27,6 +27,9 @@ public sealed class Declaration
 
     /// <summary>For <see cref="DeclKind.External"/>: the module the symbol lives in.</summary>
     public string ExternalModule { get; init; } = "";
+
+    /// <summary>For <see cref="DeclKind.External"/> members of a builtin class (<c>str.lower</c>): the class.</summary>
+    public string ExternalClass { get; init; } = "";
 }
 
 public sealed class Symbol(string name)

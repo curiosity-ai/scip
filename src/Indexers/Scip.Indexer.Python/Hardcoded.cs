@@ -95,6 +95,103 @@ internal static class Hardcoded
         "__spec__", "__loader__", "__path__", "__builtins__", "__dict__",
     };
 
+    /// <summary>Implicit module attributes pyright's binder declares (<c>DeclarationType.Intrinsic</c>).</summary>
+    private static readonly HashSet<string> ModuleIntrinsics = new(StringComparer.Ordinal)
+    {
+        "__doc__", "__name__", "__qualname__", "__loader__", "__package__", "__spec__", "__path__", "__file__", "__cached__",
+        "__dict__", "__annotations__", "__builtins__",
+    };
+
+    public static bool IsModuleIntrinsic(string name) => ModuleIntrinsics.Contains(name);
+
+    private static readonly HashSet<string> BuiltinsImportedClasses = new(StringComparer.Ordinal)
+    {
+        "IO", "BinaryIO", "ByteString", "ClassVar", "Generic", "Mapping", "MutableMapping", "MutableSequence", "NoReturn", "Protocol",
+        "Sequence", "SupportsAbs", "SupportsBytes", "SupportsComplex", "SupportsFloat", "SupportsInt", "TypeVar", "Concatenate",
+        "Literal", "LiteralString", "ParamSpec", "Self", "SupportsIndex", "TypeAlias", "TypeGuard", "Awaitable", "Callable",
+        "Iterable", "Iterator", "MutableSet", "Reversible", "Sized",
+    };
+
+    /// <summary>Names that typeshed's <c>builtins.pyi</c> imports from typing, typing_extensions and collections.abc.</summary>
+    public static bool IsBuiltinsImportedClass(string module, string name) =>
+        module is "typing" or "typing_extensions" or "collections.abc" or "_collections_abc" && BuiltinsImportedClasses.Contains(name);
+
+    private static readonly Dictionary<string, string[]> LowercaseClasses = new(StringComparer.Ordinal)
+    {
+        ["datetime"] = ["tzinfo", "timezone", "date", "time", "timedelta", "datetime"],
+        ["collections"] = ["deque", "defaultdict"],
+        ["itertools"] = ["count", "cycle", "repeat", "accumulate", "chain", "compress", "dropwhile", "filterfalse", "groupby", "islice",
+            "starmap", "takewhile", "zip_longest", "product", "permutations", "combinations", "combinations_with_replacement", "pairwise", "batched"],
+        ["functools"] = ["partial", "partialmethod", "singledispatchmethod", "cached_property"],
+        ["contextlib"] = ["closing", "aclosing", "suppress", "redirect_stdout", "redirect_stderr", "nullcontext", "chdir"],
+        ["threading"] = ["local"],
+        ["weakref"] = ["finalize"],
+        ["warnings"] = ["catch_warnings"],
+        ["time"] = ["struct_time"],
+        ["os"] = ["stat_result", "statvfs_result", "uname_result", "terminal_size", "times_result", "waitid_result", "sched_param"],
+        ["signal"] = ["struct_siginfo"],
+    };
+
+    /// <summary>Lowercase class names of stdlib stubs (classes that are not CamelCase).</summary>
+    public static bool IsStdlibLowercaseClass(string module, string name) =>
+        LowercaseClasses.TryGetValue(module, out var names) && names.Contains(name);
+
+    private static readonly Dictionary<string, string[]> AnnotatedVariables = new(StringComparer.Ordinal)
+    {
+        ["os"] = ["environ", "environb", "sep", "altsep", "extsep", "pathsep", "linesep", "curdir", "pardir", "devnull", "name",
+            "supports_bytes_environ", "supports_dir_fd", "supports_fd", "supports_effective_ids", "supports_follow_symlinks", "defpath"],
+        ["sys"] = ["abiflags", "argv", "base_exec_prefix", "base_prefix", "byteorder", "builtin_module_names", "copyright",
+            "dont_write_bytecode", "displayhook", "excepthook", "exec_prefix", "executable", "float_repr_style", "hexversion",
+            "maxsize", "maxunicode", "meta_path", "modules", "orig_argv", "path", "path_hooks", "path_importer_cache", "platform",
+            "platlibdir", "prefix", "pycache_prefix", "stdin", "stdout", "stderr", "version", "version_info", "flags", "float_info",
+            "implementation", "api_version", "warnoptions"],
+        ["logging"] = ["raiseExceptions", "logThreads", "logMultiprocessing", "logProcesses", "lastResort", "root", "BASIC_FORMAT"],
+        ["warnings"] = ["filters"],
+        ["time"] = ["altzone", "daylight", "timezone", "tzname"],
+        ["typing"] = ["TYPE_CHECKING"],
+    };
+
+    /// <summary>Stdlib variables that stubs declare with a type annotation.</summary>
+    public static bool IsStdlibAnnotatedVariable(string module, string name) =>
+        AnnotatedVariables.TryGetValue(module, out var names) && names.Contains(name);
+
+    private static readonly Dictionary<string, (string Module, string[] Names)> DefiningModules = new(StringComparer.Ordinal)
+    {
+        ["warnings"] = ("_warnings", ["warn", "warn_explicit"]),
+        ["socket"] = ("_socket", ["inet_aton", "inet_ntoa", "inet_pton", "inet_ntop", "gethostname", "gethostbyname", "gethostbyaddr",
+            "getaddrinfo", "getnameinfo", "getservbyname", "getservbyport", "htons", "htonl", "ntohs", "ntohl", "getdefaulttimeout",
+            "setdefaulttimeout", "socketpair", "if_nameindex", "if_nametoindex", "if_indextoname"]),
+    };
+
+    /// <summary>Stdlib functions that the public module re-exports from a private module (<c>warnings.warn</c> is <c>_warnings.warn</c>).</summary>
+    public static string? StdlibDefiningModule(string module, string name) =>
+        DefiningModules.TryGetValue(module, out var entry) && entry.Names.Contains(name) ? entry.Module : null;
+
+    /// <summary>Names typing exports that collections.abc re-exports.</summary>
+    public static readonly HashSet<string> TypingNames = new(StringComparer.Ordinal)
+    {
+        "Awaitable", "Coroutine", "AsyncIterable", "AsyncIterator", "AsyncGenerator", "Iterable", "Iterator", "Reversible", "Sized",
+        "Container", "Collection", "Callable", "MutableSet", "Mapping", "MutableMapping", "Sequence", "MutableSequence",
+        "ByteString", "KeysView", "ItemsView", "ValuesView", "MappingView", "Generator", "Hashable",
+    };
+
+    /// <summary>typing_extensions names that are plain re-exports of typing on Python 3.11.</summary>
+    public static readonly HashSet<string> TypingExtensionsReexports = new(StringComparer.Ordinal)
+    {
+        "Annotated", "Any", "Awaitable", "Callable", "ClassVar", "Concatenate", "Final", "Literal", "LiteralString", "Never", "NewType",
+        "NoReturn", "NotRequired", "ParamSpec", "Protocol", "Required", "Self", "TypeAlias", "TypeGuard", "TypeVar", "TypeVarTuple",
+        "TypedDict", "Unpack", "assert_never", "assert_type", "cast", "final", "get_type_hints", "overload", "reveal_type",
+        "runtime_checkable", "dataclass_transform", "NamedTuple", "Optional", "Union", "Generic", "Type", "Tuple", "Dict", "List",
+        "Text", "TYPE_CHECKING", "IO", "TextIO", "BinaryIO", "Iterable", "Iterator", "Mapping", "MutableMapping", "Sequence",
+        "Coroutine", "AsyncIterator", "AsyncIterable", "AsyncGenerator", "ContextManager", "AsyncContextManager", "DefaultDict",
+        "Deque", "Counter", "ChainMap", "OrderedDict", "SupportsIndex", "SupportsInt", "SupportsFloat", "SupportsAbs",
+        "SupportsBytes", "SupportsComplex", "SupportsRound", "Hashable", "Sized", "Collection", "Container", "Reversible",
+        "AbstractSet", "MutableSet", "MutableSequence", "KeysView", "ItemsView", "ValuesView", "Generator", "Pattern", "Match",
+    };
+
+    /// <summary>Modules that typeshed ships in <c>stdlib/</c> but that scip-python's hardcoded stdlib list does not name.</summary>
+    public static bool IsTypeshedOnlyStdlibModule(string module) => module is "typing_extensions" or "_typeshed";
+
     public static bool IsBuiltinClass(string name) => BuiltinClasses.Contains(name);
 
     public static bool IsBuiltin(string name) => BuiltinClasses.Contains(name) || BuiltinFunctions.Contains(name);

@@ -5,7 +5,7 @@ name = "abc"
 version = "16.05"
 
 [dependency-groups]
-dev = [{include-group = "test"}, "requests"]
+dev = ["test", "requests"]
 
 [tool.example]
 max_id = 9223372036854775807

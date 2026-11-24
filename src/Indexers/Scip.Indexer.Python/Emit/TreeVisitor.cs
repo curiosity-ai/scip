@@ -269,11 +269,161 @@ public sealed class TreeVisitor
             var decls = _eval.DeclarationsForName(_module, name);
             if (decls.Count > 0 && decls[0].Node is { } declNode && declNode.Parent?.Id == node.Id)
             {
-                EmitSymbolInformationOnce(declNode, GetScipSymbol(declNode), []);
+                EmitSymbolInformationOnce(declNode, GetScipSymbol(declNode), AssignmentDocumentation(node));
             }
         }
 
         return true;
+    }
+
+    /// <summary>Port of <c>TypeStubExtendedWriter.visitAssignment</c>: the full name of the assigned value's type.</summary>
+    private List<string> AssignmentDocumentation(AssignmentNode node)
+    {
+        var line = "";
+        var isTypeAlias = false;
+        if (IsTypeVarFactoryCall(node.Value))
+        {
+            // getFullNameOfType(TypeVar) is undefined and the TypeVar call is treated like a type alias.
+            line = "undefined";
+            isTypeAlias = true;
+        }
+        else if (ValueTypeFullName(node.Value) is { } full)
+        {
+            line = full;
+        }
+
+        if (line.Length == 0)
+        {
+            return [];
+        }
+
+        if (isTypeAlias)
+        {
+            line += " = " + ExpressionPrinter.Print(node.Value, _module.Text);
+        }
+
+        return ["```python\n" + line + "\n```"];
+    }
+
+    private bool IsTypeVarFactoryCall(Node value) =>
+        value is CallNode call &&
+        _eval.EvalExpression(_module, call.Left) is ExternalEntity { IsClass: true, Module: "typing" or "typing_extensions", Name: "TypeVar" or "TypeVarTuple" or "ParamSpec" or "NewType" };
+
+    private string SourceOf(Node n) =>
+        _module.Text[Math.Clamp(n.Start, 0, _module.Text.Length)..Math.Clamp(n.End, 0, _module.Text.Length)];
+
+    private string? ValueTypeFullName(Node value)
+    {
+        switch (value)
+        {
+            case StringListNode sl:
+            {
+                var prefix = sl.Strings.Count > 0 ? SourceOf(sl.Strings[0]).TakeWhile(char.IsLetter) : [];
+                return prefix.Any(c => c is 'b' or 'B') ? "builtins.bytes" : "builtins.str";
+            }
+
+            case NumberNode n:
+            {
+                var src = SourceOf(n);
+                if (src.EndsWith('j') || src.EndsWith('J'))
+                {
+                    return "builtins.complex";
+                }
+
+                var hex = src.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+                return !hex && (src.Contains('.') || src.Contains('e') || src.Contains('E')) ? "builtins.float" : "builtins.int";
+            }
+
+            case ConstantNode { Text: "True" or "False" }:
+                return "builtins.bool";
+            case SequenceNode { Kind: NodeKind.List }:
+                return "builtins.list";
+            case SequenceNode { Kind: NodeKind.Tuple }:
+                return "builtins.tuple";
+            case SequenceNode { Kind: NodeKind.Set }:
+                return "builtins.set";
+            case DictionaryNode:
+                return "builtins.dict";
+            case CallNode call:
+                switch (_eval.EvalExpression(_module, call.Left))
+                {
+                    case ClassEntity c:
+                        return c.Module.ModuleName + "." + QualifiedClassName(c.Node);
+                    case ExternalEntity { IsClass: true, Module: "builtins" } b:
+                        return "builtins." + b.Name;
+                    case null when IsUnknownExpression(call.Left):
+                        return "typing.Any";
+                }
+
+                return null;
+            case NameNode or MemberAccessNode or IndexNode when IsUnknownExpression(value):
+                return "typing.Any";
+        }
+
+        return null;
+    }
+
+    private static string QualifiedClassName(ClassNode cls)
+    {
+        var name = cls.Name.Value;
+        for (var cur = cls.Parent; cur is not null; cur = cur.Parent)
+        {
+            if (cur is ClassNode outer)
+            {
+                name = outer.Name.Value + "." + name;
+            }
+            else if (cur is FunctionNode)
+            {
+                return name;
+            }
+        }
+
+        return name;
+    }
+
+    /// <summary>True when the expression is rooted in an import that cannot be resolved (pyright evaluates it to Unknown).</summary>
+    private bool IsUnknownExpression(Node node, int depth = 0)
+    {
+        if (depth > 6)
+        {
+            return false;
+        }
+
+        switch (node)
+        {
+            case CallNode c:
+                return IsUnknownExpression(c.Left, depth + 1);
+            case MemberAccessNode m:
+                return IsUnknownExpression(m.Left, depth + 1);
+            case IndexNode i:
+                return IsUnknownExpression(i.Left, depth + 1);
+            case WrapperNode { Kind: NodeKind.Await, Expression: { } inner }:
+                return IsUnknownExpression(inner, depth + 1);
+            case NameNode n:
+            {
+                var decl = _eval.DeclarationsForName(_module, n).FirstOrDefault();
+                if (decl is { Kind: DeclKind.Variable, Node: NameNode { Parent: AssignmentNode a } } && a.Targets.Count == 1 && a.Targets[0] == decl.Node)
+                {
+                    // a local bound once to an Unknown value
+                    return IsUnknownExpression(a.Value, depth + 1);
+                }
+
+                if (decl is { Kind: DeclKind.Parameter, Node: ParameterNode { Annotation: null, Default: null, Category: ParamCategory.Simple, Parent: FunctionNode fn } prm })
+                {
+                    // an unannotated parameter without default is Unknown (except the implicit self/cls of a method)
+                    return !(fn.Parameters.Count > 0 && fn.Parameters[0] == prm && EnclosingClass(fn, false) is not null);
+                }
+
+                return decl?.Kind == DeclKind.Alias && decl.Node switch
+                {
+                    ImportAsNode ia => _state.Modules.Resolve(ia.Module, _module) is null,
+                    ImportFromAsNode { Parent: ImportFromNode f } => _state.Modules.Resolve(f.Module, _module) is null,
+                    _ => false,
+                };
+            }
+        }
+
+        return false;
     }
 
     // ------------------------------------------------------------------ functions
@@ -337,7 +487,13 @@ public sealed class TreeVisitor
 
         foreach (var p in node.Parameters)
         {
-            _doc.Symbols.Add(new SymbolInformation { Symbol = GetScipSymbol(p) });
+            var paramInfo = new SymbolInformation { Symbol = GetScipSymbol(p) };
+            if (p.Name is not null && DocStrings.ExtractParameterDocumentation(functionDoc ?? "", p.Name.Value) is { Length: > 0 } paramDoc)
+            {
+                paramInfo.Documentation.Add(paramDoc);
+            }
+
+            _doc.Symbols.Add(paramInfo);
             Walk(p);
         }
 
@@ -354,44 +510,7 @@ public sealed class TreeVisitor
         return text[start..end];
     }
 
-    private string FunctionStub(FunctionNode node)
-    {
-        var sb = new StringBuilder();
-        sb.Append(node.IsAsync ? "async def " : "def ").Append(node.Name.Value).Append('(');
-        var parms = node.Parameters.Select(p =>
-        {
-            var s = p.Category switch { ParamCategory.ArgsList => "*", ParamCategory.KwargsDict => "**", _ => "" };
-            if (p.Name is null)
-            {
-                return p.Category == ParamCategory.Simple ? "/" : s;
-            }
-
-            s += p.Name.Value;
-            if (p.Annotation is not null)
-            {
-                s += ": " + Text(p.Annotation);
-            }
-
-            if (p.Default is not null)
-            {
-                s += " = " + Text(p.Default);
-            }
-
-            return s;
-        }).ToList();
-        if (parms.Count > 0)
-        {
-            sb.Append("\n  ").Append(string.Join(",\n  ", parms)).Append('\n');
-        }
-
-        sb.Append(')');
-        if (node.ReturnAnnotation is not null)
-        {
-            sb.Append(" -> ").Append(Text(node.ReturnAnnotation));
-        }
-
-        return sb.Append(':').ToString();
-    }
+    private string FunctionStub(FunctionNode node) => HoverStubs.Function(node, _module.Text);
 
     // ------------------------------------------------------------------ imports
 
@@ -408,7 +527,7 @@ public sealed class TreeVisitor
     private bool VisitImportFrom(ImportFromNode node)
     {
         var symbol = GetScipSymbol(node);
-        Push(node.Module, symbol, (int)SymbolRole.Import | (int)SymbolRole.ReadAccess);
+        Push(node.Module, symbol, (int)SymbolRole.ReadAccess);
         var symbolPackage = ModuleNameToPackage(node.Module, null);
         if (symbolPackage == Stdlib)
         {
@@ -425,7 +544,7 @@ public sealed class TreeVisitor
 
     private bool VisitImportFromAs(ImportFromAsNode node)
     {
-        Push(node, GetScipSymbol(node), (int)SymbolRole.Import | (int)SymbolRole.ReadAccess);
+        Push(node, GetScipSymbol(node), (int)SymbolRole.ReadAccess);
         return false;
     }
 
@@ -433,7 +552,7 @@ public sealed class TreeVisitor
     {
         var moduleName = node.Module.Formatted;
         var resolved = _state.Modules.Resolve(node.Module, _module);
-        var roles = (int)SymbolRole.Import | (int)SymbolRole.ReadAccess;
+        var roles = (int)SymbolRole.ReadAccess;
 
         if (resolved?.FilePath is { } file && _state.Modules.IsUnderProject(file))
         {
@@ -476,18 +595,27 @@ public sealed class TreeVisitor
         if (decls.Count == 0)
         {
             // Without a declaration, member accesses (and keyword arguments we could not resolve) get no occurrence.
-            if (node.Parent is MemberAccessNode or ArgumentNode)
+            if (node.Parent is MemberAccessNode)
             {
                 return true;
             }
 
-            Push(node, GetLocalForDeclaration(node));
+            if (node.Parent is ArgumentNode { Parent: CallNode call } && !IsUnknownCallee(call))
+            {
+                return true;
+            }
+
+            // pyright's hover for a name without declaration: the Unknown type printed with the "function" label.
+            Push(node, GetLocalForDeclaration(node, ["```python\n(function) " + node.Value + ": Unknown\n```"]));
             return true;
         }
 
         EmitDeclaration(node, decls[0]);
         return true;
     }
+
+    /// <summary>True when pyright would evaluate the callee to Unknown (e.g. an unresolved import), so keyword arguments get locals.</summary>
+    private bool IsUnknownCallee(CallNode call) => _eval.EvalExpression(_module, call.Left) is null;
 
     private void EmitDeclaration(NameNode node, Declaration decl)
     {
@@ -500,6 +628,15 @@ public sealed class TreeVisitor
             case DeclKind.External:
                 EmitExternal(node, decl);
                 return;
+            case DeclKind.Intrinsic:
+            {
+                // pyright's intrinsic declarations belong to the module node: scip-python ends up using its namespace symbol.
+                var module = _state.Modules.ModuleOf(node);
+                var symbol = GetScipSymbol(module.Tree);
+                Push(node, symbol);
+                EmitExternalSymbolInformation(symbol, []);
+                return;
+            }
         }
 
         var declNode = decl.Node!;
@@ -589,6 +726,11 @@ public sealed class TreeVisitor
     private bool IsSubmoduleAccess(MemberAccessNode ma)
     {
         var left = _eval.EvalExpression(_module, ma.Left);
+        if (left is ModuleEntity { Dotted: "os", Remaining.Count: 0 } && ma.Member.Value == "path" && !_eval.ImportsSubmodule(_module, "os", "path"))
+        {
+            return false; // os/__init__.pyi declares `path`
+        }
+
         return left is ModuleEntity m
             && (m.Remaining.Count > 0 && m.Remaining[0] == ma.Member.Value
                 || m.Source is null && Hardcoded.IsStdlibSubmodule(m.Dotted + "." + ma.Member.Value));
@@ -656,11 +798,7 @@ public sealed class TreeVisitor
         return package is null ? null : _names.Class(package, b.Module.ModuleName, b.Node.Name.Value);
     }
 
-    private string ClassStub(ClassNode cls)
-    {
-        var args = cls.Arguments.Count > 0 ? "(" + string.Join(", ", cls.Arguments.Select(Text)) + ")" : "";
-        return $"class {cls.Name.Value}{args}:";
-    }
+    private string ClassStub(ClassNode cls) => HoverStubs.Class(cls, _module.Text);
 
     private void EmitNameWithoutDeclaration(NameNode node) => Push(node, GetLocalForDeclaration(node));
 
@@ -672,7 +810,9 @@ public sealed class TreeVisitor
         {
             var symbol = _names.Class(Stdlib, "builtins", name);
             Push(node, symbol);
-            EmitExternalSymbolInformation(symbol, []);
+            // A call node shows the constructor signature instead of the plain `(class)` header.
+            var isCall = node.Parent is CallNode c && c.Left == node;
+            EmitExternalSymbolInformation(symbol, isCall || name.StartsWith("__", StringComparison.Ordinal) ? [] : ["```python\n(class) " + name + "\n```"]);
         }
         else if (Hardcoded.OverloadedBuiltinFunctions.Contains(name))
         {
@@ -683,7 +823,12 @@ public sealed class TreeVisitor
         else
         {
             // typeshed declares these as plain functions; scip-python emits a fresh local symbol for each use.
-            Push(node, NextLocal());
+            var local = NextLocal();
+            Push(node, local);
+            if (BuiltinHovers.Functions.TryGetValue(name, out var hover))
+            {
+                EmitSymbolInformationOnce(node, local, ["```python\n" + hover + "\n```"]);
+            }
         }
     }
 
@@ -696,7 +841,24 @@ public sealed class TreeVisitor
             return;
         }
 
-        var symbol = ExternalSymbol(package, decl.ExternalModule, decl.Name);
+        if (decl.ExternalModule is "typing" or "typing_extensions" && decl.Name is "overload" or "final" or "type_check_only")
+        {
+            // Functions that typeshed's builtins.pyi imports resolve through the builtins scope: a fresh local per use.
+            var local = NextLocal();
+            Push(node, local);
+            EmitSymbolInformationOnce(node, local, decl.Name == "overload" ? [.. BuiltinHovers.Overload] : []);
+            return;
+        }
+
+        if (decl.ExternalClass.Length > 0)
+        {
+            var methodSymbol = SymbolNames.Method(_names.Class(Stdlib, "builtins", decl.ExternalClass), decl.Name);
+            Push(node, methodSymbol);
+            EmitExternalSymbolInformation(methodSymbol, []);
+            return;
+        }
+
+        var symbol = ExternalSymbol(package, decl.ExternalModule, decl.Name, node.Parent is MemberAccessNode m && m.Member == node);
         Push(node, symbol);
         EmitExternalSymbolInformation(symbol, []);
     }
@@ -705,14 +867,67 @@ public sealed class TreeVisitor
     /// Symbol for a stdlib/untyped-module member. Without typeshed we cannot know the declaration kind, so
     /// CamelCase names are classes, typing special forms and CONSTANTS are terms, everything else a function.
     /// </summary>
-    private string ExternalSymbol(PythonPackage package, string module, string name)
+    private readonly Dictionary<string, string> _stdlibLocals = new(StringComparer.Ordinal);
+
+    private string ExternalSymbol(PythonPackage package, string module, string name, bool memberAccess = false)
     {
-        if (Hardcoded.LooksLikeClass(name) && !Hardcoded.IsTypingSpecialForm(module, name) && module != "__future__")
+        // scip-python 0.6.8 resolves every member of `os.path` to the first declaration of ntpath's star import: `ntpath/join()`.
+        if (module == "os.path")
+        {
+            return SymbolNames.Method(_names.Module(Stdlib, "ntpath"), "join");
+        }
+
+        if (module == "os" && name == "path")
+        {
+            return SymbolNames.Term(_names.Module(package, module), name);
+        }
+
+        if (Hardcoded.StdlibDefiningModule(module, name) is { } definingModule)
+        {
+            module = definingModule;
+        }
+
+        // Only for `typing.Callable`-style member access: names imported with `from typing import X` keep their typing symbol.
+        if (memberAccess && Hardcoded.IsBuiltinsImportedClass(module, name))
+        {
+            // typeshed's builtins.pyi imports these, and pyright resolves them through the builtins scope.
+            return _names.Class(Stdlib, "builtins", name);
+        }
+
+        // Re-exports: collections.abc and typing_extensions forward to the declarations in typing.
+        if (module is "collections.abc" or "_collections_abc" && Hardcoded.TypingNames.Contains(name) ||
+            module == "typing_extensions" && Hardcoded.TypingExtensionsReexports.Contains(name))
+        {
+            module = "typing";
+            package = Stdlib;
+        }
+        else if (package == Stdlib && (module.Contains('.') && !Hardcoded.StdlibModuleNames.Contains(module) || Hardcoded.IsTypeshedOnlyStdlibModule(module)))
+        {
+            // pyright names the declaring module `urllib.parse`, which is not in scip-python's (top level) stdlib list, so the
+            // declaration gets no package: one local per declaration and document.
+            var key = module + "/" + name;
+            if (!_stdlibLocals.TryGetValue(key, out var local))
+            {
+                _stdlibLocals[key] = local = NextLocal();
+            }
+
+            return local;
+        }
+
+        if (Hardcoded.IsStdlibLowercaseClass(module, name) ||
+            (Hardcoded.LooksLikeClass(name) && !Hardcoded.IsTypingSpecialForm(module, name) && module != "__future__"))
         {
             return _names.Class(package, module, name);
         }
 
-        if (module == "__future__" || Hardcoded.IsTypingSpecialForm(module, name) || name.All(c => char.IsUpper(c) || char.IsDigit(c) || c == '_'))
+        if (module == "__future__" || Hardcoded.IsStdlibAnnotatedVariable(module, name))
+        {
+            // Variables declared with an annotation at the top level of a stub: the annotated name is a term in the term of the name.
+            var owner = SymbolNames.Term(_names.Module(package, module), name);
+            return SymbolNames.Term(owner, name);
+        }
+
+        if (Hardcoded.IsTypingSpecialForm(module, name) || name.All(c => char.IsUpper(c) || char.IsDigit(c) || c == '_'))
         {
             return SymbolNames.Term(_names.Module(package, module), name);
         }
@@ -852,7 +1067,7 @@ public sealed class TreeVisitor
             return package;
         }
 
-        return Hardcoded.StdlibModuleNames.Contains(moduleName.Split('.')[0]) ? Stdlib : null;
+        return Hardcoded.StdlibModuleNames.Contains(moduleName.Split('.')[0]) || Hardcoded.IsTypeshedOnlyStdlibModule(moduleName) ? Stdlib : null;
     }
 
     // ------------------------------------------------------------------ symbol construction (makeScipSymbol)
@@ -932,7 +1147,10 @@ public sealed class TreeVisitor
             case NameNode n:
                 return MakeNameSymbol(n);
             case TypeAnnotationNode ta:
-                return ta.ValueExpression is NameNode ? GetScipSymbol(ta.ValueExpression) : NextLocal();
+                // scip-python 0.6.8: a (module level) annotated name is a term nested in the term of the same name (`x.x.`).
+                return ta.ValueExpression is NameNode vn
+                    ? SymbolNames.Term(GetScipSymbol((Node?)EnclosingSuite(ta) ?? ta.Parent!), vn.Value)
+                    : NextLocal();
             case DecoratorNode:
                 return NextLocal();
             case AssignmentNode a:
@@ -979,6 +1197,12 @@ public sealed class TreeVisitor
         {
             case ModuleEntity m:
             {
+                if (node.Alias is not null)
+                {
+                    // `from pkg import module as alias`: scip-python 0.6.8 gives the alias a local symbol.
+                    return NextLocal();
+                }
+
                 var package = ModuleNameToPackage(parent.Module, null) ?? Project;
                 var parts = parent.Module.NameParts.Select(p => p.Value).Append(node.Name.Value);
                 _ = m;
@@ -1028,7 +1252,7 @@ public sealed class TreeVisitor
             return NextLocal();
         }
 
-        var scope = suite ?? (parent is TypeAnnotationNode ? parent.Parent! : parent);
+        var scope = (Node?)suite ?? parent;
         var owner = GetScipSymbol(scope);
         // Names bound inside a comprehension (e.g. walrus targets) have no enclosing global symbol: use a local.
         return owner.Length == 0 ? NextLocal() : SymbolNames.Term(owner, node.Value);
