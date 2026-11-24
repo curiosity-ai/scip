@@ -1524,6 +1524,69 @@ public sealed class Checker(TsProgram program)
         return name is null ? [] : HitsToConts(Members(outer, name, depth + 1), depth + 1);
     }
 
+    /// <summary>All declarations merged into the symbol <paramref name="declaration"/> belongs to (same scope, same name).</summary>
+    public List<Node> MergedDeclarations(Node declaration)
+    {
+        if (declaration.Name is not { Kind: SK.Identifier } name || declaration.Parent is null) { return [declaration]; }
+        var found = B(declaration).Lookup(declaration.Parent, name.Text, Meaning.Any);
+        return found is not null && found.Contains(declaration) ? found : [declaration];
+    }
+
+    // ---- type text (hover documentation)
+    /// <summary>Best-effort rendering of the type described by <paramref name="conts"/>; null when it cannot be named.</summary>
+    public string? PrintConts(List<Cont> conts, int depth = 0)
+    {
+        conts = Real(conts);
+        if (conts.Count == 0 || depth > 4) { return null; }
+        var parts = new List<string>();
+        foreach (var c in conts)
+        {
+            var text = PrintCont(c, depth);
+            if (text is null) { return null; }
+            if (!parts.Contains(text)) { parts.Add(text); }
+        }
+
+        return string.Join(" | ", parts);
+    }
+
+    private string? PrintCont(Cont c, int depth)
+    {
+        var d = c.Decl;
+        if (d.Kind == SK.TypeQuery && d.Expression is { Kind: SK.ClassDeclaration or SK.ClassExpression } cls) { return cls.Name is null ? null : "typeof " + cls.Name.Text; }
+        if (d.Kind is not (SK.InterfaceDeclaration or SK.ClassDeclaration) || d.Name is null) { return null; }
+        var name = d.Name.Text;
+        if (d.File!.IsLib)
+        {
+            switch (name)
+            {
+                case "String": return "string";
+                case "Number": return "number";
+                case "Boolean": return "boolean";
+                case "Symbol": return "symbol";
+                case "BigInt": return "bigint";
+                case "Array" or "ReadonlyArray":
+                {
+                    var element = d.TypeParameters.Count > 0 && c.Env?.Find(d.TypeParameters[0]) is { } f ? PrintConts(f(depth + 1), depth + 1) : null;
+                    if (element is null) { return null; }
+                    var single = element.Contains(" | ", StringComparison.Ordinal) ? "(" + element + ")" : element;
+                    return (name == "ReadonlyArray" ? "readonly " : "") + single + "[]";
+                }
+            }
+        }
+
+        if (d.TypeParameters.Count == 0) { return name; }
+        var args = new List<string>();
+        foreach (var tp in d.TypeParameters)
+        {
+            var bound = c.Env?.Find(tp);
+            var text = bound is null ? null : PrintConts(bound(depth + 1), depth + 1);
+            if (text is null) { return null; }
+            args.Add(text);
+        }
+
+        return name + "<" + string.Join(", ", args) + ">";
+    }
+
     // ---- API used by FileIndexer
     /// <summary>Declarations of the property <paramref name="name"/> in the contextual type of <paramref name="literal"/>,
     /// or null when the contextual type does not declare it (TypeScript's <c>getPropertySymbolFromContextualType</c>).</summary>

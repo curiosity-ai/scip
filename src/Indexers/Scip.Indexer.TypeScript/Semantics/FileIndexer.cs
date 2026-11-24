@@ -502,7 +502,9 @@ public sealed class FileIndexer(
     // ------------------------------------------------------------------ signature documentation (approximate types)
     private string SignatureForDocumentation(Node node, List<Node> symbolDecls, Node declaration)
     {
-        var first = symbolDecls.Count > 0 ? symbolDecls[0] : declaration;
+        // The script element kind comes from the merged symbol's flags: type alias, class, interface, enum, ... before variable.
+        var merged = declaration.Parent is not null && node.Kind != SK.Constructor ? checker.MergedDeclarations(declaration) : symbolDecls;
+        var first = merged.Count > 0 ? merged.MinBy(KindPriority)! : declaration;
         var text = node.Kind == SK.Constructor ? "constructor" : node.GetText();
         string Type() => TypeText(declaration);
         string? Signature()
@@ -534,6 +536,21 @@ public sealed class FileIndexer(
 
         return text + ": " + Type();
     }
+
+    private static int KindPriority(Node d) => d.Kind switch
+    {
+        SK.TypeAliasDeclaration => 0,
+        SK.ClassDeclaration or SK.ClassExpression => 1,
+        SK.InterfaceDeclaration => 2,
+        SK.EnumDeclaration => 3,
+        SK.EnumMember => 4,
+        SK.MethodDeclaration or SK.MethodSignature => 5,
+        SK.GetAccessor => 6,
+        SK.SetAccessor => 7,
+        SK.Constructor => 8,
+        SK.FunctionDeclaration => 9,
+        _ => 10,
+    };
 
     private static string EnumValueSuffix(Node member)
     {
@@ -595,7 +612,7 @@ public sealed class FileIndexer(
                     return InferType(d.Initializer, isConst);
                 }
 
-                return "any";
+                return checker.PrintConts(checker.DeclConts(d, null, 0, asValue: true)) ?? "any";
             }
 
             case SK.PropertyAssignment: return d.Initializer is null ? "any" : InferType(d.Initializer, false);
@@ -616,7 +633,7 @@ public sealed class FileIndexer(
         SK.ArrowFunction or SK.FunctionExpression => SignatureText(e).Replace("): ", ") => ", StringComparison.Ordinal),
         SK.ParenthesizedExpression => InferType(e.Expression!, isConst),
         SK.AsExpression when e.Type is { Kind: not SK.KeywordType } => NormalizeType(e.Type.GetText()),
-        _ => "any",
+        _ => checker.PrintConts(checker.ValueConts(e, 0)) ?? "any",
     };
 
     // ------------------------------------------------------------------ kinds
