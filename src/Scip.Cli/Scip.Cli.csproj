@@ -2,13 +2,16 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Scip.Cli</RootNamespace>
-    <AssemblyName>scip</AssemblyName>
+    <AssemblyName>Scip.Cli</AssemblyName>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>scip</ToolCommandName>
     <PackageId>Scip.Cli</PackageId>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="ZstdSharp.Port" />
+    <EmbeddedResource Include="version.txt" LogicalName="version.txt" />
     <ProjectReference Include="..\Scip\Scip.csproj" />
     <ProjectReference Include="..\Scip.Indexing\Scip.Indexing.csproj" />
     <ProjectReference Include="..\Indexers\Scip.Indexer.Clang\Scip.Indexer.Clang.csproj" />
@@ -20,5 +23,8 @@
     <ProjectReference Include="..\Indexers\Scip.Indexer.Ruby\Scip.Indexer.Ruby.csproj" />
     <ProjectReference Include="..\Indexers\Scip.Indexer.Rust\Scip.Indexer.Rust.csproj" />
     <ProjectReference Include="..\Indexers\Scip.Indexer.TypeScript\Scip.Indexer.TypeScript.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Scip.Cli.Tests" />
   </ItemGroup>
 </Project>

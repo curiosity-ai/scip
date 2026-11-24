@@ -1,4 +1,3 @@
-using System.CommandLine;
 using Scip.Cli;
 
-return await CliApp.Build().Parse(args).InvokeAsync();
+return await CliApp.RunAsync(args, Console.Out, Console.Error);
