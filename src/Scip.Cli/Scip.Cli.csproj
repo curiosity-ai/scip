@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Scip.Cli</RootNamespace>
+    <AssemblyName>scip</AssemblyName>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>scip</ToolCommandName>
+    <PackageId>Scip.Cli</PackageId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <ProjectReference Include="..\Scip\Scip.csproj" />
+    <ProjectReference Include="..\Scip.Indexing\Scip.Indexing.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.Clang\Scip.Indexer.Clang.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.Dart\Scip.Indexer.Dart.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.DotNet\Scip.Indexer.DotNet.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.Java\Scip.Indexer.Java.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.Php\Scip.Indexer.Php.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.Python\Scip.Indexer.Python.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.Ruby\Scip.Indexer.Ruby.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.Rust\Scip.Indexer.Rust.csproj" />
+    <ProjectReference Include="..\Indexers\Scip.Indexer.TypeScript\Scip.Indexer.TypeScript.csproj" />
+  </ItemGroup>
+</Project>

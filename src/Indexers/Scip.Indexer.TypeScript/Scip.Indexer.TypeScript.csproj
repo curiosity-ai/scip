@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Scip.Indexer.TypeScript</RootNamespace>
+    <Description>SCIP indexer for TypeScript, JavaScript (port of scip-typescript).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
+  </ItemGroup>
+</Project>

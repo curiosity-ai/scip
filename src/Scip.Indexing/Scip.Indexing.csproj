@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Scip.Indexing</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>Shared abstractions for SCIP indexers (per-language packages).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Scip\Scip.csproj" />
+  </ItemGroup>
+</Project>

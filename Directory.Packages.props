@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="Google.Protobuf" Version="3.36.2" />
+    <PackageVersion Include="Grpc.Tools" Version="2.85.0" />
+    <PackageVersion Include="System.CommandLine" Version="3.0.0" />
+    <PackageVersion Include="TUnit" Version="1.87.12" />
+  </ItemGroup>
+</Project>

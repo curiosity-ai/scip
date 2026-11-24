@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Scip.Indexer.DotNet</RootNamespace>
+    <Description>SCIP indexer for C#, Visual Basic (port of scip-dotnet).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
+  </ItemGroup>
+</Project>

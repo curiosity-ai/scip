@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Scip.Indexer.Dart</RootNamespace>
+    <Description>SCIP indexer for Dart (port of scip-dart).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Scip.Indexer.Php</RootNamespace>
+    <Description>SCIP indexer for PHP (port of scip-php).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
+  </ItemGroup>
+</Project>
