@@ -245,7 +245,7 @@ public sealed class Checker(TsProgram program)
         return leftDecls is null ? null : MemberDecls(ContainersOfDecls(leftDecls, depth + 1), right.Text);
     }
 
-    public List<Node>? LookupExport(TsSourceFile file, string name, HashSet<TsSourceFile> visited)
+    public List<Node>? LookupExport(TsSourceFile file, string name, HashSet<TsSourceFile> visited, bool keepAlias = false)
     {
         if (!visited.Add(file)) { return null; }
         var b = Program.BinderFor(file);
@@ -264,7 +264,12 @@ public sealed class Checker(TsProgram program)
                 {
                     if (spec.Name!.Text != name) { continue; }
                     var original = (spec.PropertyName ?? spec.Name).Text;
-                    if (exportDecl.ModuleSpecifier is { } ms)
+                    if (keepAlias)
+                    {
+                        // Member access through a namespace sees the alias symbol (the export specifier) itself.
+                        if (exportDecl.ModuleSpecifier is { } alias ? Program.ResolveModule(file, alias.Text) is not null : b.Lookup(spec, original, Meaning.Any) is not null) { return [spec]; }
+                    }
+                    else if (exportDecl.ModuleSpecifier is { } ms)
                     {
                         var target = Program.ResolveModule(file, ms.Text);
                         var r = target is null ? null : LookupExport(target, original, visited);
@@ -280,7 +285,7 @@ public sealed class Checker(TsProgram program)
             else if (exportDecl.Clause is { Kind: SK.NamespaceExport } nsExport && nsExport.Name!.Text == name && exportDecl.ModuleSpecifier is { } nms)
             {
                 var target = Program.ResolveModule(file, nms.Text);
-                if (target is not null) { return [target.Root]; }
+                if (target is not null) { return keepAlias ? [nsExport] : [target.Root]; }
             }
         }
 
@@ -289,7 +294,7 @@ public sealed class Checker(TsProgram program)
             if (exportDecl.Clause is null && exportDecl.ModuleSpecifier is { } ms && name != "default")
             {
                 var target = Program.ResolveModule(file, ms.Text);
-                var r = target is null ? null : LookupExport(target, name, visited);
+                var r = target is null ? null : LookupExport(target, name, visited, keepAlias);
                 if (r is not null) { return r; }
             }
         }
@@ -662,6 +667,18 @@ public sealed class Checker(TsProgram program)
                 return target is null ? [] : ContainersOfDecls(target, depth + 1, asValue);
             }
 
+            case SK.ExportSpecifier:
+            {
+                var target = ExportSpecifierSymbol(d);
+                return target is null ? [] : ContainersOfDecls(target, depth + 1, asValue);
+            }
+
+            case SK.NamespaceExport:
+            {
+                var target = Program.ResolveModule(d.File!, d.Parent!.ModuleSpecifier!.Text);
+                return target is null ? [] : [new Cont(target.Root, null)];
+            }
+
             case SK.ExportAssignment:
                 return d.Expression is null ? [] : ValueConts(d.Expression, depth + 1);
             case SK.BinaryExpression when d.Text == "=" && d.Right is not null:
@@ -762,7 +779,7 @@ public sealed class Checker(TsProgram program)
             {
                 case SK.TsSourceFile:
                 {
-                    var export = LookupExport(decl.File!, name, []);
+                    var export = LookupExport(decl.File!, name, [], keepAlias: true);
                     foreach (var e in export ?? []) { found.Add(new Hit(e, null, c)); }
                     if (found.Count == 0 && B(decl).ExportTable(decl)?.GetValueOrDefault("export=") is { } equals)
                     {
