@@ -1,0 +1,4998 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Threading.Tasks;
+using TNT;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A heavyweight omni-search / autocomplete component with inline filter chips, multiple search modes
+    /// (search/chat) and async value providers.
+    /// </summary>
+    [Transpose.Name("tss.OmniBox")]
+    public partial class OmniBox : IComponent, IHasBackgroundColor, ITabIndex, IDictationTarget
+    {
+
+        public class InlineFilterChip
+        {
+            /// <summary>
+            /// Gets or sets the name of the component.
+            /// </summary>
+            public string Name { get; }
+            /// <summary>
+            /// Gets or sets the color of the component.
+            /// </summary>
+            public string Color { get; }
+            /// <summary>
+            /// Gets or sets the CSS background of the component.
+            /// </summary>
+            public string Background { get; }
+            /// <summary>
+            /// Gets or sets the removable.
+            /// </summary>
+            public bool Removable { get; }
+            /// <summary>
+            /// Registers a callback invoked when the click event fires.
+            /// </summary>
+            public Action<MouseEvent> OnClick { get; }
+            internal IComponent Content { get; }
+
+            private readonly SnapHandler _snap;
+            internal SnapHandler Snap => _snap;
+
+            private readonly FilterSnap _filterSnap;
+            internal FilterSnap FilterSnap => _filterSnap;
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public InlineFilterChip(string name, string background = null, string color = null, Action<MouseEvent> onClick = null, bool removable = true)
+            {
+                Name = name;
+                Background = background;
+                Color = color;
+                OnClick = onClick;
+                Removable = removable;
+            }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public InlineFilterChip(IComponent content, Action<MouseEvent> onClick = null, bool removable = true)
+            {
+                Content = content;
+                OnClick = onClick;
+                Removable = removable;
+            }
+
+            internal InlineFilterChip(SnapHandler snap)
+            {
+                _snap = snap;
+                Name = snap.DisplayName;
+                Background = snap.Background;
+                Color = snap.Color;
+                Removable = true;
+                if (snap.Icon != null)
+                {
+                    Content = HStack().AlignItemsCenter().Children(
+                        CloneIcon(snap.Icon),
+                        TextBlock(snap.DisplayName).PaddingLeft(4.px()));
+                }
+            }
+
+            internal InlineFilterChip(FilterSnap filterSnap)
+            {
+                _filterSnap = filterSnap;
+                var handler = filterSnap.Handler;
+                Name = filterSnap.Trigger + ":" + filterSnap.Value;
+                Background = handler.Background;
+                Color = handler.Color;
+                Removable = true;
+                if (handler.Icon != null)
+                {
+                    Content = HStack().AlignItemsCenter().Children(
+                        CloneIcon(handler.Icon),
+                        TextBlock(Name).PaddingLeft(4.px()));
+                }
+            }
+        }
+
+        public class FilterSnapHandler
+        {
+            /// <summary>
+            /// Gets or sets the filter id.
+            /// </summary>
+            public string FilterId { get; }
+            /// <summary>
+            /// Gets or sets the display name.
+            /// </summary>
+            public string DisplayName { get; }
+            /// <summary>
+            /// Gets or sets the description of the component.
+            /// </summary>
+            public string Description { get; }
+            /// <summary>
+            /// Gets or sets the trigger words.
+            /// </summary>
+            public string[] TriggerWords { get; }
+            /// <summary>
+            /// Gets or sets the icon shown by the component.
+            /// </summary>
+            public IComponent Icon { get; }
+            /// <summary>
+            /// Gets or sets the CSS background of the component.
+            /// </summary>
+            public string Background { get; }
+            /// <summary>
+            /// Gets or sets the color of the component.
+            /// </summary>
+            public string Color { get; }
+            /// <summary>
+            /// Gets or sets a short example value (or comma-separated samples) shown next to the filter
+            /// trigger in the help panel. Example: <c>"person"</c>, <c>"Document, Email…"</c>,
+            /// <c>"2025-01-01"</c>.
+            /// </summary>
+            public string ExampleValue { get; set; }
+
+            private readonly string[] _values;
+            private readonly Func<string, Task<string[]>> _valuesProvider;
+            private readonly bool _isTimeRange;
+
+            /// <summary>
+            /// Gets a value indicating whether this is a time/date-range filter snap. When <c>true</c>, the
+            /// suggestion popup shows a date-range selector (plus shortcuts) instead of a list of values, and the
+            /// committed <see cref="FilterSnap.Value"/> is a sortable <c>yyyy-MM-dd:yyyy-MM-dd</c> range string.
+            /// </summary>
+            public bool IsTimeRange => _isTimeRange;
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public FilterSnapHandler(string filterId, string displayName, string[] triggerWords, string[] values, IComponent icon = null, string description = null, string background = null, string color = null, string exampleValue = null)
+                : this(filterId, displayName, triggerWords, icon, description, background, color, false, exampleValue)
+            {
+                if (values == null) throw new ArgumentNullException(nameof(values));
+                _values = values;
+            }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public FilterSnapHandler(string filterId, string displayName, string[] triggerWords, Func<string, Task<string[]>> valuesProvider, IComponent icon = null, string description = null, string background = null, string color = null, string exampleValue = null)
+                : this(filterId, displayName, triggerWords, icon, description, background, color, false, exampleValue)
+            {
+                if (valuesProvider == null) throw new ArgumentNullException(nameof(valuesProvider));
+                _valuesProvider = valuesProvider;
+            }
+
+            private FilterSnapHandler(string filterId, string displayName, string[] triggerWords, IComponent icon, string description, string background, string color, bool isTimeRange, string exampleValue = null)
+            {
+                if (string.IsNullOrEmpty(filterId)) throw new ArgumentException("filterId is required", nameof(filterId));
+                if (string.IsNullOrEmpty(displayName)) throw new ArgumentException("displayName is required", nameof(displayName));
+                if (triggerWords == null || triggerWords.Length == 0) throw new ArgumentException("At least one trigger word is required", nameof(triggerWords));
+                FilterId = filterId;
+                DisplayName = displayName;
+                TriggerWords = triggerWords;
+                Icon = icon;
+                Description = description;
+                Background = background;
+                Color = color;
+                _isTimeRange = isTimeRange;
+                ExampleValue = exampleValue;
+            }
+
+            /// <summary>
+            /// Creates a time/date-range filter snap handler. The user types a range in a sortable date-time format
+            /// separated by a colon (<c>yyyy-MM-dd:yyyy-MM-dd</c>), and the suggestion popup shows a date-range picker
+            /// together with quick shortcuts (last week, last month, last 90 days, last year). Granularity is a single day.
+            /// The committed <see cref="FilterSnap.Value"/> is the <c>yyyy-MM-dd:yyyy-MM-dd</c> range string, which can be
+            /// parsed back via <see cref="FilterSnap.TryGetDateRange"/>.
+            /// </summary>
+            public static FilterSnapHandler TimeRange(string filterId, string displayName, string[] triggerWords, IComponent icon = null, string description = null, string background = null, string color = null, string exampleValue = null)
+            {
+                return new FilterSnapHandler(filterId, displayName, triggerWords, icon, description, background, color, true, exampleValue);
+            }
+
+            internal async Task<string[]> GetValuesAsync(string input)
+            {
+                string[] raw;
+                if (_values != null)
+                {
+                    raw = _values;
+                }
+                else
+                {
+                    raw = await _valuesProvider(input ?? string.Empty) ?? Array.Empty<string>();
+                }
+
+                var filtered = new List<string>(raw.Length);
+                foreach (var v in raw)
+                {
+                    if (string.IsNullOrEmpty(v)) continue;
+                    if (ContainsWhitespace(v)) continue;
+                    if (_values != null && !string.IsNullOrEmpty(input) && v.IndexOf(input, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    filtered.Add(v);
+                }
+                return filtered.ToArray();
+            }
+
+            private static bool ContainsWhitespace(string s)
+            {
+                for (int i = 0; i < s.Length; i++)
+                {
+                    if (char.IsWhiteSpace(s[i])) return true;
+                }
+                return false;
+            }
+        }
+
+        public class FilterSnap
+        {
+            /// <summary>
+            /// Gets or sets the handler.
+            /// </summary>
+            public FilterSnapHandler Handler { get; }
+            /// <summary>
+            /// Gets or sets the filter id.
+            /// </summary>
+            public string FilterId => Handler.FilterId;
+            /// <summary>
+            /// Gets or sets the trigger.
+            /// </summary>
+            public string Trigger { get; }
+            /// <summary>
+            /// Gets or sets the current value of the component.
+            /// </summary>
+            public string Value { get; }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public FilterSnap(FilterSnapHandler handler, string trigger, string value)
+            {
+                Handler = handler;
+                Trigger = trigger;
+                Value = value;
+            }
+
+            /// <summary>
+            /// Attempts to parse <see cref="Value"/> as a day-granularity date range in the
+            /// <c>yyyy-MM-dd:yyyy-MM-dd</c> format produced by a time-range filter snap.
+            /// </summary>
+            /// <param name="from">The inclusive start of the range when parsing succeeds.</param>
+            /// <param name="to">The inclusive end of the range when parsing succeeds.</param>
+            /// <returns><c>true</c> when both bounds parse and <paramref name="from"/> is not after <paramref name="to"/>.</returns>
+            public bool TryGetDateRange(out DateTime from, out DateTime to)
+            {
+                from = default;
+                to = default;
+                if (string.IsNullOrEmpty(Value)) return false;
+                var parts = Value.Split(':');
+                if (parts.Length != 2) return false;
+                if (!DateTime.TryParseExact(parts[0], "yyyy-MM-dd", DateTimeFormatInfo.InvariantInfo, out from)) return false;
+                if (!DateTime.TryParseExact(parts[1], "yyyy-MM-dd", DateTimeFormatInfo.InvariantInfo, out to)) return false;
+                return from <= to;
+            }
+        }
+
+        public class SnapHandler
+        {
+            /// <summary>
+            /// Gets or sets the snap id.
+            /// </summary>
+            public string SnapId { get; }
+            /// <summary>
+            /// Gets or sets the display name.
+            /// </summary>
+            public string DisplayName { get; }
+            /// <summary>
+            /// Gets or sets the description of the component.
+            /// </summary>
+            public string Description { get; }
+            /// <summary>
+            /// Gets or sets the trigger words.
+            /// </summary>
+            public string[] TriggerWords { get; }
+            /// <summary>
+            /// Gets or sets the icon shown by the component.
+            /// </summary>
+            public IComponent Icon { get; }
+            /// <summary>
+            /// Gets or sets the CSS background of the component.
+            /// </summary>
+            public string Background { get; }
+            /// <summary>
+            /// Gets or sets the color of the component.
+            /// </summary>
+            public string Color { get; }
+            /// <summary>
+            /// Gets or sets the exclusive.
+            /// </summary>
+            public bool Exclusive { get; }
+            /// <summary>
+            /// Gets or sets a short example shown next to the snap in the help panel. Example: <c>"docs"</c>,
+            /// <c>"src/repo"</c>. When unset, the help panel falls back to the first trigger word.
+            /// </summary>
+            public string ExampleValue { get; set; }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public SnapHandler(string snapId, string displayName, string[] triggerWords, IComponent icon = null, string description = null, string background = null, string color = null, bool exclusive = false, string exampleValue = null)
+            {
+                if (string.IsNullOrEmpty(snapId)) throw new ArgumentException("snapId is required", nameof(snapId));
+                if (string.IsNullOrEmpty(displayName)) throw new ArgumentException("displayName is required", nameof(displayName));
+                if (triggerWords == null || triggerWords.Length == 0) throw new ArgumentException("At least one trigger word is required", nameof(triggerWords));
+                SnapId = snapId;
+                DisplayName = displayName;
+                TriggerWords = triggerWords;
+                Icon = icon;
+                Description = description;
+                Background = background;
+                Color = color;
+                Exclusive = exclusive;
+                ExampleValue = exampleValue;
+            }
+        }
+
+        public class OmniBoxSuggestionItem
+        {
+            /// <summary>
+            /// Gets or sets the icon shown by the component.
+            /// </summary>
+            public IComponent Icon { get; }
+            /// <summary>
+            /// Gets or sets the text shown in the component.
+            /// </summary>
+            public IComponent Text { get; }
+            /// <summary>
+            /// Gets or sets the right component.
+            /// </summary>
+            public IComponent RightComponent { get; }
+            /// <summary>
+            /// Registers a callback invoked when the selected event fires.
+            /// </summary>
+            public Action<OmniBox> OnSelected { get; }
+            /// <summary>
+            /// Gets or sets the category.
+            /// </summary>
+            public string Category { get; }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public OmniBoxSuggestionItem(IComponent text, IComponent icon = null, IComponent rightComponent = null, Action<OmniBox> onSelected = null, string category = null)
+            {
+                Text = text;
+                Icon = icon;
+                RightComponent = rightComponent;
+                if (onSelected is null)
+                {
+                    OnSelected = (b) => b.SearchText = text.Render().textContent;
+                }
+                else
+                {
+                    OnSelected = onSelected;
+                }
+                Category = category;
+            }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public OmniBoxSuggestionItem(string text, IComponent icon = null, IComponent rightComponent = null, Action<OmniBox> onSelected = null, string category = null) : this(TextBlock(text), icon, rightComponent, onSelected, category)
+            {
+            }
+        }
+
+        public class Config
+        {
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public Config(Mode mode, Mode? initialMode = null)
+            {
+                Mode = mode;
+                InitialMode = initialMode ?? (mode == Mode.SearchAndChat ? Mode.Search : mode);
+                IconSearch = UIcons.Search;
+                IconChat = UIcons.PaperPlane;
+                IconStop = UIcons.StopCircle;
+                IconModeToggleSearch = UIcons.Search;
+                IconModeToggleChat = UIcons.Beacon;
+                TooltipModeToggleSearch = "Search";
+                TooltipModeToggleChat = "Chat";
+                ExpandOnFocus = false;
+                TokenIgnoreCase = false;
+                GeneratingText = "Generating";
+                CodeBlocks = true;
+            }
+
+            /// <summary>
+            /// Gets or sets the placeholder search.
+            /// </summary>
+            public string PlaceholderSearch { get; set; }
+            /// <summary>
+            /// Gets or sets the placeholder chat.
+            /// </summary>
+            public string PlaceholderChat { get; set; }
+            /// <summary>
+            /// Gets or sets the mode.
+            /// </summary>
+            public Mode Mode { get; }
+            /// <summary>
+            /// Gets or sets the initial mode.
+            /// </summary>
+            public Mode InitialMode { get; }
+
+            /// <summary>
+            /// Gets or sets the icon search.
+            /// </summary>
+            public UIcons IconSearch { get; set; }
+            /// <summary>
+            /// Gets or sets the icon chat.
+            /// </summary>
+            public UIcons IconChat { get; set; }
+            /// <summary>
+            /// Gets or sets the icon stop.
+            /// </summary>
+            public UIcons IconStop { get; set; }
+            /// <summary>
+            /// Gets or sets the icon mode toggle search.
+            /// </summary>
+            public UIcons IconModeToggleSearch { get; set; }
+            /// <summary>
+            /// Gets or sets the icon mode toggle chat.
+            /// </summary>
+            public UIcons IconModeToggleChat { get; set; }
+            /// <summary>
+            /// Gets or sets the tooltip mode toggle search.
+            /// </summary>
+            public string TooltipModeToggleSearch { get; set; }
+            /// <summary>
+            /// Gets or sets the tooltip mode toggle chat.
+            /// </summary>
+            public string TooltipModeToggleChat { get; set; }
+            /// <summary>
+            /// Gets or sets a label to show next to the search icon in the mode selector. Icon-only when null.
+            /// </summary>
+            public string TextModeToggleSearch { get; set; }
+            /// <summary>
+            /// Gets or sets a label to show next to the chat icon in the mode selector. Icon-only when null.
+            /// </summary>
+            public string TextModeToggleChat { get; set; }
+            /// <summary>
+            /// Gets or sets the expand on focus.
+            /// </summary>
+            public bool ExpandOnFocus { get; set; }
+            /// <summary>
+            /// Gets or sets the token ignore case.
+            /// </summary>
+            public bool TokenIgnoreCase { get; set; }
+            /// <summary>
+            /// Gets or sets the label shown next to the spinner while generating (defaults to "Generating").
+            /// The elapsed time is appended after it, e.g. "Generating, 1m 25s".
+            /// </summary>
+            public string GeneratingText { get; set; }
+            /// <summary>
+            /// Gets or sets whether a message typed while a reply is generating is sent instead of the
+            /// trigger stopping that reply — for a host that queues it for the turn in flight. The trigger
+            /// keeps offering "stop" while the input is empty, and turns back into "send" as soon as there
+            /// is something to send. Off by default, so the trigger always stops while generating.
+            /// </summary>
+            public bool AllowSendWhileGenerating { get; set; }
+
+            /// <summary>
+            /// Gets or sets how many characters a chat message can hold. The input stops accepting text at
+            /// the limit, and the footer shows a "used / max" counter next to the send button once more than
+            /// half of it is spent - below that the counter is collapsed, so an ordinary message never has a
+            /// number hanging off it. Leave it unset (or at zero) for no limit and no counter.
+            /// </summary>
+            public int MaxCharacters { get; set; }
+
+            /// <summary>
+            /// Gets or sets whether the chat input takes fenced code blocks. On by default: typing ``` at the start
+            /// of a line opens a code box inside the input (Enter is a new line there, Ctrl/Cmd+Enter sends, ``` on
+            /// its last line or Escape leaves it, and Backspace in an empty box removes it), and text that arrives
+            /// with fences in it is split into boxes. The message keeps the fences, each one backtick longer than
+            /// the longest run of backticks in its block (never fewer than three). Off, ``` is plain text.
+            /// </summary>
+            public bool CodeBlocks { get; set; }
+
+            /// <summary>
+            /// Gets or sets whether the box has a microphone button that dictates into the active input. Off by default.
+            /// The words come from <see cref="DictationProvider"/>, else <see cref="Tesserae.Dictation.Provider"/>, else
+            /// the browser's speech recognition; when there is none of those the button is not shown.
+            /// </summary>
+            public bool DictationButton { get; set; }
+
+            /// <summary>
+            /// Gets or sets the source of this box's dictation, instead of the application-wide
+            /// <see cref="Tesserae.Dictation.Provider"/>. Only used when <see cref="DictationButton"/> is on.
+            /// </summary>
+            public DictationProvider DictationProvider { get; set; }
+
+            /// <summary>
+            /// Gets or sets the chat footer.
+            /// </summary>
+            public FooterItems ChatFooter { get; set; }
+
+            /// <summary>
+            /// Gets or sets a component rendered inside the box, above the chat input — the place for
+            /// whatever the message is being written against, e.g. a compact <see cref="ContextCards"/>
+            /// group of the attached documents. Can be replaced later with
+            /// <see cref="OmniBox.SetChatHeader"/>. For individual cards below the input, see
+            /// <see cref="OmniBox.WithContextToAdd"/>.
+            /// </summary>
+            public IComponent ChatHeader { get; set; }
+            /// <summary>
+            /// Gets or sets the search footer.
+            /// </summary>
+            public FooterItems SearchFooter { get; set; }
+
+            /// <summary>
+            /// Gets or sets the suggestions fetcher.
+            /// </summary>
+            public Func<string, Task<OmniBoxSuggestionItem[]>> SuggestionsFetcher { get; set; }
+        }
+
+        public class FooterItems
+        {
+            /// <summary>
+            /// Gets or sets the left side.
+            /// </summary>
+            public IComponent[] LeftSide { get; set; }
+            /// <summary>
+            /// Gets or sets the right side.
+            /// </summary>
+            public IComponent[] RightSide { get; set; }
+        }
+
+        public enum Mode
+        {
+            Search,
+            Chat,
+            SearchAndChat
+        }
+
+        public enum ThinkingEffort
+        {
+            Disable,
+            Low,
+            Medium,
+            High
+        }
+
+        public class ModelOption
+        {
+            /// <summary>
+            /// Gets or sets the name of the component.
+            /// </summary>
+            public string Name { get; }
+            /// <summary>
+            /// Gets or sets the description of the component.
+            /// </summary>
+            public string Description { get; }
+            /// <summary>
+            /// Gets or sets the tag.
+            /// </summary>
+            public object Tag { get; }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public ModelOption(string name, string description = null, object tag = null)
+            {
+                Name = name;
+                Description = description;
+                Tag = tag;
+            }
+        }
+
+
+        private readonly Mode _mode;
+        private readonly SettableObservable<Mode> _activeMode;
+        private HTMLElement _activeInput;
+
+        private readonly HTMLDivElement   _container;
+        private readonly HTMLDivElement   _searchContainer;
+        private readonly HTMLInputElement _searchInput;
+
+        /// <summary>
+        /// Gets or sets the inline filter chips.
+        /// </summary>
+        public ObservableList<InlineFilterChip> InlineFilterChips { get; }
+        private readonly HTMLDivElement _searchInlineChipsContainer;
+        private readonly HTMLDivElement _searchRightTextContainer;
+
+        private readonly HTMLDivElement   _searchTokensContainer;
+        private readonly HTMLDivElement   _searchInputContainer;
+        private readonly HTMLDivElement   _searchShortcutContainer;
+        private string                    _suggestedText;
+        private Action<string>            _onSuggestedTextAccepted;
+        private readonly Button      _searchHistoryBtn;
+        private readonly Button      _searchHelpBtn;
+        private readonly Button      _searchClearBtn;
+        private readonly Button      _searchTriggerBtn;
+        private bool                 _isSearching;
+        private Button          _askAIBtn;
+        private Action<OmniBox> _onAskAI;
+        private bool _helpShowSyntax;
+
+        private string[]      _shortcutKeys;
+        private Action<Event> _globalShortcutHandler;
+
+        private readonly HTMLTextAreaElement _chatInput;
+        private readonly HTMLDivElement   _chatContainer;
+        private readonly HTMLDivElement   _chatHeader;
+        private readonly HTMLDivElement   _contextContainer;
+        private readonly List<ContextCard> _contextCards = new List<ContextCard>();
+        private readonly Button           _chatTriggerBtn;
+        private readonly Button           _dictateBtn;
+        private DictationProvider         _dictationProvider;
+        private DictationSession          _dictation;
+        private Action                    _stopDictation;
+        private DictationSession          _lingering;
+        private double                    _lingerTimer;
+        private string                    _dictationCommitted;
+        private Mode                      _dictationMode;
+        private readonly TextBlock        _chatCounter;
+        private int                       _maxChatCharacters;
+        private Button                    _modelSelectorBtn;
+        private List<ModelOption>         _models = new List<ModelOption>();
+        private ModelOption               _selectedModel;
+        private ThinkingEffort            _selectedEffort = ThinkingEffort.Medium;
+        private bool                      _isModelLocked;
+        private Action                    _hideModelPopover;
+        private ChatMention                _chatMention;
+        private int                        _mentionStart = -1;
+        private HTMLTextAreaElement        _mentionInput;
+        private int                        _mentionEnd   = -1;
+        private static HTMLDivElement       _mentionCaretMirror;
+        private readonly HTMLDivElement _footer;
+
+        // The phone layout: one row of [options] [input] [send], and the rest of the footer in a sheet
+        private const string MOBILE_KEEP_CLASS = "tss-omnibox-mobile-keep";
+        private const string MOBILE_SKIP_CLASS = "tss-omnibox-mobile-skip";
+
+        private          Button                                   _mobileOptionsBtn;
+        private          Drawer                                   _mobileOptionsDrawer;
+        private readonly List<(HTMLElement element, Node placeholder)> _mobileOptionsMoved = new List<(HTMLElement element, Node placeholder)>();
+        private          double                                   _mobileOptionsRestoreTimeout;
+        private Func<Task<SearchQuery[]>> _historyFetcher;
+        private Func<SearchQuery, Task>   _historyRemover;
+        private Action _hideSearchHistory;
+
+        // Up/Down in an empty box walks back through what was sent before - see WithChatHistory and WithHistory
+        private readonly List<string> _chatHistory      = new List<string>(); // oldest first
+        private readonly List<string> _searchesSent     = new List<string>(); // oldest first, this box's own searches
+        private readonly HistoryWalk  _chatHistoryWalk   = new HistoryWalk();
+        private readonly HistoryWalk  _searchHistoryWalk = new HistoryWalk();
+        private int                   _searchHistoryRequest;
+        private Func<string, Task<OmniBoxSuggestionItem[]>> _suggestionsFetcher;
+        private int _suggestionsDebounceTimeoutId = 0;
+        /// <summary>
+        /// Which suggestions request the popup is still willing to draw. Debouncing cancels a
+        /// *pending* timer, never a fetch already in flight, so with a fetcher slower than the
+        /// debounce two requests overlap and the one that answers last wins -- which is the older
+        /// one whenever the network reorders them, leaving suggestions for a query the user has
+        /// already typed past. Every trigger and every hide takes the next number, and an answer
+        /// that no longer holds the current one is dropped instead of drawn.
+        /// </summary>
+        private int _suggestionsRequest = 0;
+        private Action _hideSuggestions;
+        private int _highlightedSuggestionIndex = -1;
+        private List<Button> _currentSuggestionButtons = new List<Button>();
+
+        private readonly List<SnapHandler> _snapHandlers = new List<SnapHandler>();
+        private Action _hideSnapSuggestions;
+        private int _highlightedSnapSuggestionIndex = -1;
+        private List<Button> _currentSnapSuggestionButtons = new List<Button>();
+        private SnapHandler[] _currentSnapMatches;
+        private int _snapMentionStart = -1;
+        private int _snapMentionEnd = -1;
+
+        private readonly List<FilterSnapHandler> _filterSnapHandlers = new List<FilterSnapHandler>();
+        private Action _hideFilterSnapSuggestions;
+        private int _highlightedFilterSnapSuggestionIndex = -1;
+        private List<Button> _currentFilterSnapSuggestionButtons = new List<Button>();
+        private int _filterSnapStart = -1;
+        private int _filterSnapEnd = -1;
+        private int _filterSnapRequestId = 0;
+        private bool _timeFilterSnapOpen = false;
+        private string _tokenTypeMap = string.Empty;
+        private readonly IconToggle<Mode> _modeToggle;
+        private readonly bool _tokenIgnoreCase;
+        private bool _isGenerating = false;
+        private bool _isStopping = false;
+        private bool _allowSendWhileGenerating = false;
+        private readonly UIcons _iconChat;
+        private readonly UIcons _iconStop;
+        private HTMLElement _generatingText;
+        private double _generatingTimer = 0;
+        private double _generatingStartMs = 0;
+        private string _generatingLabel;
+
+        public delegate void SearchEventHandler(OmniBox sender, SearchQuery query);
+        public delegate void ChatEventHandler(OmniBox sender, ChatMessage query);
+        public delegate void ChatPasteEventHandler(OmniBox sender, ChatPaste paste);
+        public delegate void StopEventHandler(OmniBox sender);
+        public delegate void ModelChangedEventHandler(OmniBox sender, ModelOption model, ThinkingEffort effort);
+        protected event SearchEventHandler Searched;
+        protected event ChatEventHandler Chatted;
+        protected event ChatPasteEventHandler ChatPasted;
+        /// <summary>
+        /// Raised when stopped occurs.
+        /// </summary>
+        public event StopEventHandler Stopped;
+        protected event ModelChangedEventHandler ModelChanged;
+
+        /// <summary>
+        /// Raised when input occurs.
+        /// </summary>
+        public event ComponentEventHandler<OmniBox, Event> Input;
+        /// <summary>
+        /// Raised when key down occurs.
+        /// </summary>
+        public event ComponentEventHandler<OmniBox, KeyboardEvent> KeyDown;
+        /// <summary>
+        /// Raised when key up occurs.
+        /// </summary>
+        public event ComponentEventHandler<OmniBox, KeyboardEvent> KeyUp;
+        /// <summary>
+        /// Raised when key press occurs.
+        /// </summary>
+        public event ComponentEventHandler<OmniBox, KeyboardEvent> KeyPress;
+        /// <summary>
+        /// Raised when received focus occurs.
+        /// </summary>
+        public event ComponentEventHandler<OmniBox, Event> ReceivedFocus;
+        /// <summary>
+        /// Raised when lost focus occurs.
+        /// </summary>
+        public event ComponentEventHandler<OmniBox, Event> LostFocus;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public OmniBox(Config config)
+        {
+            _mode = config.Mode;
+            _tokenIgnoreCase = config.TokenIgnoreCase;
+            _iconChat = config.IconChat;
+            _iconStop = config.IconStop;
+            _allowSendWhileGenerating = config.AllowSendWhileGenerating;
+            _generatingLabel = config.GeneratingText ?? "Generating";
+            _suggestionsFetcher = config.SuggestionsFetcher;
+
+            _activeMode = new SettableObservable<Mode>(config.InitialMode);
+
+            _footer = Div(Att("tss-omnibox-footer"));
+
+            var footerEnd = new List<IComponent>();
+
+            if (config.DictationButton)
+            {
+                _dictationProvider = config.DictationProvider;
+                _dictateBtn = Button().SetIcon(UIcons.Microphone).Class("tss-omnibox-dictate-btn").Class(MOBILE_KEEP_CLASS).AriaLabel("Dictate".t()).Tooltip("Dictate".t());
+                _dictateBtn.Render().setAttribute("aria-pressed", "false");
+                _dictateBtn.OnClick((_, e) =>
+                {
+                    //The box focuses its input on any click inside it, which on a phone opens the keyboard over the listening state
+                    e.stopPropagation();
+                    ToggleDictation();
+                });
+            }
+
+            if (_mode == Mode.SearchAndChat)
+            {
+                _modeToggle = IconToggle(
+                    IconToggleItem(config.IconModeToggleChat, config.TooltipModeToggleChat, Mode.Chat, config.TextModeToggleChat),
+                    IconToggleItem(config.IconModeToggleSearch, config.TooltipModeToggleSearch, Mode.Search, config.TextModeToggleSearch)).Class("tss-omnibox-mode-toggle");
+                _modeToggle.Select(_activeMode.Value);
+                _modeToggle.AsObservable().ObserveFutureChanges(v => _activeMode.Value = v);
+                _footer.appendChild(_modeToggle.Render());
+            }
+
+
+            if (_mode == Mode.Search || _mode == Mode.SearchAndChat)
+            {
+
+                InlineFilterChips = new ObservableList<InlineFilterChip>();
+                _searchInlineChipsContainer = Div(Att("tss-omnibox-inline-chips"));
+                _searchRightTextContainer = Div(Att("tss-omnibox-right-text"));
+                _searchRightTextContainer.style.display = "none";
+
+                InlineFilterChips.Observe(RenderInlineChips);
+
+                _searchInput = UI.TextBox(Att("tss-omnibox-search-input", type: "text", placeholder: config.PlaceholderSearch ?? ""));
+                _searchInput.autocomplete = "off";
+                _searchInput.spellcheck = false;
+
+                _searchTokensContainer = Div(Att("tss-omnibox-search-tokens"));
+                _searchInputContainer = Div(Att("tss-omnibox-search-input-container"), _searchInput, _searchTokensContainer);
+
+                _searchShortcutContainer = Div(Att("tss-omnibox-shortcut"));
+
+                _searchHistoryBtn = Button().SetIcon(UIcons.TimePast).Class("tss-omnibox-search-history-btn").AriaLabel("Search history".t());
+                _searchHistoryBtn.Collapse(); // Hidden by default unless WithHistory is called
+
+                _searchHelpBtn = Button().SetIcon(UIcons.Interrogation).Class("tss-omnibox-search-help-btn").AriaLabel("Search help".t());
+                _searchHelpBtn.Collapse(); // Hidden by default unless WithHelp is called
+
+                _searchClearBtn = Button().SetIcon(UIcons.CrossCircle).Class("tss-omnibox-search-clear-btn").AriaLabel("Clear search".t());
+                //tss-omnibox-search-btn is the shared "icon button in the search row" look, which hosts also
+                //put on buttons of their own; tss-omnibox-search-trigger-btn is only this button, the one at
+                //the end of the row that follows the box's rounded corner.
+                _searchTriggerBtn = Button().SetIcon(config.IconSearch).Class("tss-omnibox-search-btn").Class("tss-omnibox-search-trigger-btn").AriaLabel("Search".t());
+
+                //A search that has been asked for and not answered yet takes the magnifier's place - see
+                //SetSearching. It lives inside the button, over the icon, so the row keeps its shape whether
+                //the box is searching or not.
+                _searchTriggerBtn.Render().appendChild(UI.Spinner().XSmall().Class("tss-omnibox-search-spinner").Render());
+
+                if (_mode == Mode.Search)
+                {
+                    _searchContainer = Div(Att("tss-omnibox-search-container"), _searchHistoryBtn.Render(), _searchHelpBtn.Render(), _searchInlineChipsContainer, _searchInputContainer, _searchRightTextContainer, _searchShortcutContainer, _dictateBtn?.Render(), _searchClearBtn.Render(), _searchTriggerBtn.Render());
+                }
+                else
+                {
+                    _searchContainer = Div(Att("tss-omnibox-search-container"), _searchInlineChipsContainer, _searchInputContainer, _searchRightTextContainer, _searchShortcutContainer);
+                    _footer.appendChild(_searchHistoryBtn.Render());
+                    _footer.appendChild(_searchHelpBtn.Render());
+                    footerEnd.Add(_searchClearBtn);
+                    footerEnd.Add(_searchTriggerBtn);
+                }
+
+                // Set up event listeners
+                _searchInput.addEventListener("input", (e) => OnSearchInputTyped(e));
+
+                _searchInput.addEventListener("keydown", (e) =>
+                {
+                    var ke = e.As<KeyboardEvent>();
+                    if (ke.key == "Enter")
+                    {
+                        if (_hideFilterSnapSuggestions != null && _currentFilterSnapSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            var idx = _highlightedFilterSnapSuggestionIndex >= 0 ? _highlightedFilterSnapSuggestionIndex : 0;
+                            if (idx < _currentFilterSnapSuggestionButtons.Count)
+                            {
+                                _currentFilterSnapSuggestionButtons[idx].RaiseOnClick(e.As<MouseEvent>());
+                            }
+                            return;
+                        }
+                        if (_hideSnapSuggestions != null && _currentSnapSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            var idx = _highlightedSnapSuggestionIndex >= 0 ? _highlightedSnapSuggestionIndex : 0;
+                            if (idx < _currentSnapSuggestionButtons.Count)
+                            {
+                                _currentSnapSuggestionButtons[idx].RaiseOnClick(e.As<MouseEvent>());
+                            }
+                            return;
+                        }
+                        if (_hideSuggestions != null && _highlightedSuggestionIndex >= 0 && _highlightedSuggestionIndex < _currentSuggestionButtons.Count)
+                        {
+                            StopEvent(e);
+                            _currentSuggestionButtons[_highlightedSuggestionIndex].RaiseOnClick(e.As<MouseEvent>());
+                        }
+                        else
+                        {
+                            StopEvent(e);
+                            TriggerSearch();
+                        }
+                        return;
+                    }
+                    else if (ke.key == "Tab")
+                    {
+                        if (_hideFilterSnapSuggestions != null && _currentFilterSnapSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            var idx = _highlightedFilterSnapSuggestionIndex >= 0 ? _highlightedFilterSnapSuggestionIndex : 0;
+                            if (idx < _currentFilterSnapSuggestionButtons.Count)
+                            {
+                                _currentFilterSnapSuggestionButtons[idx].RaiseOnClick(e.As<MouseEvent>());
+                            }
+                            return;
+                        }
+                        if (_hideSnapSuggestions != null && _currentSnapSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            var idx = _highlightedSnapSuggestionIndex >= 0 ? _highlightedSnapSuggestionIndex : 0;
+                            if (idx < _currentSnapSuggestionButtons.Count)
+                            {
+                                _currentSnapSuggestionButtons[idx].RaiseOnClick(e.As<MouseEvent>());
+                            }
+                            return;
+                        }
+                        // Tab with Shift still means "previous field", and only an empty box shows the
+                        // suggestion, so only then does Tab take it instead of moving focus.
+                        if (!ke.shiftKey && !ke.ctrlKey && !ke.altKey && !ke.metaKey && IsShowingSuggestedText)
+                        {
+                            StopEvent(e);
+                            AcceptSuggestedText();
+                            return;
+                        }
+                    }
+                    else if (ke.key == "Escape")
+                    {
+                        if (_hideFilterSnapSuggestions != null)
+                        {
+                            StopEvent(e);
+                            HideFilterSnapSuggestions();
+                            return;
+                        }
+                        if (_hideSnapSuggestions != null)
+                        {
+                            StopEvent(e);
+                            HideSnapSuggestions();
+                            return;
+                        }
+                    }
+                    else if (ke.key == "Backspace")
+                    {
+                        var cursorPos = _searchInput.selectionStart;
+                        if (cursorPos == 0 && _searchInput.selectionEnd == 0)
+                        {
+                            if (InlineFilterChips.Count > 0)
+                            {
+                                InlineFilterChips.RemoveAt(InlineFilterChips.Count - 1);
+                                StopEvent(e);
+                                return;
+                            }
+                        }
+
+                        if (cursorPos > 0 && cursorPos == _searchInput.selectionEnd)
+                        {
+                            // Check if the character to be deleted is a non-breaking space
+                            if (_searchInput.value[(int)cursorPos - 1] == specialWhitespace &&
+                                (int)cursorPos >= 2 &&
+                                _tokenTypeMap.Length > (int)cursorPos - 2 &&
+                                _tokenTypeMap[(int)cursorPos - 2] == '1')
+                            {
+                                // If it is, and we're backspacing, we actually want to delete the character *before* it,
+                                // which is the special token, because the user doesn't know the nb-space exists.
+                                // However, we can just delete the character before the nb-space and the nb-space
+                                StopEvent(e);
+                                var currentVal = _searchInput.value;
+                                var newVal = currentVal.Substring(0, (int)cursorPos - 2) + currentVal.Substring((int)cursorPos);
+                                _searchInput.value = newVal;
+                                _searchInput.setSelectionRange((uint)cursorPos - 2, (uint)cursorPos - 2);
+                                OnSearchInputTyped(e);
+                            }
+                        }
+                    }
+                    else if (ke.key == "Delete")
+                    {
+                        var cursorPos = _searchInput.selectionStart;
+                        if (cursorPos < _searchInput.value.Length && cursorPos == _searchInput.selectionEnd)
+                        {
+                            if (_searchInput.value[(int)cursorPos] == specialWhitespace)
+                            {
+                                // if we press delete on an nb-space, we probably want to delete the token *after* it
+                                if (cursorPos + 2 <= _searchInput.value.Length)
+                                {
+                                    StopEvent(e);
+                                    var currentVal = _searchInput.value;
+                                    var newVal = currentVal.Substring(0, (int)cursorPos) + currentVal.Substring((int)cursorPos + 2);
+                                    _searchInput.value = newVal;
+                                    _searchInput.setSelectionRange((uint)cursorPos, (uint)cursorPos);
+                                    OnSearchInputTyped(e);
+                                }
+                                else
+                                {
+                                    // Edge case: space is at the very end of the string
+                                    StopEvent(e);
+                                    var currentVal = _searchInput.value;
+                                    var newVal = currentVal.Substring(0, (int)cursorPos);
+                                    _searchInput.value = newVal;
+                                    _searchInput.setSelectionRange((uint)cursorPos, (uint)cursorPos);
+                                    OnSearchInputTyped(e);
+                                }
+                            }
+                        }
+                    }
+                    else if (ke.key == "ArrowDown")
+                    {
+                        // Ahead of the popups: a walk never opens one, and a stray late one must not take Down
+                        // away from a walk that is under way.
+                        if (TryWalkSearchHistory(ke, older: false))
+                        {
+                            StopEvent(e);
+                        }
+                        else if (_hideFilterSnapSuggestions != null && _currentFilterSnapSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            UpdateHighlightedFilterSnapSuggestion(1);
+                        }
+                        else if (_hideSnapSuggestions != null && _currentSnapSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            UpdateHighlightedSnapSuggestion(1);
+                        }
+                        else if (_hideSuggestions != null && _currentSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            UpdateHighlightedSuggestion(1);
+                        }
+                    }
+                    else if (ke.key == "ArrowUp")
+                    {
+                        // Up in the empty box (or one still showing what an earlier Up put there) is history,
+                        // even with the suggestions for an empty query open - unless the user has already
+                        // started moving through those, where Up keeps moving.
+                        if (_highlightedSuggestionIndex < 0 && TryWalkSearchHistory(ke, older: true))
+                        {
+                            StopEvent(e);
+                        }
+                        else if (_hideFilterSnapSuggestions != null && _currentFilterSnapSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            UpdateHighlightedFilterSnapSuggestion(-1);
+                        }
+                        else if (_hideSnapSuggestions != null && _currentSnapSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            UpdateHighlightedSnapSuggestion(-1);
+                        }
+                        else if (_hideSuggestions != null && _currentSuggestionButtons.Count > 0)
+                        {
+                            StopEvent(e);
+                            UpdateHighlightedSuggestion(-1);
+                        }
+                    }
+                });
+                _searchInput.addEventListener("keyup", (e) => KeyUp?.Invoke(this, e.As<KeyboardEvent>()));
+                _searchInput.addEventListener("keypress", (e) => KeyPress?.Invoke(this, e.As<KeyboardEvent>()));
+                _searchInput.addEventListener("keydown", (e) => KeyDown?.Invoke(this, e.As<KeyboardEvent>()));
+                _searchInput.addEventListener("focus", (e) =>
+                {
+                    // The shortcut hint only has a job while the box isn't focused, and it competes for
+                    // room with what is being typed, so it steps aside until focus is lost again.
+                    _container.classList.add("tss-omnibox-search-focused");
+                    ReceivedFocus?.Invoke(this, e);
+                });
+                _searchInput.addEventListener("blur", (e) => {
+                    _container.classList.remove("tss-omnibox-search-focused");
+                    LostFocus?.Invoke(this, e);
+                    if (_hideSuggestions != null) window.setTimeout(_ => { if (_hideSuggestions != null) _hideSuggestions(); _highlightedSuggestionIndex = -1; }, 200);
+                    if (_hideSnapSuggestions != null) window.setTimeout(_ => { HideSnapSuggestions(); }, 200);
+                    // Keep an open time-range popup alive when focus moves into its date inputs; that popup
+                    // dismisses itself via Tippy's click-outside / commit instead of the blur timeout.
+                    if (_hideFilterSnapSuggestions != null && !_timeFilterSnapOpen) window.setTimeout(_ => { HideFilterSnapSuggestions(); }, 200);
+                });
+
+                _searchInput.addEventListener("scroll", (e) => SyncScroll());
+
+                _searchInput.addEventListener("copy", (e) =>
+                {
+                    var clipboardEvent = e.As<ClipboardEvent>();
+                    var start = _searchInput.selectionStart;
+                    var end = _searchInput.selectionEnd;
+                    if (start != end)
+                    {
+                        var selectedText = _searchInput.value.Substring((int)start, (int)(end - start));
+                        clipboardEvent.clipboardData.setData("text/plain", selectedText.Replace(specialWhitespaceString, " "));
+                        StopEvent(e);
+                    }
+                });
+
+                _searchInput.addEventListener("cut", (e) =>
+                {
+                    var clipboardEvent = e.As<ClipboardEvent>();
+                    var start = _searchInput.selectionStart;
+                    var end = _searchInput.selectionEnd;
+                    if (start != end)
+                    {
+                        var selectedText = _searchInput.value.Substring((int)start, (int)(end - start));
+                        clipboardEvent.clipboardData.setData("text/plain", selectedText.Replace(specialWhitespaceString, " "));
+
+                        var currentVal = _searchInput.value;
+                        _searchInput.value = currentVal.Substring(0, (int)start) + currentVal.Substring((int)end);
+                        _searchInput.setSelectionRange((uint)start, (uint)start);
+                        OnSearchInputTyped(e);
+                        StopEvent(e);
+                    }
+                });
+
+                //Through the setter, so OnInput hears an emptied box the way it hears typing - a host that
+                //searches as the text changes (CommandPalette) goes back to what it shows for no query.
+                _searchClearBtn.OnClick(() =>
+                {
+                    SearchText = string.Empty;
+                    _searchInput.focus();
+                });
+
+                _searchTriggerBtn.OnClick(TriggerSearch);
+
+                _searchHistoryBtn.OnClickSpinWhile(async () =>
+                {
+                    if (_historyFetcher != null)
+                    {
+                        await ShowSearchHistory();
+                    }
+                });
+
+                _searchHelpBtn.OnClick(() =>
+                {
+                    ShowSearchHelp();
+                });
+
+                // Initial parse
+                OnSearchInputChanged();
+            }
+
+            if (_mode == Mode.Chat || _mode == Mode.SearchAndChat)
+            {
+                _chatInput = UI.TextArea(Att("tss-omnibox-chat-input", type: "text", placeholder: config.PlaceholderChat ?? ""));
+                _chatInput.spellcheck = true;
+
+                //One line to start from, grown by ResizeChatInput: the browser's default of two rows is a floor
+                //the auto-sizing cannot go under, which a phone pays for in height on every keystroke-free screen
+                _chatInput.setAttribute("rows", "1");
+
+                _chatPlaceholder   = config.PlaceholderChat ?? "";
+                _codeBlocksEnabled = config.CodeBlocks;
+
+                WireChatProse(_chatInput);
+                _chatSegments.Add(new ChatSegment { Input = _chatInput, Root = _chatInput });
+                _lastChatInput = _chatInput;
+
+                _chatContainer = Div(Att("tss-omnibox-chat-container"), _chatInput);
+
+                _chatHeader = Div(Att("tss-omnibox-chat-header"));
+
+                if (config.ChatHeader is object) _chatHeader.appendChild(config.ChatHeader.Render());
+
+                // The context row sits between the input and the footer, inside the box. It stays empty
+                // (and, being :empty, invisible) until WithContextToAdd / AddContext put a card in it.
+                _contextContainer = Div(Att("tss-omnibox-context"));
+
+                // Size the input to its content once it's in the DOM (and whenever it's re-shown).
+                DomObserver.WhenMounted(_chatInput, ResizeChatInput);
+
+                _chatTriggerBtn = Button().SetIcon(config.IconChat).Class("tss-omnibox-chat-btn").OnClick(TriggerChat);
+
+                _chatCounter = TextBlock("").Small().Class("tss-omnibox-chat-counter").Foreground(Theme.Secondary.Foreground).Collapse();
+
+                MaxChatCharacters = config.MaxCharacters;
+
+                _modelSelectorBtn = Button().Class("tss-omnibox-model-selector-btn").NoBorder().NoBackground().OnClick(ShowModelPopover);
+                _modelSelectorBtn.Collapse();
+
+                if (config.ChatFooter?.LeftSide is object)
+                {
+                    foreach (var i in config.ChatFooter.LeftSide)
+                    {
+                        _footer.appendChild(i.Class("tss-omnibox-chat-footer-item").Class("tss-omnibox-footer-left").Render());
+                    }
+                }
+            }
+
+            if (config.SearchFooter?.LeftSide is object)
+            {
+                if (_mode == Mode.Search)
+                {
+                    var targetInsert = _searchHistoryBtn.Render();
+                    foreach (var i in config.SearchFooter.LeftSide)
+                    {
+                        var el = i.Class("tss-omnibox-search-footer-item").Class("tss-omnibox-footer-left").Render();
+                        targetInsert.insertAdjacentElement(InsertPosition.afterend, el);
+                        targetInsert = el;
+                    }
+                }
+                else
+                {
+                    foreach (var i in config.SearchFooter.LeftSide)
+                    {
+                        _footer.appendChild(i.Class("tss-omnibox-search-footer-item").Class("tss-omnibox-footer-left").Render());
+                    }
+                }
+            }
+
+            _generatingText = TextBlock(_generatingLabel).Render();
+
+            var generatingContainer = Div(Att("tss-omnibox-generating-container"), Spinner().CustomColor(Theme.Colors.Purple500).Small().Render(), _generatingText);
+
+            _footer.appendChild(generatingContainer);
+
+            _footer.appendChild(Div(Att("tss-omnibox-footer-spacer " + MOBILE_SKIP_CLASS)));
+
+            //On a phone the stop button in the send slot already says a reply is being written
+            generatingContainer.classList.add(MOBILE_SKIP_CLASS);
+
+            if (_mode == Mode.Chat || _mode == Mode.SearchAndChat)
+            {
+                footerEnd.Add(_modelSelectorBtn);
+                footerEnd.Add(_chatCounter);
+                footerEnd.Add(_chatTriggerBtn);
+            }
+
+            if (config.ChatFooter?.RightSide is object)
+            {
+                if (_mode == Mode.Chat)
+                {
+                    footerEnd.InsertRange(0, config.ChatFooter.RightSide.Select(i => i.Class("tss-omnibox-chat-footer-item")));
+                }
+                else
+                {
+                    foreach (var i in config.ChatFooter.RightSide)
+                    {
+                        _footer.appendChild(i.Class("tss-omnibox-chat-footer-item").Render());
+                    }
+                }
+            }
+
+            if (config.SearchFooter?.RightSide is object)
+            {
+                if (_mode == Mode.Search)
+                {
+                    HTMLElement targetInsert = _searchInputContainer;
+                    foreach (var i in config.SearchFooter.RightSide)
+                    {
+                        var el = i.Class("tss-omnibox-search-footer-item").Render();
+                        targetInsert.insertAdjacentElement(InsertPosition.afterend, el);
+                        targetInsert = el;
+                    }
+                }
+                else
+                {
+                    foreach (var i in config.SearchFooter.RightSide)
+                    {
+                        _footer.appendChild(i.Class("tss-omnibox-search-footer-item").Render());
+                    }
+                }
+            }
+
+            if (_dictateBtn is object && _mode != Mode.Search)
+            {
+                footerEnd.Insert(0, _dictateBtn);
+            }
+
+            foreach (var i in footerEnd)
+            {
+                _footer.appendChild(i.Render());
+            }
+
+            if (_mode == Mode.Chat || _mode == Mode.SearchAndChat)
+            {
+                BuildMobileOptions();
+            }
+
+            switch (_mode)
+            {
+                case Mode.Search:
+                {
+                    _container = Div(Att("tss-omnibox-container"), _searchContainer);
+                    break;
+                }
+                case Mode.Chat:
+                {
+                    _container = Div(Att("tss-omnibox-container"), _chatHeader, _chatContainer, _contextContainer, _footer);
+                    break;
+                }
+                case Mode.SearchAndChat:
+                {
+                    _container = Div(Att("tss-omnibox-container tss-omnibox-chat-and-search"), _searchContainer, _chatHeader, _chatContainer, _contextContainer, _footer);
+                    break;
+                }
+            }
+
+            if (_dictateBtn is object)
+            {
+                // The button is shown only when something can supply words; an application may install its provider after
+                // the box was built, so it is checked when the box reaches the page. Leaving the page ends the dictation
+                // (the microphone must not stay open behind a box nobody can see).
+                DomObserver.WhenMounted(_container, () =>
+                {
+                    if (Dictation.Resolve(_dictationProvider) is null) _dictateBtn.Collapse();
+                    else _dictateBtn.Show();
+
+                    DomObserver.WhenRemoved(_container, () =>
+                    {
+                        StopDictation();
+                        DropLingering();
+                    });
+                });
+
+                _activeMode.ObserveFutureChanges(_ =>
+                {
+                    StopDictation();
+                    DropLingering();
+                });
+            }
+
+            DictationTargets.Register(_container, this);
+
+            _container.addEventListener("click", (e) =>
+            {
+                //A chat textarea (the input, a code box, the text after one) focuses itself, and must keep its focus
+                var target = e.target.As<HTMLElement>();
+                if (target is object && _chatSegments.Any(seg => seg.Input == target)) return;
+
+                if (target is object && _chatContainer is object && _chatContainer.contains(target))
+                {
+                    var block = target.closest("." + CODE_BLOCK_CLASS);
+                    var code  = block is object ? _chatSegments.FirstOrDefault(seg => seg.Root == block) : null;
+                    if (code is object) { code.Input.focus(); return; }
+                }
+
+                if (_activeInput == _chatInput && _lastChatInput is object) _lastChatInput.focus();
+                else _activeInput.focus();
+            });
+
+
+            _activeMode.Observe(UpdateMode);
+
+            if (config.ExpandOnFocus)
+            {
+                _container.addEventListener("focusin", (_) =>
+                {
+                    if (_mode == Mode.Chat || _mode == Mode.SearchAndChat)
+                    {
+                        _container.classList.add("tss-omnibox-expanded");
+                    }
+                });
+                _container.addEventListener("focusout", (e) =>
+                {
+                    // Check if new focus target is inside the container
+                    var focusEvent = e.As<FocusEvent>();
+                    if (focusEvent.relatedTarget == null || !_container.contains(focusEvent.relatedTarget.As<HTMLElement>()))
+                    {
+                        _container.classList.remove("tss-omnibox-expanded");
+                    }
+                });
+            }
+
+        }
+
+        // A phone has room for one row: the options button, the input and the button that sends or searches.
+        // Everything else in the footer - the mode toggle, the chips and pickers a host adds, the model
+        // selector - is only hidden there by the stylesheet, and moves into a sheet while the options are open,
+        // so a host's own footer items reach it without declaring anything.
+        private void BuildMobileOptions()
+        {
+            _chatTriggerBtn.Class(MOBILE_KEEP_CLASS);
+            _chatCounter.Class(MOBILE_KEEP_CLASS);
+            _searchClearBtn?.Class(MOBILE_KEEP_CLASS);
+            _searchTriggerBtn?.Class(MOBILE_KEEP_CLASS);
+
+            _mobileOptionsBtn = Button().SetIcon(UIcons.Plus).Class("tss-omnibox-mobile-options").Class(MOBILE_KEEP_CLASS);
+
+            _mobileOptionsBtn.OnClick((_, e) =>
+            {
+                //The box focuses its input on any click inside it, which on a phone opens the keyboard under the sheet
+                e.stopPropagation();
+                ShowMobileOptions();
+            });
+
+            _footer.insertBefore(_mobileOptionsBtn.Render(), _footer.firstChild);
+
+            //What the sheet holds belongs to the mode it was opened in
+            _activeMode.ObserveFutureChanges(_ => _mobileOptionsDrawer?.Hide());
+        }
+
+        private void ShowMobileOptions()
+        {
+            window.clearTimeout(_mobileOptionsRestoreTimeout);
+            RestoreMobileOptions();
+
+            var list    = Div(Att("tss-omnibox-mobile-options-list"));
+            var options = new List<HTMLElement>();
+
+            //Asked of the desktop layout, which is the one that says whether the current mode shows an item at all
+            _footer.classList.add("tss-omnibox-footer-measuring");
+
+            foreach (var child in Transpose.Script.Write<HTMLElement[]>("Array.from({0}.children)", _footer))
+            {
+                if (child.classList.contains(MOBILE_KEEP_CLASS) || child.classList.contains(MOBILE_SKIP_CLASS)) continue;
+
+                if (window.getComputedStyle(child).display != "none") options.Add(child);
+            }
+
+            _footer.classList.remove("tss-omnibox-footer-measuring");
+
+            foreach (var option in options)
+            {
+                var placeholder = document.createComment("");
+                _footer.insertBefore(placeholder, option);
+                _mobileOptionsMoved.Add((option, placeholder));
+
+                list.appendChild(MobileOptionRow(option));
+            }
+
+            if (_mobileOptionsMoved.Count == 0) return;
+
+            if (_mobileOptionsDrawer is null)
+            {
+                _mobileOptionsDrawer = Drawer("Options".t()).OnHide(_ =>
+                {
+                    //After the slide, so the sheet does not empty on its way down
+                    window.clearTimeout(_mobileOptionsRestoreTimeout);
+                    _mobileOptionsRestoreTimeout = window.setTimeout(__ => RestoreMobileOptions(), Drawer.DRAWER_TRANSITION_TIME);
+                });
+            }
+
+            _mobileOptionsDrawer.Content = Raw(list);
+            _mobileOptionsDrawer.Show();
+        }
+
+        // An icon-only button says what it does in its tooltip, which a phone never shows - so in the sheet the
+        // tooltip is written out beside it, and the whole row presses it.
+        private static HTMLElement MobileOptionRow(HTMLElement element)
+        {
+            var row = Div(Att("tss-omnibox-mobile-option"), element);
+
+            if (!element.classList.contains("tss-btn-only-icon")) return row;
+
+            var label = element.getAttribute("aria-label");
+
+            if (string.IsNullOrEmpty(label)) label = IComponentExtensions.TooltipTextOf(element);
+
+            if (string.IsNullOrWhiteSpace(label)) return row;
+
+            row.classList.add("tss-omnibox-mobile-option-labelled");
+            row.appendChild(Span(Att("tss-omnibox-mobile-option-label", text: label.Trim())));
+            row.addEventListener("click", e =>
+            {
+                if (e.target != element && !element.contains(e.target.As<Node>())) element.click();
+            });
+
+            return row;
+        }
+
+        private void RestoreMobileOptions()
+        {
+            foreach (var (element, placeholder) in _mobileOptionsMoved)
+            {
+                placeholder.parentNode?.insertBefore(element, placeholder);
+                placeholder.parentNode?.removeChild(placeholder);
+            }
+
+            _mobileOptionsMoved.Clear();
+        }
+
+        private void UpdateMode(Mode mode)
+        {
+            switch (mode)
+            {
+                case Mode.Search:
+                {
+                    TransferTextOnModeSwitch(Mode.Search);
+                    _activeInput = _searchInput;
+                    _container.classList.add("tss-omnibox-mode-search");
+                    _container.classList.remove("tss-omnibox-mode-chat");
+                    break;
+                }
+                case Mode.Chat:
+                {
+                    TransferTextOnModeSwitch(Mode.Chat);
+                    _activeInput = _chatInput;
+                    _container.classList.add("tss-omnibox-mode-chat");
+                    _container.classList.remove("tss-omnibox-mode-search");
+                    // A textarea measured while it was display:none reports no content height at all, so a
+                    // box that started in search mode arrives here with a zero-height input: size it now
+                    // that it is the visible one.
+                    ResizeChatInput();
+                    break;
+                }
+                case Mode.SearchAndChat:
+                {
+                    throw new InvalidOperationException("Can't set active mode to mixed value");
+                }
+            }
+        }
+
+        // When toggling between search and chat, carry whatever text is sitting in the box being left
+        // over to the box being entered, so switching modes never silently discards what was typed.
+        private void TransferTextOnModeSwitch(Mode enteringMode)
+        {
+            if (_searchInput == null || _chatInput == null) return;
+
+            if (enteringMode == Mode.Chat)
+            {
+                var searchText = _searchInput.value;
+                if (!string.IsNullOrEmpty(searchText))
+                {
+                    ChatText = searchText.Replace(specialWhitespaceString, " ");
+                }
+            }
+            else if (enteringMode == Mode.Search)
+            {
+                var chatText = ChatText;
+                if (!string.IsNullOrEmpty(chatText))
+                {
+                    SearchText = chatText;
+                }
+            }
+        }
+
+        //Also the end of every edit the box makes by hand in place of the browser's (deleting a padded
+        //operator token, cut), which stops the native event - so OnInput still hears it.
+        private void OnSearchInputTyped(Event e)
+        {
+            OnSearchInputChanged();
+            Input?.Invoke(this, e);
+            if (TryUpdateFilterSnapSuggestions())
+            {
+                HideSnapSuggestions();
+                HideRegularSuggestions();
+            }
+            else if (TryUpdateSnapSuggestions())
+            {
+                HideFilterSnapSuggestions();
+                HideRegularSuggestions();
+            }
+            else
+            {
+                HideFilterSnapSuggestions();
+                TriggerSuggestions();
+            }
+        }
+
+        private bool IsShowingSuggestedText => _searchInput is object && !string.IsNullOrEmpty(_suggestedText) && string.IsNullOrEmpty(_searchInput.value);
+
+        //The suggestion is drawn by the token overlay, in the place the placeholder would be, followed by a
+        //Tab keycap. The input's own placeholder is hidden while it shows (tss-omnibox-has-suggested-text),
+        //so the two never sit on top of each other, and comes back as soon as the suggestion is cleared.
+        private void RenderSuggestedText()
+        {
+            if (_searchInput is null || _container is null) return;
+
+            var showing = IsShowingSuggestedText;
+            _container.classList.toggle("tss-omnibox-has-suggested-text", showing);
+
+            if (!showing) return;
+
+            ClearTokens();
+            _searchTokensContainer.appendChild(Span(Att("tss-omnibox-suggested-text", text: _suggestedText)));
+            //Spelled out rather than KeyboardShortcut's ⇥: the keycap is the whole explanation here, and the
+            //word reads at a glance where the arrow glyph does not.
+            var tab = Span(Att("tss-kbd-key tss-omnibox-suggested-text-tab", text: "Tab"));
+            tab.title = "Press Tab to accept";
+            _searchTokensContainer.appendChild(tab);
+        }
+
+        /// <summary>
+        /// Puts the suggested text (see <see cref="SetSuggestedText"/>) into the search box, as if the user had
+        /// typed it, and leaves the caret at its end. Does nothing when there is no suggestion or the box is not empty.
+        /// </summary>
+        public OmniBox AcceptSuggestedText()
+        {
+            if (!IsShowingSuggestedText) return this;
+
+            var text = _suggestedText;
+            _searchInput.value = text;
+            OnSearchInputTyped(null);
+            var end = (uint)_searchInput.value.Length;
+            _searchInput.setSelectionRange(end, end);
+            SyncScroll();
+            _onSuggestedTextAccepted?.Invoke(text);
+            return this;
+        }
+
+        private void SyncScroll()
+        {
+            _searchTokensContainer.scrollLeft = _searchInput.scrollLeft;
+        }
+
+        private const char specialWhitespace = '\u2000'; // \u00A0
+        private const string specialWhitespaceString = "\u2000"; // \u00A0
+        private void OnSearchInputChanged()
+        {
+            var val = _searchInput.value;
+
+            // Strip incoming zero-width spaces/non-breaking spaces to ensure clean parsing if user copies/pastes internal formatting
+            var cursorPosition = _searchInput.selectionStart;
+
+            bool formattingChanged = false;
+
+            // Note: We use the non-breaking space specialWhitespace to pad special tokens
+            var rawQuery = ParseQuery(val.Replace(specialWhitespaceString, " "), _tokenIgnoreCase);
+            var formattedBuilder = new System.Text.StringBuilder();
+            var mapBuilder = new System.Text.StringBuilder();
+
+            foreach (var token in rawQuery.Tokens)
+            {
+                bool isSpecialToken = token.Type == SearchToken.TokenType.ParenthesisOpen ||
+                                      token.Type == SearchToken.TokenType.ParenthesisClose ||
+                                      token.Type == SearchToken.TokenType.And ||
+                                      token.Type == SearchToken.TokenType.Or ||
+                                      token.Type == SearchToken.TokenType.Not;
+
+                if (isSpecialToken)
+                {
+                    // Ensure space + non-breaking space before
+                    if (formattedBuilder.Length > 0 && formattedBuilder[formattedBuilder.Length - 1] != specialWhitespace && formattedBuilder[formattedBuilder.Length - 1] != ' ')
+                    {
+                        formattedBuilder.Append(specialWhitespace);
+                        mapBuilder.Append(specialWhitespace);
+                        formattingChanged = true;
+                    }
+                    else if (formattedBuilder.Length > 0 && formattedBuilder[formattedBuilder.Length - 1] == ' ')
+                    {
+                        // Replace standard space with nb-space for our token wrapper logic
+                        formattedBuilder[formattedBuilder.Length - 1] = specialWhitespace;
+                        mapBuilder[mapBuilder.Length - 1] = specialWhitespace;
+                        //formattedBuilder.Append(specialWhitespace);
+                        formattingChanged = true;
+                    }
+
+                    formattedBuilder.Append(token.Value);
+                    mapBuilder.Append(new string('1', token.Value.Length));
+
+                    // Space after will be handled by the next token, but we can proactively add it
+                    formattedBuilder.Append(specialWhitespace);
+                    mapBuilder.Append(specialWhitespace);
+                    formattingChanged = true;
+                }
+                else
+                {
+                    // If previous was a special token that added a padding space, and this token starts with space, merge them
+                    if (token.Type == SearchToken.TokenType.Whitespace && formattedBuilder.Length > 0 && formattedBuilder[formattedBuilder.Length - 1] == specialWhitespace)
+                    {
+                        // skip the leading spaces from this token since we already have the nb-space
+                        var trimmed = token.Value.TrimStart();
+                        if (!string.IsNullOrEmpty(trimmed))
+                        {
+                            formattedBuilder.Append(trimmed);
+                            mapBuilder.Append(new string('0', trimmed.Length));
+                        }
+                    }
+                    else
+                    {
+                        formattedBuilder.Append(token.Value);
+                        mapBuilder.Append(new string('0', token.Value.Length));
+                    }
+                }
+            }
+
+            var finalFormattedStr = formattedBuilder.ToString();
+            var finalMapStr = mapBuilder.ToString();
+
+            int newCursorPos = (int)cursorPosition;
+            if (finalFormattedStr != val)
+            {
+                int oldCharIndex = 0;
+                int newCharIndex = 0;
+
+                while (oldCharIndex < cursorPosition && newCharIndex < finalFormattedStr.Length)
+                {
+                    char oldChar = val[oldCharIndex];
+                    char newChar = finalFormattedStr[newCharIndex];
+
+                    if (oldChar == newChar)
+                    {
+                        oldCharIndex++;
+                        newCharIndex++;
+                    }
+                    else if (char.IsWhiteSpace(oldChar) && char.IsWhiteSpace(newChar))
+                    {
+                        oldCharIndex++;
+                        newCharIndex++;
+                    }
+                    else if (char.IsWhiteSpace(newChar))
+                    {
+                        // formatting added a space
+                        newCharIndex++;
+                    }
+                    else if (char.IsWhiteSpace(oldChar))
+                    {
+                        // formatting removed a space
+                        oldCharIndex++;
+                    }
+                    else
+                    {
+                        oldCharIndex++;
+                        newCharIndex++;
+                    }
+                }
+                newCursorPos = newCharIndex;
+            }
+
+            // Remove trailing nb-space if it's at the very end of the string and the user didn't type it
+            if (finalFormattedStr.EndsWith(specialWhitespaceString) && val.Length < finalFormattedStr.Length)
+            {
+                finalFormattedStr = finalFormattedStr.Substring(0, finalFormattedStr.Length - 1);
+                finalMapStr = finalMapStr.Substring(0, finalMapStr.Length - 1);
+                if (newCursorPos > finalFormattedStr.Length) newCursorPos = finalFormattedStr.Length;
+            }
+
+            _tokenTypeMap = finalMapStr;
+
+            if (finalFormattedStr != val)
+            {
+                _searchInput.value = finalFormattedStr;
+                _searchInput.setSelectionRange((uint)newCursorPos, (uint)newCursorPos);
+                val = finalFormattedStr;
+            }
+
+            if (string.IsNullOrEmpty(val))
+            {
+                _searchClearBtn.Collapse();
+                ClearTokens();
+                RenderSuggestedText();
+            }
+            else
+            {
+                _searchClearBtn.Show();
+                _container.classList.remove("tss-omnibox-has-suggested-text");
+                ParseAndRenderTokens(val);
+            }
+        }
+
+        private void ClearTokens()
+        {
+            _searchTokensContainer.innerHTML = "";
+        }
+
+        private void ParseAndRenderTokens(string input)
+        {
+            var query = ParseQuery(input, _tokenIgnoreCase);
+            RenderTokens(query.Tokens);
+            SyncScroll();
+        }
+
+        /// <summary>
+        /// Parses the query.
+        /// </summary>
+        public static SearchQuery ParseQuery(string input, bool tokenIgnoreCase = false)
+        {
+            var tokens = new List<SearchToken>();
+            if (string.IsNullOrEmpty(input)) return new SearchQuery(input, tokens);
+
+            int i = 0;
+            while (i < input.Length)
+            {
+                char c = input[i];
+
+                if (char.IsWhiteSpace(c))
+                {
+                    int start = i;
+                    while (i < input.Length && char.IsWhiteSpace(input[i])) i++;
+                    tokens.Add(new SearchToken(SearchToken.TokenType.Whitespace, input.Substring(start, i - start)));
+                    continue;
+                }
+
+                if (c == '(')
+                {
+                    tokens.Add(new SearchToken(SearchToken.TokenType.ParenthesisOpen, "("));
+                    i++;
+                    continue;
+                }
+                if (c == ')')
+                {
+                    tokens.Add(new SearchToken(SearchToken.TokenType.ParenthesisClose, ")"));
+                    i++;
+                    continue;
+                }
+                if (c == '"' || c == '\'')
+                {
+                    // Parse quoted string as a single token
+                    int startQuote = i;
+                    i++;
+                    while (i < input.Length && input[i] != c)
+                    {
+                        i++;
+                    }
+                    if (i < input.Length) i++; // Include closing quote
+                    tokens.Add(new SearchToken(SearchToken.TokenType.Quote, input.Substring(startQuote, i - startQuote)));
+                    continue;
+                }
+                if (c == '&' || c == '|')
+                {
+                    var type = c == '&' ? SearchToken.TokenType.And : SearchToken.TokenType.Or;
+                    // check if next char is same (e.g. && or ||)
+                    if (i + 1 < input.Length && input[i + 1] == c)
+                    {
+                        tokens.Add(new SearchToken(type, new string(c, 2)));
+                        i += 2;
+                    }
+                    else
+                    {
+                        tokens.Add(new SearchToken(type, c.ToString()));
+                        i++;
+                    }
+                    continue;
+                }
+                if (c == '!')
+                {
+                    tokens.Add(new SearchToken(SearchToken.TokenType.Not, c.ToString()));
+                    i++;
+                    continue;
+                }
+                if (c == '-')
+                {
+                    // A '-' only acts as a negation operator when it sits at a token boundary,
+                    // i.e. at the start of the input, after whitespace, or after an opening
+                    // parenthesis. A '-' that is preceded by a non-whitespace character is part
+                    // of the word so that ranges like "53-223" stay a single token.
+                    bool isBoundary = i == 0 || char.IsWhiteSpace(input[i - 1]) || input[i - 1] == '(';
+                    if (isBoundary)
+                    {
+                        tokens.Add(new SearchToken(SearchToken.TokenType.Not, c.ToString()));
+                        i++;
+                        continue;
+                    }
+                    // otherwise fall through and treat the '-' as part of a word
+                }
+
+                // Word token
+                int wordStart = i;
+                while (i < input.Length && !char.IsWhiteSpace(input[i]) && input[i] != '(' && input[i] != ')' && input[i] != '"' && input[i] != '\'' && input[i] != '&' && input[i] != '|' && input[i] != '!')
+                {
+                    i++;
+                }
+                var word = input.Substring(wordStart, i - wordStart);
+
+                // Check for word-based operators
+                var matchWord = tokenIgnoreCase ? word.ToUpper() : word;
+                if (matchWord == "AND")
+                {
+                    tokens.Add(new SearchToken(SearchToken.TokenType.And, word));
+                }
+                else if (matchWord == "OR")
+                {
+                    tokens.Add(new SearchToken(SearchToken.TokenType.Or, word));
+                }
+                else if (matchWord == "NOT")
+                {
+                    tokens.Add(new SearchToken(SearchToken.TokenType.Not, word));
+                }
+                else
+                {
+                    tokens.Add(new SearchToken(SearchToken.TokenType.Word, word));
+                }
+            }
+
+            return new SearchQuery(input, tokens);
+        }
+
+        private static bool IsWordPillToken(SearchToken.TokenType type)
+        {
+            return type == SearchToken.TokenType.Word || type == SearchToken.TokenType.Quote;
+        }
+
+        // Returns the type of the nearest non-whitespace token in the given direction
+        // (+1 = forward, -1 = backward), or null if there is none.
+        private static SearchToken.TokenType? NeighbourTokenType(List<SearchToken> tokens, int index, int direction)
+        {
+            for (int j = index + direction; j >= 0 && j < tokens.Count; j += direction)
+            {
+                if (tokens[j].Type != SearchToken.TokenType.Whitespace) return tokens[j].Type;
+            }
+            return null;
+        }
+
+        // A query is only "special" (and therefore worth the highlighted pill rendering) when it
+        // contains a boolean operator (AND/OR/NOT, including the &&, ||, !, - forms), a parenthesis,
+        // or a quoted phrase. A plain term list such as "potato tomato" has nothing to highlight.
+        private static bool QueryHasSpecialTokens(List<SearchToken> tokens)
+        {
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                switch (tokens[i].Type)
+                {
+                    case SearchToken.TokenType.And:
+                    case SearchToken.TokenType.Or:
+                    case SearchToken.TokenType.Not:
+                    case SearchToken.TokenType.ParenthesisOpen:
+                    case SearchToken.TokenType.ParenthesisClose:
+                    case SearchToken.TokenType.Quote:
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private void RenderTokens(List<SearchToken> tokens)
+        {
+            ClearTokens();
+
+            // When there's nothing special in the query, render the text plainly (no pills/outlines)
+            // so the omnibox looks like a regular search box.
+            if (!QueryHasSpecialTokens(tokens))
+            {
+                for (int i = 0; i < tokens.Count; i++)
+                {
+                    _searchTokensContainer.appendChild(Span(Att(text: tokens[i].Value)));
+                }
+                return;
+            }
+
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                var token = tokens[i];
+
+                // Whitespace is rendered as plain text between tokens so that each word
+                // sits in its own highlighted pill rather than being merged together.
+                if (token.Type == SearchToken.TokenType.Whitespace)
+                {
+                    var spanSpace = Span(Att(text: token.Value));
+                    _searchTokensContainer.appendChild(spanSpace);
+                    continue;
+                }
+
+                string className = "";
+                switch (token.Type)
+                {
+                    case SearchToken.TokenType.Word:
+                    // A quoted value (e.g. "solar flare") is a single normal token; we render
+                    // it like a word pill, keeping the surrounding quotes visible.
+                    case SearchToken.TokenType.Quote:
+                        className = "tss-omnibox-search-token-word";
+
+                        // When word pills sit next to each other (only separated by whitespace),
+                        // square off their inner corners so the run reads as one continuous
+                        // highlight instead of a string of separate rounded pills.
+                        var prev = NeighbourTokenType(tokens, i, -1);
+                        var next = NeighbourTokenType(tokens, i, +1);
+                        if (prev.HasValue && IsWordPillToken(prev.Value))
+                        {
+                            className += " tss-omnibox-search-token-join-left";
+                        }
+                        if (next.HasValue && IsWordPillToken(next.Value))
+                        {
+                            className += " tss-omnibox-search-token-join-right";
+                        }
+                        break;
+                    case SearchToken.TokenType.And:
+                        className = "tss-omnibox-search-token-operator-and";
+                        break;
+                    case SearchToken.TokenType.Or:
+                        className = "tss-omnibox-search-token-operator-or";
+                        break;
+                    case SearchToken.TokenType.Not:
+                        className = "tss-omnibox-search-token-operator-not";
+                        break;
+                    case SearchToken.TokenType.ParenthesisOpen:
+                    case SearchToken.TokenType.ParenthesisClose:
+                        className = "tss-omnibox-search-token-paren";
+                        break;
+                }
+
+                if (string.IsNullOrEmpty(className))
+                {
+                    var span = Span(Att(text: token.Value));
+                    _searchTokensContainer.appendChild(span);
+                }
+                else
+                {
+                    var span = Span(Att(className, text: token.Value));
+                    _searchTokensContainer.appendChild(span);
+                }
+            }
+        }
+
+        /// <summary>
+        /// What the box says right now, parsed - the same <see cref="SearchQuery"/> pressing Enter would
+        /// raise, chips included. For a host that answers as the query is typed rather than on Enter.
+        /// </summary>
+        public SearchQuery CurrentSearchQuery => BuildSearchQuery();
+
+        private SearchQuery BuildSearchQuery()
+        {
+            var query = ParseQuery(_searchInput is object ? _searchInput.value : string.Empty, _tokenIgnoreCase);
+
+            query.Snaps       = GetActiveSnaps();
+            query.FilterSnaps = GetActiveFilterSnaps();
+
+            return query;
+        }
+
+        private void TriggerSearch()
+        {
+            StopDictation();
+            DropLingering();
+
+            var query = BuildSearchQuery();
+            RememberSearch(query.RawQuery);
+            Searched?.Invoke(this, query);
+        }
+
+        private SnapHandler[] GetActiveSnaps()
+        {
+            if (InlineFilterChips == null) return Array.Empty<SnapHandler>();
+            var result = new List<SnapHandler>();
+            for (int i = 0; i < InlineFilterChips.Count; i++)
+            {
+                var chip = InlineFilterChips[i];
+                if (chip.Snap != null) result.Add(chip.Snap);
+            }
+            return result.ToArray();
+        }
+
+        private FilterSnap[] GetActiveFilterSnaps()
+        {
+            if (InlineFilterChips == null) return Array.Empty<FilterSnap>();
+            var result = new List<FilterSnap>();
+            for (int i = 0; i < InlineFilterChips.Count; i++)
+            {
+                var chip = InlineFilterChips[i];
+                if (chip.FilterSnap != null) result.Add(chip.FilterSnap);
+            }
+            return result.ToArray();
+        }
+
+        /// <summary>
+        /// Registers a snap-handler that can convert recognized input into an inline filter chip.
+        /// </summary>
+        public OmniBox RegisterSnap(SnapHandler snap)
+        {
+            if (snap == null) return this;
+            if (_mode != Mode.Search && _mode != Mode.SearchAndChat)
+            {
+                throw new InvalidOperationException("RegisterSnap can only be called when OmniBox is in Search or SearchAndChat mode.");
+            }
+            _snapHandlers.Add(snap);
+            return this;
+        }
+
+        /// <summary>
+        /// Registers multiple snap-handlers in one call.
+        /// </summary>
+        public OmniBox RegisterSnaps(params SnapHandler[] snaps)
+        {
+            if (snaps == null) return this;
+            foreach (var s in snaps) RegisterSnap(s);
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a filter snap handler that creates an inline filter chip.
+        /// </summary>
+        public OmniBox RegisterFilterSnap(FilterSnapHandler filter)
+        {
+            if (filter == null) return this;
+            if (_mode != Mode.Search && _mode != Mode.SearchAndChat)
+            {
+                throw new InvalidOperationException("RegisterFilterSnap can only be called when OmniBox is in Search or SearchAndChat mode.");
+            }
+            _filterSnapHandlers.Add(filter);
+            return this;
+        }
+
+        /// <summary>
+        /// Registers multiple filter snap handlers in one call.
+        /// </summary>
+        public OmniBox RegisterFilterSnaps(params FilterSnapHandler[] filters)
+        {
+            if (filters == null) return this;
+            foreach (var f in filters) RegisterFilterSnap(f);
+            return this;
+        }
+
+        /// <summary>
+        /// Adds an active snap chip as if the user had typed its trigger and picked it, and re-runs the
+        /// search. Use it to open a box already filtered, e.g. restoring the chips a search was made with.
+        /// A snap that is already active is not added twice.
+        /// </summary>
+        public OmniBox AddSnap(SnapHandler snap)
+        {
+            if (snap == null) return this;
+            if (GetActiveSnaps().Any(s => s.SnapId == snap.SnapId)) return this;
+
+            InlineFilterChips.Add(new InlineFilterChip(snap));
+            OnSearchInputChanged();
+
+            return this;
+        }
+
+        /// <summary>
+        /// Adds an active filter chip as if the user had typed the trigger and picked
+        /// <paramref name="value"/>, and re-runs the search. Use it to open a box already filtered — a
+        /// palette that starts from the filters the view behind it is applying, say. Without
+        /// <paramref name="trigger"/> the handler's first trigger word is used.
+        /// </summary>
+        public OmniBox AddFilterSnap(FilterSnapHandler handler, string value, string trigger = null)
+        {
+            if (handler == null) return this;
+
+            var triggerWord = trigger ?? handler.TriggerWords?.FirstOrDefault() ?? handler.FilterId;
+
+            InlineFilterChips.Add(new InlineFilterChip(new FilterSnap(handler, triggerWord, value)));
+            OnSearchInputChanged();
+
+            return this;
+        }
+
+        /// <summary>
+        /// Removes every active snap and filter chip from the box, and re-runs the search.
+        /// </summary>
+        public OmniBox ClearSnaps()
+        {
+            if (InlineFilterChips == null || InlineFilterChips.Count == 0) return this;
+
+            InlineFilterChips.Clear();
+            OnSearchInputChanged();
+
+            return this;
+        }
+
+        /// <summary>
+        /// Enables an "@mention" style inline picker in the chat input: typing <see cref="ChatMention.Trigger"/>
+        /// (default <c>@</c>) at a word boundary shows a picker anchored at the text caret, live-filters as more is
+        /// typed, and forwards Arrow Up/Down, Enter/Tab and Escape to the callbacks below. This is a thin,
+        /// UI-agnostic hook — wire it up to any anchored picker (for example a <see cref="ToolAgentSelector"/> via
+        /// its <see cref="ToolAgentSelector.ShowInlineAt"/>/<see cref="ToolAgentSelector.Filter"/>/
+        /// <see cref="ToolAgentSelector.MoveHighlight"/>/<see cref="ToolAgentSelector.ActivateHighlighted"/> methods).
+        /// </summary>
+        public OmniBox EnableChatMentions(ChatMention mention)
+        {
+            if (_mode != Mode.Chat && _mode != Mode.SearchAndChat)
+            {
+                throw new InvalidOperationException("EnableChatMentions can only be called when OmniBox is in Chat or SearchAndChat mode.");
+            }
+            _chatMention = mention;
+            return this;
+        }
+
+        /// <summary>
+        /// Shows the given <see cref="ContextCard"/>s as the context that will go with the next message,
+        /// in a wrapping row inside the box just below the input and above the footer. Chat modes only.
+        /// <para>
+        /// Each card's remove button is wired to this row, so the (x) takes the card out of the box (any
+        /// handler the caller registered with <see cref="ContextCard.OnRemove(Action{ContextCard})"/> still
+        /// runs, which is where the underlying context gets dropped). A card that should not be removable
+        /// can call <see cref="ContextCard.NoRemove"/> after being handed over. The row is left alone when
+        /// a message is sent - call <see cref="ClearContext"/> from the chat handler to empty it.
+        /// </para>
+        /// </summary>
+        public OmniBox WithContextToAdd(params ContextCard[] context)
+        {
+            if (_mode != Mode.Chat && _mode != Mode.SearchAndChat)
+            {
+                throw new InvalidOperationException("WithContextToAdd can only be called when OmniBox is in Chat or SearchAndChat mode.");
+            }
+
+            ClearContext();
+
+            if (context == null) return this;
+
+            foreach (var card in context)
+            {
+                AddContext(card);
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Shows the given context cards as the context for the next message, replacing whatever the row
+        /// held before.
+        /// </summary>
+        public OmniBox WithContextToAdd(IEnumerable<ContextCard> context) => WithContextToAdd(context?.ToArray());
+
+        /// <summary>
+        /// Adds one more card to the context row, keeping the cards already there.
+        /// </summary>
+        public OmniBox AddContext(ContextCard card)
+        {
+            if (_contextContainer == null)
+            {
+                throw new InvalidOperationException("AddContext can only be called when OmniBox is in Chat or SearchAndChat mode.");
+            }
+
+            if (card == null || _contextCards.Contains(card)) return this;
+
+            _contextCards.Add(card);
+            _contextContainer.appendChild(card.Render());
+
+            // The row owns which cards are in it, so it is the row that takes one out when its (x) is
+            // clicked - the caller's own handler, if any, still runs alongside this one.
+            card.OnRemove(c => RemoveContext(c));
+
+            return this;
+        }
+
+        /// <summary>
+        /// Takes one card out of the context row. Does nothing if the card isn't in it.
+        /// </summary>
+        public OmniBox RemoveContext(ContextCard card)
+        {
+            if (card == null || _contextContainer == null) return this;
+
+            if (_contextCards.Remove(card))
+            {
+                TryRemoveChild(_contextContainer, card.Render());
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Empties the context row. Call it from the chat handler once the context has been sent along
+        /// with the message.
+        /// </summary>
+        public OmniBox ClearContext()
+        {
+            if (_contextContainer == null) return this;
+
+            _contextCards.Clear();
+            ClearChildren(_contextContainer);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Gets the cards currently shown in the context row, in the order they were added.
+        /// </summary>
+        public IReadOnlyList<ContextCard> ContextToAdd => _contextCards;
+
+        /// <summary>
+        /// Returns a value indicating whether the context row currently holds any card.
+        /// </summary>
+        public bool HasContextToAdd => _contextCards.Count > 0;
+
+        private void TryUpdateChatMention(HTMLTextAreaElement input)
+        {
+            if (_chatMention == null) return;
+
+            if (_mentionStart >= 0 && _mentionInput != input) HideChatMention();
+            _mentionInput = input;
+
+            var val    = input.value ?? string.Empty;
+            var cursor = (int)input.selectionStart;
+
+            int atIdx = -1;
+            for (int i = cursor - 1; i >= 0; i--)
+            {
+                var ch = val[i];
+                if (ch == _chatMention.Trigger)
+                {
+                    if (i == 0 || char.IsWhiteSpace(val[i - 1])) atIdx = i;
+                    break;
+                }
+                if (char.IsWhiteSpace(ch)) break;
+            }
+
+            if (atIdx < 0)
+            {
+                if (_mentionStart >= 0) HideChatMention();
+                return;
+            }
+
+            var typed   = val.Substring(atIdx + 1, cursor - atIdx - 1);
+            var wasOpen = _mentionStart >= 0;
+
+            _mentionStart = atIdx;
+            _mentionEnd   = cursor;
+
+            if (!wasOpen)
+            {
+                var (x, y) = GetCaretClientPosition(input, atIdx);
+                _chatMention.OnShow?.Invoke(x, y);
+            }
+
+            _chatMention.OnQueryChanged?.Invoke(typed);
+        }
+
+        private void HideChatMention()
+        {
+            _mentionStart = -1;
+            _mentionEnd   = -1;
+            _chatMention?.OnHide?.Invoke();
+        }
+
+        private void CommitChatMention()
+        {
+            if (_mentionStart < 0 || _mentionEnd < 0)
+            {
+                HideChatMention();
+                return;
+            }
+
+            var input = _mentionInput ?? _chatInput;
+            var val   = input.value ?? string.Empty;
+            var start = _mentionStart;
+            var end   = Math.Min(_mentionEnd, val.Length);
+
+            if (start > end)
+            {
+                HideChatMention();
+                return;
+            }
+
+            var before = val.Substring(0, start);
+            var after  = val.Substring(end);
+
+            if (before.Length > 0 && before[before.Length - 1] == ' ' && after.StartsWith(" "))
+            {
+                after = after.Substring(1);
+            }
+
+            input.value = before + after;
+            input.setSelectionRange((uint)before.Length, (uint)before.Length);
+
+            HideChatMention();
+            UpdateChatCounter();
+            ResizeChatInput();
+            input.focus();
+        }
+
+        private static (double x, double y) GetCaretClientPosition(HTMLTextAreaElement textarea, int caretIndex)
+            => GetCaretClientPosition(textarea, textarea.value, caretIndex, wraps: true);
+
+        // Adapted from the well-known "textarea-caret-position" technique: an off-screen mirror <div> is styled to
+        // match every metric that affects text layout, filled with the text up to the caret plus a marker span, and
+        // the marker's offset within the mirror (plus the field's own screen position) gives the caret's
+        // viewport-relative coordinates without needing any canvas/measureText trickery. Works for both the chat
+        // <textarea> (wraps: true) and the single-line search <input> (wraps: false, so long text keeps flowing on
+        // one line exactly as the input renders it).
+        private static (double x, double y) GetCaretClientPosition(HTMLElement field, string value, int caretIndex, bool wraps)
+        {
+            if (_mentionCaretMirror == null)
+            {
+                _mentionCaretMirror = Div(Att());
+                document.body.appendChild(_mentionCaretMirror);
+            }
+
+            var mirror   = _mentionCaretMirror;
+            var computed = window.getComputedStyle(field);
+
+            mirror.style.position   = "absolute";
+            mirror.style.visibility = "hidden";
+            mirror.style.top        = "0px";
+            mirror.style.left       = "-9999px";
+            mirror.style.whiteSpace = wraps ? "pre-wrap" : "pre";
+            mirror.style.wordWrap   = wraps ? "break-word" : "normal";
+            mirror.style.boxSizing         = computed.boxSizing;
+            mirror.style.width             = wraps ? computed.width : "auto";
+            mirror.style.paddingTop        = computed.paddingTop;
+            mirror.style.paddingRight      = computed.paddingRight;
+            mirror.style.paddingBottom     = computed.paddingBottom;
+            mirror.style.paddingLeft       = computed.paddingLeft;
+            mirror.style.borderTopWidth    = computed.borderTopWidth;
+            mirror.style.borderRightWidth  = computed.borderRightWidth;
+            mirror.style.borderBottomWidth = computed.borderBottomWidth;
+            mirror.style.borderLeftWidth   = computed.borderLeftWidth;
+            mirror.style.borderStyle       = "solid";
+            mirror.style.fontFamily        = computed.fontFamily;
+            mirror.style.fontSize          = computed.fontSize;
+            mirror.style.fontWeight        = computed.fontWeight;
+            mirror.style.fontStyle         = computed.fontStyle;
+            mirror.style.lineHeight        = computed.lineHeight;
+            mirror.style.letterSpacing     = computed.letterSpacing;
+
+            var text   = value ?? string.Empty;
+            var index  = Math.Max(0, Math.Min(caretIndex, text.Length));
+            var before = text.Substring(0, index);
+            var after  = text.Substring(index);
+
+            ClearChildren(mirror);
+            mirror.appendChild(document.createTextNode(before));
+
+            var marker = Span(Att());
+            marker.textContent = ((char)0x200B).ToString();
+            mirror.appendChild(marker);
+            mirror.appendChild(document.createTextNode(after.Length > 0 ? after : " "));
+
+            var fieldRect  = field.getBoundingClientRect().As<DOMRect>();
+            var lineHeight = ParseCssPixels(computed.lineHeight, ParseCssPixels(computed.fontSize, 16) * 1.2);
+            var borderTop  = ParseCssPixels(computed.borderTopWidth, 0);
+            var borderLeft = ParseCssPixels(computed.borderLeftWidth, 0);
+
+            var left = fieldRect.left - field.scrollLeft + marker.offsetLeft + borderLeft;
+            var top  = fieldRect.top  - field.scrollTop  + marker.offsetTop  + borderTop + lineHeight;
+
+            return (left, top);
+        }
+
+        /// <summary>
+        /// The viewport-relative horizontal position of the text caret in whichever input is currently active
+        /// (the search box or the chat box), clamped to that input's bounds. Returns <c>double.NaN</c> when there
+        /// is no active input to measure — for example before the OmniBox has been rendered.
+        /// </summary>
+        /// <remarks>
+        /// Used by companions that want to track where the user is typing, e.g.
+        /// <see cref="PixelAvatar"/> attached with <see cref="PixelAvatar.AttachTo"/>.
+        /// </remarks>
+        public double CaretClientX()
+        {
+            var field = _activeInput ?? (HTMLElement)_searchInput ?? _chatInput;
+            if (field == null) return double.NaN;
+
+            //With code boxes in the chat input, the caret is in whichever of its textareas was focused last
+            var chatField = field == _chatInput ? (_lastChatInput ?? _chatInput) : null;
+            if (chatField is object) field = chatField;
+
+            var rect = field.getBoundingClientRect().As<DOMRect>();
+            if (rect.width <= 0) return double.NaN;
+
+            string value;
+            int    caret;
+            bool   wraps;
+
+            if (chatField is object)
+            {
+                value = chatField.value ?? string.Empty;
+                caret = (int)chatField.selectionStart;
+                wraps = true;
+            }
+            else
+            {
+                var input = field.As<HTMLInputElement>();
+                value = input.value ?? string.Empty;
+                // An <input> that has never been focused reports a null selection; the end of the
+                // text is the closest thing to "where the caret would be".
+                caret = input.selectionStart.HasValue ? (int)input.selectionStart.Value : value.Length;
+                wraps = false;
+            }
+
+            var x = GetCaretClientPosition(field, value, caret, wraps).x;
+            if (double.IsNaN(x)) return double.NaN;
+
+            return Math.Max(rect.left, Math.Min(rect.right, x));
+        }
+
+        private static double ParseCssPixels(string cssValue, double fallback)
+        {
+            if (string.IsNullOrEmpty(cssValue) || !cssValue.EndsWith("px")) return fallback;
+            return double.TryParse(cssValue.Substring(0, cssValue.Length - 2), out var v) ? v : fallback;
+        }
+
+        /// <summary>
+        /// Callbacks that back an "@mention" style inline picker in the chat input (see
+        /// <see cref="EnableChatMentions"/>). None of these are required to reference any specific component type —
+        /// wire them up to whatever anchored popup should back the mention experience.
+        /// </summary>
+        public sealed class ChatMention
+        {
+            /// <summary>
+            /// The character that opens the picker when typed at a word boundary. Defaults to <c>@</c>.
+            /// </summary>
+            public char Trigger { get; set; } = '@';
+
+            /// <summary>
+            /// Invoked to show the picker anchored at the given viewport-relative coordinates (just below the text
+            /// caret), the first time the trigger character is recognized.
+            /// </summary>
+            public Action<double, double> OnShow { get; set; }
+
+            /// <summary>
+            /// Invoked whenever the text typed after the trigger changes (including once, with an empty string,
+            /// right after <see cref="OnShow"/>), so the picker can live-filter its list.
+            /// </summary>
+            public Action<string> OnQueryChanged { get; set; }
+
+            /// <summary>
+            /// Invoked when Arrow Up (<c>-1</c>) or Arrow Down (<c>+1</c>) is pressed while the picker is open.
+            /// </summary>
+            public Action<int> OnMove { get; set; }
+
+            /// <summary>
+            /// Invoked when Enter or Tab is pressed while the picker is open. Return <c>true</c> if an item was
+            /// activated (the mention text typed so far is then removed from the chat input); return <c>false</c> to
+            /// leave the typed text untouched.
+            /// </summary>
+            public Func<bool> OnCommit { get; set; }
+
+            /// <summary>
+            /// Invoked when the picker should close (Escape, or the trigger word no longer matches).
+            /// </summary>
+            public Action OnHide { get; set; }
+
+            /// <summary>
+            /// Returns whether the picker is currently open. Consulted on every keydown so navigation keys are only
+            /// intercepted while the picker is actually visible.
+            /// </summary>
+            public Func<bool> IsOpen { get; set; }
+        }
+
+        private bool TryUpdateFilterSnapSuggestions()
+        {
+            if (_filterSnapHandlers.Count == 0)
+            {
+                HideFilterSnapSuggestions();
+                return false;
+            }
+
+            var val = _searchInput.value;
+            var cursor = (int)_searchInput.selectionStart;
+
+            int wordStart = 0;
+            for (int i = cursor - 1; i >= 0; i--)
+            {
+                var ch = val[i];
+                if (ch == ' ' || ch == specialWhitespace || char.IsWhiteSpace(ch))
+                {
+                    wordStart = i + 1;
+                    break;
+                }
+            }
+
+            var segment = val.Substring(wordStart, cursor - wordStart);
+            int colonIdx = segment.IndexOf(':');
+            if (colonIdx < 0)
+            {
+                HideFilterSnapSuggestions();
+                return false;
+            }
+
+            var triggerText = segment.Substring(0, colonIdx);
+            var valueText = segment.Substring(colonIdx + 1);
+
+            FilterSnapHandler matched = null;
+            string matchedTrigger = null;
+            foreach (var h in _filterSnapHandlers)
+            {
+                foreach (var t in h.TriggerWords)
+                {
+                    if (string.Equals(t, triggerText, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched = h;
+                        matchedTrigger = t;
+                        break;
+                    }
+                }
+                if (matched != null) break;
+            }
+
+            if (matched == null)
+            {
+                HideFilterSnapSuggestions();
+                return false;
+            }
+
+            _filterSnapStart = wordStart;
+            _filterSnapEnd = cursor;
+
+            if (matched.IsTimeRange)
+            {
+                // Bump the request id so any in-flight async (value) suggestion load is ignored.
+                _filterSnapRequestId++;
+                ShowTimeFilterSnapSuggestions(matched, matchedTrigger, valueText);
+                return true;
+            }
+
+            var requestId = ++_filterSnapRequestId;
+            var captured = matched;
+            var capturedTrigger = matchedTrigger;
+            var capturedStart = wordStart;
+            var capturedEnd = cursor;
+
+            LoadFilterSnapSuggestionsAsync(captured, capturedTrigger, valueText, requestId, capturedStart, capturedEnd);
+            return true;
+        }
+
+        private async void LoadFilterSnapSuggestionsAsync(FilterSnapHandler handler, string trigger, string valueText, int requestId, int start, int end)
+        {
+            string[] values;
+            try
+            {
+                values = await handler.GetValuesAsync(valueText);
+            }
+            catch (Exception ex)
+            {
+                console.error("Filter snap values fetch failed: ", ex);
+                values = Array.Empty<string>();
+            }
+
+            if (requestId != _filterSnapRequestId) return;
+            if (_filterSnapStart != start || _filterSnapEnd != end)
+            {
+                return;
+            }
+
+            if (values == null || values.Length == 0)
+            {
+                HideFilterSnapSuggestions();
+                return;
+            }
+
+            ShowFilterSnapSuggestions(handler, trigger, values);
+        }
+
+        private void ShowFilterSnapSuggestions(FilterSnapHandler handler, string trigger, string[] values)
+        {
+            _timeFilterSnapOpen = false;
+            _currentFilterSnapSuggestionButtons = new List<Button>();
+            _highlightedFilterSnapSuggestionIndex = 0;
+
+            // The header stays pinned; only the list of values below it scrolls.
+            var content = VStack().NoDefaultMargin().W(360);
+            var headerText = handler.DisplayName;
+            content.Add(TextBlock(headerText).Small().SemiBold().PaddingBottom(4.px()).PaddingTop(8.px()).PaddingLeft(12.px()).Foreground(Theme.Secondary.Foreground));
+
+            var list = VStack().NoDefaultMargin().WS().MaxHeight(360.px()).ScrollY();
+            content.Add(list);
+
+            foreach (var v in values)
+            {
+                var capturedValue = v;
+                var btn = Button().Class("tss-omnibox-snap-suggestion").Class("tss-omnibox-filter-snap-suggestion").WS().NoPadding().NoMinSize().H(32).MB(4).NoBorder().NoBackground().TextLeft();
+                var row = HStack().WS().AlignItems(ItemAlign.Center).PaddingLeft(12.px()).PaddingRight(12.px());
+                if (handler.Icon != null) row.Add(CloneIcon(handler.Icon).MR(8));
+                row.Add(TextBlock(capturedValue));
+                row.Add(TextBlock(trigger + ":" + capturedValue).Small().Secondary().ML(UnitSize.Auto()));
+
+                btn.ReplaceContent(row);
+                btn.OnClick(() => CommitFilterSnap(handler, trigger, capturedValue));
+                list.Add(btn);
+                _currentFilterSnapSuggestionButtons.Add(btn);
+            }
+
+            if (_hideFilterSnapSuggestions != null)
+            {
+                _hideFilterSnapSuggestions();
+                _hideFilterSnapSuggestions = null;
+            }
+
+            Tippy.ShowFor(_activeInput, content.Render(), out _hideFilterSnapSuggestions, placement: TooltipPlacement.BottomStart, maxWidth: 400, onHiddenCallback: () => _hideFilterSnapSuggestions = null);
+            HighlightFilterSnapSuggestion(0);
+        }
+
+        private void ShowTimeFilterSnapSuggestions(FilterSnapHandler handler, string trigger, string valueText)
+        {
+            _currentFilterSnapSuggestionButtons = new List<Button>();
+            _highlightedFilterSnapSuggestionIndex = 0;
+
+            // Parse whatever the user has typed so far (yyyy-MM-dd:yyyy-MM-dd). Fall back to the last 7 days so
+            // the picker and the "Apply" action always have a sensible day-granularity range to work with.
+            var today = DateTime.Today;
+            DateTime? typedFrom = null, typedTo = null;
+            if (!string.IsNullOrEmpty(valueText))
+            {
+                var parts = valueText.Split(':');
+                if (parts.Length >= 1 && TryParseDay(parts[0], out var pf)) typedFrom = pf;
+                if (parts.Length >= 2 && TryParseDay(parts[1], out var pt)) typedTo = pt;
+            }
+            var initialFrom = typedFrom ?? today.AddDays(-7);
+            var initialTo = typedTo ?? today;
+            if (initialTo < initialFrom) initialTo = initialFrom;
+
+            var picker = DateRangePicker(initialFrom, initialTo);
+
+            var content = VStack().NoDefaultMargin().W(320).MaxHeight(440.px()).ScrollY();
+            content.Add(TextBlock(handler.DisplayName).Small().SemiBold().PT(8).PL(12).Foreground(Theme.Secondary.Foreground));
+            content.Add(HStack().WS().AlignItems(ItemAlign.Center).PL(12).PR(12).PB(8).Children(picker));
+
+            var applyBtn = Button("Apply range").Primary().SetIcon(UIcons.Check).WS();
+            applyBtn.OnClick(() =>
+            {
+                var from = picker.From ?? initialFrom;
+                var to = picker.To ?? initialTo;
+                if (to < from) { var swap = from; from = to; to = swap; }
+                CommitTimeFilterSnap(handler, trigger, from, to);
+            });
+            content.Add(HStack().WS().PL(12).PR(12).PB(8).Children(applyBtn));
+            _currentFilterSnapSuggestionButtons.Add(applyBtn);
+
+            AddTimeFilterSnapShortcut(content, handler, trigger, "Last week", today.AddDays(-7), today);
+            AddTimeFilterSnapShortcut(content, handler, trigger, "Last month", today.AddMonths(-1), today);
+            AddTimeFilterSnapShortcut(content, handler, trigger, "Last 90 days", today.AddDays(-90), today);
+            AddTimeFilterSnapShortcut(content, handler, trigger, "Last year", today.AddYears(-1), today);
+
+            bool allowHide = true;
+            double clearAbortHide = 0;
+
+            picker.OnChange((_,__) =>
+            {
+                allowHide = false;
+                window.clearTimeout(clearAbortHide);
+                clearAbortHide = window.setTimeout((___) => allowHide = true, 1500);
+            });
+
+            if (_hideFilterSnapSuggestions != null)
+            {
+                _hideFilterSnapSuggestions();
+                _hideFilterSnapSuggestions = null;
+            }
+
+
+            _timeFilterSnapOpen = true;
+            Tippy.ShowFor(_activeInput, content.Render(), out _hideFilterSnapSuggestions, placement: TooltipPlacement.BottomStart, maxWidth: 360, onHide: () => allowHide, onHiddenCallback: () => { _hideFilterSnapSuggestions = null; _timeFilterSnapOpen = false; });
+            HighlightFilterSnapSuggestion(0);
+        }
+
+        private void AddTimeFilterSnapShortcut(Stack content, FilterSnapHandler handler, string trigger, string label, DateTime from, DateTime to)
+        {
+            var preview = from.ToString("yyyy-MM-dd") + " to " + to.ToString("yyyy-MM-dd");
+            var btn = Button().Class("tss-omnibox-snap-suggestion").Class("tss-omnibox-filter-snap-suggestion").WS().NoPadding().NoMinSize().H(32).MB(4).NoBorder().NoBackground().TextLeft();
+            var row = HStack().WS().AlignItems(ItemAlign.Center).PL(12).PR(12);
+            row.Add(TextBlock(label));
+            row.Add(TextBlock(preview).Small().Secondary().ML(UnitSize.Auto()));
+            btn.ReplaceContent(row);
+            btn.OnClick(() => CommitTimeFilterSnap(handler, trigger, from, to));
+            content.Add(btn);
+            _currentFilterSnapSuggestionButtons.Add(btn);
+        }
+
+        private void CommitTimeFilterSnap(FilterSnapHandler handler, string trigger, DateTime from, DateTime to)
+        {
+            var value = from.ToString("yyyy-MM-dd") + ":" + to.ToString("yyyy-MM-dd");
+            CommitFilterSnap(handler, trigger, value);
+        }
+
+        private static bool TryParseDay(string s, out DateTime date)
+        {
+            date = default;
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            return DateTime.TryParseExact(s.Trim(), "yyyy-MM-dd", DateTimeFormatInfo.InvariantInfo, out date);
+        }
+
+        private void HideFilterSnapSuggestions()
+        {
+            if (_hideFilterSnapSuggestions != null)
+            {
+                _hideFilterSnapSuggestions();
+                _hideFilterSnapSuggestions = null;
+            }
+            _currentFilterSnapSuggestionButtons.Clear();
+            _highlightedFilterSnapSuggestionIndex = -1;
+            _filterSnapStart = -1;
+            _filterSnapEnd = -1;
+            _timeFilterSnapOpen = false;
+        }
+
+        private void UpdateHighlightedFilterSnapSuggestion(int offset)
+        {
+            if (_currentFilterSnapSuggestionButtons.Count == 0) return;
+            var next = (_highlightedFilterSnapSuggestionIndex + offset + _currentFilterSnapSuggestionButtons.Count) % _currentFilterSnapSuggestionButtons.Count;
+            HighlightFilterSnapSuggestion(next);
+        }
+
+        private void HighlightFilterSnapSuggestion(int index)
+        {
+            if (_highlightedFilterSnapSuggestionIndex >= 0 && _highlightedFilterSnapSuggestionIndex < _currentFilterSnapSuggestionButtons.Count)
+            {
+                _currentFilterSnapSuggestionButtons[_highlightedFilterSnapSuggestionIndex].RemoveClass("tss-omnibox-suggestion-highlight");
+            }
+            _highlightedFilterSnapSuggestionIndex = index;
+            if (_highlightedFilterSnapSuggestionIndex >= 0 && _highlightedFilterSnapSuggestionIndex < _currentFilterSnapSuggestionButtons.Count)
+            {
+                _currentFilterSnapSuggestionButtons[_highlightedFilterSnapSuggestionIndex].Class("tss-omnibox-suggestion-highlight").ScrollIntoView();
+            }
+        }
+
+        private void CommitFilterSnap(FilterSnapHandler handler, string trigger, string value)
+        {
+            if (handler == null) return;
+            if (_filterSnapStart < 0 || _filterSnapEnd < 0) return;
+
+            var val = _searchInput.value;
+            var start = _filterSnapStart;
+            var end = _filterSnapEnd;
+            if (start < 0 || end > val.Length || start > end)
+            {
+                HideFilterSnapSuggestions();
+                return;
+            }
+
+            var before = val.Substring(0, start);
+            var after = val.Substring(end);
+
+            if (before.Length > 0 && (before[before.Length - 1] == ' ' || before[before.Length - 1] == specialWhitespace) &&
+                after.StartsWith(" "))
+            {
+                after = after.Substring(1);
+            }
+
+            var newVal = before + after;
+            _searchInput.value = newVal;
+            _searchInput.setSelectionRange((uint)before.Length, (uint)before.Length);
+
+            InlineFilterChips.Add(new InlineFilterChip(new FilterSnap(handler, trigger, value)));
+
+            HideFilterSnapSuggestions();
+            OnSearchInputChanged();
+            _searchInput.focus();
+        }
+
+        private bool TryUpdateSnapSuggestions()
+        {
+            if (_snapHandlers.Count == 0)
+            {
+                HideSnapSuggestions();
+                return false;
+            }
+
+            var val = _searchInput.value;
+            var cursor = (int)_searchInput.selectionStart;
+
+            int atIdx = -1;
+            for (int i = cursor - 1; i >= 0; i--)
+            {
+                var ch = val[i];
+                if (ch == '@')
+                {
+                    if (i == 0 || val[i - 1] == ' ' || val[i - 1] == specialWhitespace || char.IsWhiteSpace(val[i - 1]))
+                    {
+                        atIdx = i;
+                    }
+                    break;
+                }
+                if (ch == ' ' || ch == specialWhitespace || char.IsWhiteSpace(ch))
+                {
+                    break;
+                }
+            }
+
+            if (atIdx < 0)
+            {
+                HideSnapSuggestions();
+                return false;
+            }
+
+            var typed = val.Substring(atIdx + 1, cursor - atIdx - 1);
+            var active = GetActiveSnaps();
+            var activeSnapIds = new HashSet<string>();
+            bool anyActive = false;
+            bool anyExclusiveActive = false;
+            foreach (var s in active)
+            {
+                activeSnapIds.Add(s.SnapId);
+                anyActive = true;
+                if (s.Exclusive) anyExclusiveActive = true;
+            }
+
+            if (anyExclusiveActive)
+            {
+                HideSnapSuggestions();
+                return false;
+            }
+
+            var matches = _snapHandlers
+                .Where(s => !activeSnapIds.Contains(s.SnapId))
+                .Where(s => !anyActive || !s.Exclusive)
+                .Where(s => s.TriggerWords.Any(t => t.IndexOf(typed, StringComparison.OrdinalIgnoreCase) >= 0))
+                .OrderBy(s => s.TriggerWords.Any(t => t.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) ? 0 : 1)
+                .ToArray();
+
+            if (matches.Length == 0)
+            {
+                HideSnapSuggestions();
+                return false;
+            }
+
+            _snapMentionStart = atIdx;
+            _snapMentionEnd = cursor;
+            ShowSnapSuggestions(matches);
+            return true;
+        }
+
+        // An IComponent renders to a single cached DOM element, so the same icon instance can only ever
+        // live in one place in the DOM at a time. Snap/filter handlers expose a single Icon component that
+        // we need to show in many rows simultaneously (every value in a filter-snap list, multiple chips
+        // sharing one handler, the help panel and a suggestion popup at once). Rendering a fresh clone of the
+        // icon's element for each use keeps every copy visible instead of the one node hopping to the last row.
+        internal static IComponent CloneIcon(IComponent icon)
+        {
+            return icon == null ? null : new Raw((HTMLElement)icon.Render().cloneNode(true));
+        }
+
+        private void ShowSnapSuggestions(SnapHandler[] matches)
+        {
+            _currentSnapMatches = matches;
+            _currentSnapSuggestionButtons = new List<Button>();
+            _highlightedSnapSuggestionIndex = 0;
+
+            // The header stays pinned; only the list of items below it scrolls.
+            var content = VStack().NoDefaultMargin().W(360);
+            content.Add(TextBlock("Snaps").Small().SemiBold().PaddingBottom(4.px()).PaddingTop(8.px()).PaddingLeft(12.px()).Foreground(Theme.Secondary.Foreground));
+
+            var list = VStack().NoDefaultMargin().WS().MaxHeight(360.px()).ScrollY();
+            content.Add(list);
+
+            for (int i = 0; i < matches.Length; i++)
+            {
+                var captured = matches[i];
+                var capturedIndex = i;
+                var btn = Button().Class("tss-omnibox-snap-suggestion").WS().NoPadding().NoMinSize().H(40).MB(4).NoBorder().NoBackground().TextLeft();
+                var row = HStack().WS().AlignItems(ItemAlign.Center).PaddingLeft(12.px()).PaddingRight(12.px());
+                if (captured.Icon != null) row.Add(CloneIcon(captured.Icon).MR(8));
+                var labels = VStack().NoDefaultMargin();
+                labels.Add(TextBlock(captured.DisplayName));
+                if (!string.IsNullOrEmpty(captured.Description))
+                {
+                    labels.Add(TextBlock(captured.Description).Small().Secondary());
+                }
+                row.Add(labels);
+                row.Add(TextBlock("@" + captured.TriggerWords[0]).Small().Secondary().ML(UnitSize.Auto()));
+                btn.ReplaceContent(row);
+                btn.OnClick(() => CommitSnap(captured));
+                list.Add(btn);
+                _currentSnapSuggestionButtons.Add(btn);
+            }
+
+            if (_hideSnapSuggestions != null)
+            {
+                _hideSnapSuggestions();
+                _hideSnapSuggestions = null;
+            }
+
+            Tippy.ShowFor(_activeInput, content.Render(), out _hideSnapSuggestions, placement: TooltipPlacement.BottomStart, maxWidth: 400, onHiddenCallback: () => _hideSnapSuggestions = null);
+            HighlightSnapSuggestion(0);
+        }
+
+        private void HideSnapSuggestions()
+        {
+            if (_hideSnapSuggestions != null)
+            {
+                _hideSnapSuggestions();
+                _hideSnapSuggestions = null;
+            }
+            _currentSnapSuggestionButtons.Clear();
+            _highlightedSnapSuggestionIndex = -1;
+            _snapMentionStart = -1;
+            _snapMentionEnd = -1;
+        }
+
+        private void HideRegularSuggestions()
+        {
+            window.clearTimeout(_suggestionsDebounceTimeoutId);
+            // Hiding also invalidates a fetch already in flight: the input has moved on to a snap or
+            // filter context, and its popup is not something a late suggestion may draw over.
+            _suggestionsRequest++;
+            if (_hideSuggestions != null)
+            {
+                _hideSuggestions();
+                _hideSuggestions = null;
+            }
+            _highlightedSuggestionIndex = -1;
+        }
+
+        private void UpdateHighlightedSnapSuggestion(int offset)
+        {
+            if (_currentSnapSuggestionButtons.Count == 0) return;
+            var next = (_highlightedSnapSuggestionIndex + offset + _currentSnapSuggestionButtons.Count) % _currentSnapSuggestionButtons.Count;
+            HighlightSnapSuggestion(next);
+        }
+
+        private void HighlightSnapSuggestion(int index)
+        {
+            if (_highlightedSnapSuggestionIndex >= 0 && _highlightedSnapSuggestionIndex < _currentSnapSuggestionButtons.Count)
+            {
+                _currentSnapSuggestionButtons[_highlightedSnapSuggestionIndex].RemoveClass("tss-omnibox-suggestion-highlight");
+            }
+            _highlightedSnapSuggestionIndex = index;
+            if (_highlightedSnapSuggestionIndex >= 0 && _highlightedSnapSuggestionIndex < _currentSnapSuggestionButtons.Count)
+            {
+                _currentSnapSuggestionButtons[_highlightedSnapSuggestionIndex].Class("tss-omnibox-suggestion-highlight").ScrollIntoView();
+            }
+        }
+
+        private void CommitSnap(SnapHandler snap)
+        {
+            if (snap == null) return;
+            if (_snapMentionStart < 0 || _snapMentionEnd < 0) return;
+
+            var val = _searchInput.value;
+            var start = _snapMentionStart;
+            var end = _snapMentionEnd;
+            if (start < 0 || end > val.Length || start > end)
+            {
+                HideSnapSuggestions();
+                return;
+            }
+
+            var before = val.Substring(0, start);
+            var after = val.Substring(end);
+
+            // Strip a single trailing space we'd otherwise leave dangling
+            if (before.Length > 0 && (before[before.Length - 1] == ' ' || before[before.Length - 1] == specialWhitespace) &&
+                after.StartsWith(" "))
+            {
+                after = after.Substring(1);
+            }
+
+            var newVal = before + after;
+            _searchInput.value = newVal;
+            _searchInput.setSelectionRange((uint)before.Length, (uint)before.Length);
+
+            InlineFilterChips.Add(new InlineFilterChip(snap));
+
+            HideSnapSuggestions();
+            OnSearchInputChanged();
+            _searchInput.focus();
+        }
+
+        /// <summary>True while the microphone button is listening.</summary>
+        public bool IsDictating => _dictation is object;
+
+        /// <summary>The text of the input that is showing, the one dictation goes into: the chat input in <see cref="Mode.Chat"/>, the search input otherwise.</summary>
+        string IDictationTarget.Text
+        {
+            get => (_mode == Mode.SearchAndChat ? _activeMode.Value : _mode) == Mode.Chat ? ChatText : SearchText;
+            set
+            {
+                if ((_mode == Mode.SearchAndChat ? _activeMode.Value : _mode) == Mode.Chat) ChatText = value;
+                else SearchText = value;
+            }
+        }
+
+        bool IDictationTarget.IsEditable => IsEnabled;
+
+        /// <summary>True when the box has a microphone button (<see cref="Config.DictationButton"/>) and something can supply words for it.</summary>
+        bool IDictationTarget.CanDictate => _dictateBtn is object && Dictation.Resolve(_dictationProvider) is object;
+
+        void IDictationTarget.BeginDictation() => StartDictation();
+
+        void IDictationTarget.EndDictation() => StopDictation();
+
+        /// <summary>
+        /// Starts dictating into the active input, as pressing the microphone button does (the text already in the
+        /// box stays, the transcript is added after it). Does nothing without <see cref="Config.DictationButton"/>, when
+        /// already dictating, or when nothing can supply words.
+        /// </summary>
+        public OmniBox StartDictation()
+        {
+            if (_dictateBtn is null || _dictation is object) return this;
+
+            var provider = Dictation.Resolve(_dictationProvider);
+            if (provider is null) return this;
+
+            _dictationMode      = _mode == Mode.SearchAndChat ? _activeMode.Value : _mode;
+            _dictationCommitted = (_dictationMode == Mode.Chat ? ChatText : SearchText) ?? string.Empty;
+
+            DictationSession session = null;
+            session = new DictationSession(_dictationCommitted, (text, final) => OnDictationTranscript(session, text, final), error => OnDictationEnded(session, error));
+            _dictation = session;
+            SetDictatingState(true);
+
+            Action stop;
+            try
+            {
+                stop = provider(session);
+            }
+            catch
+            {
+                OnDictationEnded(session, null);
+                throw;
+            }
+
+            // A provider that ended the session while starting (no microphone) has nothing left to stop.
+            if (_dictation == session) _stopDictation = stop;
+
+            return this;
+        }
+
+        /// <summary>Stops dictating; what was heard stays in the box.</summary>
+        public OmniBox StopDictation()
+        {
+            var session = _dictation;
+            if (session is null) return this;
+
+            var stop = _stopDictation;
+            _dictation     = null;
+            _stopDictation = null;
+            SetDictatingState(false);
+
+            // A source that transcribes what it was sent (a speech-to-text service) answers a moment after being told to stop, with the last
+            // words. The session keeps taking them until the provider ends it - or for a few seconds, or until the message is sent.
+            DropLingering();
+            _lingering   = session;
+            _lingerTimer = window.setTimeout(_ => DropLingering(), 5000);
+
+            stop?.Invoke();
+            return this;
+        }
+
+        private void DropLingering()
+        {
+            if (_lingering is null) return;
+
+            window.clearTimeout(_lingerTimer);
+            _lingering.Stop();
+            _lingering = null;
+        }
+
+        private void ToggleDictation()
+        {
+            if (_dictation is object) StopDictation();
+            else StartDictation();
+        }
+
+        private void OnDictationTranscript(DictationSession session, string text, bool isFinal)
+        {
+            if (session != _dictation && session != _lingering) return;
+
+            var composed = JoinDictation(_dictationCommitted, text);
+
+            if (_dictationMode == Mode.Chat)
+            {
+                if (_maxChatCharacters > 0 && composed.Length > _maxChatCharacters) composed = composed.Substring(0, _maxChatCharacters);
+                ChatText = composed;
+            }
+            else
+            {
+                SearchText = composed;
+            }
+
+            if (isFinal) _dictationCommitted = composed;
+        }
+
+        private void OnDictationEnded(DictationSession session, string error)
+        {
+            if (session == _lingering)
+            {
+                window.clearTimeout(_lingerTimer);
+                _lingering = null;
+
+                if (error is object) Toast().Error(error);
+                return;
+            }
+
+            if (session != _dictation) return;
+
+            _dictation     = null;
+            _stopDictation = null;
+            SetDictatingState(false);
+
+            if (error is object) Toast().Error(error);
+        }
+
+        private static string JoinDictation(string before, string heard)
+        {
+            if (string.IsNullOrEmpty(before)) return heard;
+            if (string.IsNullOrEmpty(heard)) return before;
+
+            var glued = char.IsWhiteSpace(before[before.Length - 1]) || char.IsWhiteSpace(heard[0]);
+            return glued ? before + heard : before + " " + heard;
+        }
+
+        private void SetDictatingState(bool on)
+        {
+            _container.classList.toggle("tss-omnibox-dictating", on);
+
+            var el = _dictateBtn.Render();
+            el.classList.toggle("tss-omnibox-dictating-btn", on);
+            el.setAttribute("aria-pressed", on ? "true" : "false");
+            _dictateBtn.Tooltip(on ? "Stop dictation".t() : "Dictate".t());
+        }
+
+        private void TriggerChat()
+        {
+            StopDictation();
+            DropLingering();
+
+            if (_isGenerating && !CanSendWhileGenerating)
+            {
+                // A stop already asked for is not asked for again: the trigger is spinning until the host says it is over.
+                if (!_isStopping) TriggerStop();
+                return;
+            }
+            var val = ChatText;
+            var hadFocus = ChatHasFocus();
+            AddToChatHistory(val);
+            Chatted?.Invoke(this, new ChatMessage() { Text = val });
+            SetChatSegmentsFromText("");
+            if (hadFocus) _chatInput.focus();
+        }
+
+        // While generating, the trigger sends instead of stopping only when the host asked for it and
+        // there is actually something to send - an empty input still offers "stop".
+        private bool CanSendWhileGenerating => _allowSendWhileGenerating && _chatInput != null && !string.IsNullOrWhiteSpace(ChatText);
+
+        private void UpdateChatTriggerActiveState()
+        {
+            if (_chatTriggerBtn == null || _chatInput == null) return;
+            var hasText = !string.IsNullOrWhiteSpace(ChatText);
+            var el = _chatTriggerBtn.Render();
+            if (hasText) el.classList.add("tss-omnibox-chat-btn-active");
+            else el.classList.remove("tss-omnibox-chat-btn-active");
+
+            // What the trigger does while generating depends on whether there is text, so typing (or
+            // clearing) the input is what flips it between "send" and "stop".
+            UpdateChatTriggerIcon();
+        }
+
+        /// <summary>Put on the trigger's icon for the moment it turns from "send" into "stop" or back (tss.omnibox.css).</summary>
+        private const string CHAT_TRIGGER_SWAP_CLASS = "tss-omnibox-chat-btn-swap";
+
+        // The trigger is built showing "send"
+        private bool _chatTriggerShowsStop;
+        private bool _chatTriggerSpinning;
+
+        private void UpdateChatTriggerIcon()
+        {
+            if (_chatTriggerBtn == null) return;
+
+            //Runs on every keystroke, and only a change of glyph is worth redrawing - or animating
+            var showStop = _isGenerating && !CanSendWhileGenerating;
+
+            // While the host is stopping the reply the stop glyph gives way to the button's own spinner; with
+            // text in the input the trigger is "send" again, and a send is still allowed while stopping.
+            var spin = showStop && _isStopping;
+
+            if (spin != _chatTriggerSpinning)
+            {
+                _chatTriggerSpinning = spin;
+
+                if (spin) _chatTriggerBtn.ToSpinner();
+                else      _chatTriggerBtn.UndoSpinner();
+            }
+
+            if (showStop == _chatTriggerShowsStop) return;
+
+            _chatTriggerShowsStop = showStop;
+
+            if (showStop)
+            {
+                _chatTriggerBtn.SetIcon(_iconStop).Danger();
+            }
+            else
+            {
+                _chatTriggerBtn.SetIcon(_iconChat);
+                _chatTriggerBtn.IsDanger = false;
+            }
+
+            var icon = _chatTriggerBtn.Render().querySelector("i").As<HTMLElement>();
+
+            if (icon is null) return;
+
+            //Taken off and put back a frame later, so a swap that lands mid-animation plays from the start
+            icon.classList.remove(CHAT_TRIGGER_SWAP_CLASS);
+            window.requestAnimationFrame(_ => icon.classList.add(CHAT_TRIGGER_SWAP_CLASS));
+        }
+
+        // Below this share of the budget the counter says nothing: a message nowhere near the limit
+        // has no use for a number next to the send button.
+        private const double CHAT_COUNTER_VISIBLE_FROM = 0.5;
+
+        // Shows how much of the character budget the message has spent, once it is worth knowing.
+        private void UpdateChatCounter()
+        {
+            if (_chatCounter is null || _chatInput is null) return;
+
+            ApplyChatBudget();
+
+            var used = (ChatText ?? string.Empty).Length;
+
+            if (_maxChatCharacters > 0 && used > _maxChatCharacters * CHAT_COUNTER_VISIBLE_FROM)
+            {
+                _chatCounter.Text = used + " / " + _maxChatCharacters;
+                _chatCounter.Show();
+            }
+            else
+            {
+                _chatCounter.Collapse();
+            }
+        }
+
+        // Maximum height (in px) the chat input grows to before it starts scrolling internally.
+        private const int chatInputMaxHeight = 200;
+
+        // Grows/shrinks the chat textarea to fit its content (so wrapped long text expands onto new
+        // lines instead of scrolling horizontally), capped at chatInputMaxHeight where it scrolls.
+        private void ResizeChatInput()
+        {
+            if (_chatInput == null) return;
+
+            foreach (var t in ChatTextAreas.ToArray())
+            {
+                var textarea = t;
+                ContentHeight.FitWhenRendered(textarea, () => FitChatInput(textarea));
+            }
+        }
+
+        private void FitChatInput(HTMLTextAreaElement textarea)
+        {
+            // With code boxes in it the whole input scrolls (tss.omnibox.css caps it), so no one textarea scrolls on
+            // its own; collapsing one to measure it must not throw away where that scroll was.
+            var capped    = !HasCodeBlocks;
+            var scrollTop = _chatContainer?.scrollTop ?? 0;
+
+            // Reset to auto so scrollHeight reflects the content height, not the current box height.
+            textarea.style.height = "auto";
+            var contentHeight = textarea.scrollHeight;
+
+            if (capped && contentHeight > chatInputMaxHeight)
+            {
+                textarea.style.height = chatInputMaxHeight + "px";
+                textarea.style.overflowY = "auto";
+            }
+            else
+            {
+                textarea.style.height = contentHeight + "px";
+                textarea.style.overflowY = "hidden";
+            }
+
+            if (_chatContainer is object && _chatContainer.scrollTop != scrollTop) _chatContainer.scrollTop = scrollTop;
+        }
+
+        private void TriggerStop()
+        {
+            Stopped?.Invoke(this);
+        }
+
+        //Read off the items rather than clipboardData.files: a pasted screenshot is an item of kind
+        //"file" that some browsers do not also put in the file list.
+        private static File[] FilesOnClipboard(ClipboardEvent ev)
+        {
+            var data = ev?.clipboardData;
+
+            if (data is null) return new File[0];
+
+            var files = new List<File>();
+
+            foreach (var item in data.items)
+            {
+                if (item is null || item.kind != "file") continue;
+
+                var file = item.getAsFile();
+
+                if (file is object) files.Add(file);
+            }
+
+            return files.ToArray();
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the search event fires.
+        /// </summary>
+        public OmniBox OnSearch(SearchEventHandler onSearch)
+        {
+            Searched += onSearch;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the chat event fires.
+        /// </summary>
+        public OmniBox OnChat(ChatEventHandler onChat)
+        {
+            Chatted += onChat;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when something is pasted into the chat input, so the host can
+        /// take what the input cannot: an image on the clipboard, a copied file.
+        /// </summary>
+        /// <remarks>
+        /// The handler decides. Set <see cref="ChatPaste.Handled"/> to keep the paste out of the
+        /// input; leave it alone and the paste happens as it always would, which is what a handler
+        /// that only wants the files should do when a paste carries text as well.
+        /// </remarks>
+        public OmniBox OnChatPaste(ChatPasteEventHandler onChatPaste)
+        {
+            ChatPasted += onChatPaste;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the stop event fires.
+        /// </summary>
+        public OmniBox OnStop(StopEventHandler onStop)
+        {
+            Stopped += onStop;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the model changed event fires.
+        /// </summary>
+        public OmniBox OnModelChanged(ModelChangedEventHandler onModelChanged)
+        {
+            ModelChanged += onModelChanged;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the models of the component.
+        /// </summary>
+        public OmniBox SetModels(params ModelOption[] models)
+        {
+            return SetModels((IEnumerable<ModelOption>)models);
+        }
+
+        /// <summary>
+        /// Sets the models of the component.
+        /// </summary>
+        public OmniBox SetModels(IEnumerable<ModelOption> models)
+        {
+            if (_modelSelectorBtn == null)
+            {
+                throw new InvalidOperationException("SetModels can only be called when OmniBox is in Chat or SearchAndChat mode.");
+            }
+
+            _isModelLocked = false;
+            _models = models?.ToList() ?? new List<ModelOption>();
+
+            if (_selectedModel == null || !_models.Contains(_selectedModel))
+            {
+                _selectedModel = _models.FirstOrDefault();
+            }
+
+            UpdateModelSelectorButton();
+            return this;
+        }
+
+        /// <summary>
+        /// Locks the OmniBox to the given model option so users cannot pick another.
+        /// </summary>
+        public OmniBox LockModel(ModelOption model)
+        {
+            if (_modelSelectorBtn == null)
+            {
+                throw new InvalidOperationException("LockModel can only be called when OmniBox is in Chat or SearchAndChat mode.");
+            }
+            if (model == null)
+            {
+                throw new ArgumentNullException(nameof(model));
+            }
+
+            _isModelLocked = true;
+            _models = new List<ModelOption> { model };
+            _selectedModel = model;
+
+            if (_hideModelPopover != null)
+            {
+                _hideModelPopover();
+                _hideModelPopover = null;
+            }
+
+            UpdateModelSelectorButton();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the thinking effort of the component.
+        /// </summary>
+        public OmniBox SetThinkingEffort(ThinkingEffort effort)
+        {
+            _selectedEffort = effort;
+            UpdateModelSelectorButton();
+            return this;
+        }
+
+        /// <summary>
+        /// Gets or sets the selected model.
+        /// </summary>
+        public ModelOption SelectedModel => _selectedModel;
+
+        /// <summary>
+        /// Which half of a <see cref="Mode.SearchAndChat"/> box is showing. Setting it switches the box and
+        /// moves its own toggle with it, so a host that drives the mode from somewhere else - a control in a
+        /// page header - and the box never disagree. On a box that is only search or only chat this is that
+        /// mode and setting it does nothing.
+        /// </summary>
+        public Mode ActiveMode
+        {
+            get => _mode == Mode.SearchAndChat ? _activeMode.Value : _mode;
+            set
+            {
+                if (_mode != Mode.SearchAndChat || value == Mode.SearchAndChat || value == _activeMode.Value) return;
+
+                //Selecting on the toggle is what tells its own observer, which then sets the active mode; a
+                //box whose toggle has been taken away has to be told directly.
+                if (_modeToggle is object) _modeToggle.Select(value);
+                else                       _activeMode.Value = value;
+            }
+        }
+
+        /// <summary>
+        /// Follows <see cref="ActiveMode"/> - what a host with a mode control of its own, or a header that
+        /// shows different things in each mode, listens to.
+        /// </summary>
+        public IObservable<Mode> ActiveModeObservable => _activeMode;
+
+        /// <summary>
+        /// Takes the Search/Chat toggle out of the box's own footer, for a host that puts one somewhere of
+        /// its own. <see cref="ActiveMode"/> still switches the box, and still reports which half is showing.
+        /// </summary>
+        public OmniBox NoModeToggle()
+        {
+            if (_modeToggle is object) _modeToggle.Collapse();
+
+            return this;
+        }
+        /// <summary>
+        /// Gets or sets the selected thinking effort.
+        /// </summary>
+        public ThinkingEffort SelectedThinkingEffort => _selectedEffort;
+        /// <summary>
+        /// Returns a value indicating whether the component is model locked.
+        /// </summary>
+        public bool IsModelLocked => _isModelLocked;
+
+        private static string FormatEffort(ThinkingEffort effort)
+        {
+            switch (effort)
+            {
+                case ThinkingEffort.Disable: return "Disabled";
+                case ThinkingEffort.Low:     return "Low";
+                case ThinkingEffort.Medium:  return "Medium";
+                case ThinkingEffort.High:    return "High";
+            }
+            return effort.ToString();
+        }
+
+        private void UpdateModelSelectorButton()
+        {
+            if (_modelSelectorBtn == null) return;
+
+            if (_selectedModel == null)
+            {
+                _modelSelectorBtn.Collapse();
+                return;
+            }
+
+            _modelSelectorBtn.Show();
+
+            var label = _selectedModel.Name;
+            if (_selectedEffort != ThinkingEffort.Disable)
+            {
+                label += " · " + FormatEffort(_selectedEffort);
+            }
+            _modelSelectorBtn.SetText(label);
+
+            if (_isModelLocked)
+            {
+                _modelSelectorBtn.Render().classList.add("tss-omnibox-model-selector-locked");
+                _modelSelectorBtn.Tooltip("Model locked");
+            }
+            else
+            {
+                _modelSelectorBtn.Render().classList.remove("tss-omnibox-model-selector-locked");
+            }
+        }
+
+        private void ShowModelPopover()
+        {
+            if (_modelSelectorBtn == null) return;
+            if (_isModelLocked) return;
+            if (_models == null || _models.Count == 0) return;
+
+            if (_hideModelPopover != null)
+            {
+                _hideModelPopover();
+                _hideModelPopover = null;
+                return;
+            }
+
+            var content = VStack().NoDefaultMargin().Class("tss-omnibox-model-selector-popover").MinWidth(220.px()).MaxHeight(500.px()).ScrollY();
+
+            content.Add(TextBlock("Models").Small().SemiBold().Class("tss-omnibox-model-selector-header"));
+
+            foreach (var model in _models)
+            {
+                var captured = model;
+                var isSelected = ReferenceEquals(captured, _selectedModel);
+
+                var row = HStack().WS().AlignItemsCenter().Class("tss-omnibox-model-selector-item");
+                row.Add(TextBlock(captured.Name).Class("tss-omnibox-model-selector-item-name"));
+                if (!string.IsNullOrEmpty(captured.Description))
+                {
+                    row.Add(TextBlock(captured.Description).Small().Secondary().ML(6));
+                }
+                row.Add(Raw(Div(Att("tss-omnibox-model-selector-spacer"))));
+                if (isSelected) row.Add(Icon(UIcons.Check).Class("tss-omnibox-model-selector-check"));
+
+                var btn = Button().Class("tss-omnibox-model-selector-row").WS().NoPadding().NoMinSize().NoBorder().NoBackground().TextLeft();
+                btn.ReplaceContent(row);
+                btn.OnClick(() =>
+                {
+                    _selectedModel = captured;
+                    UpdateModelSelectorButton();
+                    ModelChanged?.Invoke(this, _selectedModel, _selectedEffort);
+                    if (_hideModelPopover != null)
+                    {
+                        _hideModelPopover();
+                        _hideModelPopover = null;
+                    }
+                });
+                content.Add(btn);
+            }
+
+            content.Add(Raw(Div(Att("tss-omnibox-model-selector-divider"))));
+            content.Add(TextBlock("Thinking Effort").Small().SemiBold().Class("tss-omnibox-model-selector-header"));
+
+            foreach (ThinkingEffort effort in new[] { ThinkingEffort.Disable, ThinkingEffort.Low, ThinkingEffort.Medium, ThinkingEffort.High })
+            {
+                var captured = effort;
+                var isSelected = captured == _selectedEffort;
+
+                var row = HStack().WS().AlignItemsCenter().Class("tss-omnibox-model-selector-item");
+                row.Add(TextBlock(FormatEffort(captured)).Class("tss-omnibox-model-selector-item-name"));
+                row.Add(Raw(Div(Att("tss-omnibox-model-selector-spacer"))));
+                if (isSelected) row.Add(Icon(UIcons.Check).Class("tss-omnibox-model-selector-check"));
+
+                var btn = Button().Class("tss-omnibox-model-selector-row").WS().NoPadding().NoMinSize().NoBorder().NoBackground().TextLeft();
+                btn.ReplaceContent(row);
+                btn.OnClick(() =>
+                {
+                    _selectedEffort = captured;
+                    UpdateModelSelectorButton();
+                    ModelChanged?.Invoke(this, _selectedModel, _selectedEffort);
+                    if (_hideModelPopover != null)
+                    {
+                        _hideModelPopover();
+                        _hideModelPopover = null;
+                    }
+                });
+                content.Add(btn);
+            }
+
+            Tippy.ShowFor(_modelSelectorBtn, content, out _hideModelPopover, placement: TooltipPlacement.TopEnd, maxWidth: 400, onHiddenCallback: () => _hideModelPopover = null);
+        }
+
+        /// <summary>
+        /// Returns a value indicating whether the component is generating.
+        /// </summary>
+        public bool IsGenerating
+        {
+            get => _isGenerating;
+            set
+            {
+                if (_isGenerating == value) return;
+                _isGenerating = value;
+
+                // A reply that starts or ends is no longer stopping, whichever the host said last.
+                _isStopping = false;
+
+                UpdateChatTriggerIcon();
+
+                if (_chatTriggerBtn != null)
+                {
+                    if (value) _container.classList.add("tss-omnibox-generating");
+                    else       _container.classList.remove("tss-omnibox-generating");
+                }
+
+                if (value)
+                {
+                    StartGeneratingTimer();
+                }
+                else
+                {
+                    StopGeneratingTimer();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets whether the reply in flight is being stopped: the host asked for the stop and is
+        /// waiting for the generation to actually end. The trigger shows the button's own spinner instead of
+        /// the stop glyph and does not raise <see cref="OnStop"/> again; a message typed meanwhile is sent as
+        /// usual when <see cref="AllowSendWhileGenerating"/> is on. Cleared when <see cref="IsGenerating"/>
+        /// changes, so a host only has to set it; set the footer's <see cref="GeneratingText"/> alongside it
+        /// to say "Stopping" there too.
+        /// </summary>
+        public bool IsStopping
+        {
+            get => _isStopping;
+            set
+            {
+                if (_isStopping == value) return;
+                _isStopping = value;
+                UpdateChatTriggerIcon();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets whether a message typed while <see cref="IsGenerating"/> is set is sent instead of
+        /// the trigger stopping the reply in flight — for a host that queues it for the turn in progress.
+        /// The trigger still offers "stop" while the input is empty.
+        /// </summary>
+        public bool AllowSendWhileGenerating
+        {
+            get => _allowSendWhileGenerating;
+            set
+            {
+                if (_allowSendWhileGenerating == value) return;
+                _allowSendWhileGenerating = value;
+                UpdateChatTriggerIcon();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the label shown next to the spinner while generating (defaults to "Generating").
+        /// The elapsed time is appended after it, e.g. "Generating, 1m 25s". Setting it updates the
+        /// footer immediately when a generation is in progress.
+        /// </summary>
+        public string GeneratingText
+        {
+            get => _generatingLabel;
+            set
+            {
+                _generatingLabel = value ?? string.Empty;
+                if (_isGenerating)
+                {
+                    UpdateGeneratingText();
+                }
+                else if (_generatingText != null)
+                {
+                    _generatingText.innerText = _generatingLabel;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets when the generation in progress started — what the footer's elapsed time counts
+        /// from. Setting <see cref="IsGenerating"/> starts it at the current time; set it afterwards to
+        /// backdate a generation that began before this box knew about it, e.g. a reply that was already
+        /// running when its chat was opened. A time in the future counts as now.
+        /// </summary>
+        public DateTimeOffset GeneratingStartedAt
+        {
+            get => DateTimeOffset.FromUnixTimeMilliseconds((long)_generatingStartMs);
+            set
+            {
+                _generatingStartMs = Math.Min(value.ToUnixTimeMilliseconds(), Transpose.Core.es5.Date.now());
+
+                if (_isGenerating) UpdateGeneratingText();
+            }
+        }
+
+        private void StartGeneratingTimer()
+        {
+            window.clearInterval(_generatingTimer);
+            _generatingStartMs = Transpose.Core.es5.Date.now();
+
+            UpdateGeneratingText();
+
+            _generatingTimer = window.setInterval(_ => UpdateGeneratingText(), 1000);
+        }
+
+        private void StopGeneratingTimer()
+        {
+            window.clearInterval(_generatingTimer);
+            _generatingTimer = 0;
+        }
+
+        private void UpdateGeneratingText()
+        {
+            if (_generatingText is null) return;
+
+            var elapsedSeconds = (int)Math.Floor((Transpose.Core.es5.Date.now() - _generatingStartMs) / 1000);
+
+            _generatingText.innerText = string.IsNullOrEmpty(_generatingLabel)
+                ? FormatElapsed(elapsedSeconds)
+                : _generatingLabel + ", " + FormatElapsed(elapsedSeconds);
+        }
+
+        private static string FormatElapsed(int totalSeconds)
+        {
+            if (totalSeconds < 0) totalSeconds = 0;
+
+            var hours   = totalSeconds / 3600;
+            var minutes = (totalSeconds % 3600) / 60;
+            var seconds = totalSeconds % 60;
+
+            if (hours > 0) return $"{hours}h {minutes}m {seconds}s";
+            if (minutes > 0) return $"{minutes}m {seconds}s";
+
+            return $"{seconds}s";
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the input event fires.
+        /// </summary>
+        public OmniBox OnInput(ComponentEventHandler<OmniBox, Event> onInput)
+        {
+            Input += onInput;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the key down event fires.
+        /// </summary>
+        public OmniBox OnKeyDown(ComponentEventHandler<OmniBox, KeyboardEvent> onKeyDown)
+        {
+            KeyDown += onKeyDown;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the key up event fires.
+        /// </summary>
+        public OmniBox OnKeyUp(ComponentEventHandler<OmniBox, KeyboardEvent> onKeyUp)
+        {
+            KeyUp += onKeyUp;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the key press event fires.
+        /// </summary>
+        public OmniBox OnKeyPress(ComponentEventHandler<OmniBox, KeyboardEvent> onKeyPress)
+        {
+            KeyPress += onKeyPress;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the focus event fires.
+        /// </summary>
+        public OmniBox OnFocus(ComponentEventHandler<OmniBox, Event> onFocus)
+        {
+            ReceivedFocus += onFocus;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the blur event fires.
+        /// </summary>
+        public OmniBox OnBlur(ComponentEventHandler<OmniBox, Event> onBlur)
+        {
+            LostFocus += onBlur;
+            return this;
+        }
+
+        /// <summary>
+        /// Shows a history button on the left of the search input that lists the recent searches
+        /// <paramref name="historyFetcher"/> returns, most recent first, and turns on Up/Down history in
+        /// the search input: Up in the empty box fetches the same list and puts its first entry in the box,
+        /// each further Up goes one search further back, and Down comes forward again, back to the empty box.
+        /// The searches made in this box since it was built are walked first even when the fetcher does not
+        /// return them yet. Typing or deleting anything ends the walk, and Up/Down go back to moving the caret.
+        /// </summary>
+        public OmniBox WithHistory(Func<Task<SearchQuery[]>> historyFetcher)
+        {
+            _historyFetcher = historyFetcher;
+            _searchHistoryBtn.Show();
+            return this;
+        }
+
+        /// <summary>
+        /// Like <see cref="WithHistory(Func{Task{SearchQuery[]}})"/>, and gives every entry of the history list a
+        /// remove button. <paramref name="removeFromHistory"/> is handed the entry - one of the queries the fetcher
+        /// returned - and forgets it wherever the history is kept; the entry leaves the list once it has completed,
+        /// and stays when it throws.
+        /// </summary>
+        public OmniBox WithHistory(Func<Task<SearchQuery[]>> historyFetcher, Func<SearchQuery, Task> removeFromHistory)
+        {
+            _historyRemover = removeFromHistory;
+            return WithHistory(historyFetcher);
+        }
+
+        /// <summary>
+        /// The messages Up walks back through in the empty chat input, oldest first: what
+        /// <see cref="WithChatHistory"/> was given, plus every message sent from this box since.
+        /// </summary>
+        public IReadOnlyList<string> ChatHistory => _chatHistory;
+
+        /// <summary>
+        /// Replaces the chat history with <paramref name="messages"/>, in the order they were sent (oldest
+        /// first, the order a conversation reads in) - typically the user's own messages, gathered when a
+        /// conversation is opened. Up in the empty chat input puts the most recent one in the box, each
+        /// further Up goes one message further back, and Down comes forward again, back to the empty box.
+        /// Typing or deleting anything ends the walk, and Up/Down go back to moving the caret. Every message
+        /// sent from the box is added for you, so this only needs calling for what was sent before it existed.
+        /// </summary>
+        public OmniBox WithChatHistory(IEnumerable<string> messages)
+        {
+            if (_chatInput is null)
+            {
+                throw new InvalidOperationException("WithChatHistory can only be called when OmniBox is in Chat or SearchAndChat mode.");
+            }
+
+            _chatHistory.Clear();
+            _chatHistoryWalk.End();
+
+            if (messages is object)
+            {
+                foreach (var message in messages) AddToChatHistory(message);
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Adds <paramref name="message"/> to the end of the chat history, as the most recent message - for
+        /// one sent some other way than through this box. Blank messages, and a repeat of the most recent
+        /// one, are skipped.
+        /// </summary>
+        public OmniBox AddToChatHistory(string message)
+        {
+            if (_chatInput is null)
+            {
+                throw new InvalidOperationException("AddToChatHistory can only be called when OmniBox is in Chat or SearchAndChat mode.");
+            }
+
+            _chatHistoryWalk.End();
+
+            if (string.IsNullOrWhiteSpace(message)) return this;
+            if (_chatHistory.Count > 0 && _chatHistory[_chatHistory.Count - 1] == message) return this;
+
+            _chatHistory.Add(message);
+            return this;
+        }
+
+        /// <summary>
+        /// Empties the chat history, so Up in the empty chat input has nothing to bring back until the next
+        /// message is sent.
+        /// </summary>
+        public OmniBox ClearChatHistory()
+        {
+            _chatHistory.Clear();
+            _chatHistoryWalk.End();
+            return this;
+        }
+
+        //Plain arrows only: Shift+Up selects, Alt/Ctrl/Cmd+Up have jobs of their own in a text field, and a host
+        //that took the key in its own OnKeyDown (raised first in the chat input) keeps it.
+        private static bool IsPlainArrowKey(KeyboardEvent ke) => !ke.shiftKey && !ke.altKey && !ke.ctrlKey && !ke.metaKey && !ke.defaultPrevented;
+
+        //True when the key was taken: the box moved, or Up was pressed at the oldest entry, which keeps the
+        //box where it is rather than letting the caret jump to the start of the text.
+        private bool TryWalkChatHistory(KeyboardEvent ke, bool older)
+        {
+            if (!IsPlainArrowKey(ke)) return false;
+
+            var current = ChatText;
+
+            if (!_chatHistoryWalk.IsWalking(current))
+            {
+                //Only Up starts a walk, and only from an empty box: anywhere else the arrows belong to the caret
+                if (!older || !string.IsNullOrEmpty(current) || _chatHistory.Count == 0) return false;
+
+                var newestFirst = new string[_chatHistory.Count];
+                for (int i = 0; i < newestFirst.Length; i++) newestFirst[i] = _chatHistory[_chatHistory.Count - 1 - i];
+                _chatHistoryWalk.Start(newestFirst);
+            }
+
+            if (!_chatHistoryWalk.CanStep(older)) return older;
+
+            ChatText = _chatHistoryWalk.Step(older);
+            //What the box holds, not what was asked for: a textarea normalizes line endings as it takes a value
+            _chatHistoryWalk.Shown(ChatText);
+
+            FocusSegment(_chatSegments[_chatSegments.Count - 1], atEnd: true);
+            return true;
+        }
+
+        private bool TryWalkSearchHistory(KeyboardEvent ke, bool older)
+        {
+            if (_historyFetcher is null || !IsPlainArrowKey(ke)) return false;
+
+            var current = _searchInput.value;
+
+            if (_searchHistoryWalk.IsWalking(current))
+            {
+                if (!_searchHistoryWalk.CanStep(older)) return older;
+                ShowSearchHistoryStep(older);
+                return true;
+            }
+
+            if (!older || !string.IsNullOrEmpty(current)) return false;
+
+            StartSearchHistoryWalk();
+            return true;
+        }
+
+        private async void StartSearchHistoryWalk()
+        {
+            var request = ++_searchHistoryRequest;
+
+            SearchQuery[] fetched;
+
+            try
+            {
+                fetched = await _historyFetcher();
+            }
+            catch (Exception ex)
+            {
+                console.error("Failed to fetch history: ", ex);
+                return;
+            }
+
+            //Up again while this was in flight started a newer fetch, and typing, or leaving the box, means the
+            //user has moved on - either way this answer is not for the box as it is now.
+            if (request != _searchHistoryRequest || !string.IsNullOrEmpty(_searchInput.value) || document.activeElement != _searchInput) return;
+
+            //This box's own searches first, newest first: the fetcher may not have heard of the latest yet
+            var entries = new List<string>();
+
+            for (int i = _searchesSent.Count - 1; i >= 0; i--) AddDistinct(entries, _searchesSent[i]);
+
+            if (fetched is object)
+            {
+                foreach (var q in fetched)
+                {
+                    if (q is object) AddDistinct(entries, NormalizeRawQuery(q.RawQuery));
+                }
+            }
+
+            if (entries.Count == 0) return;
+
+            _searchHistoryWalk.Start(entries.ToArray());
+            ShowSearchHistoryStep(older: true);
+
+            void AddDistinct(List<string> list, string value)
+            {
+                if (!string.IsNullOrWhiteSpace(value) && !list.Contains(value)) list.Add(value);
+            }
+        }
+
+        private void ShowSearchHistoryStep(bool older)
+        {
+            //A late suggestions answer would otherwise open over the recalled search and take the next Down
+            HideRegularSuggestions();
+
+            SearchText = _searchHistoryWalk.Step(older);
+            //What the box holds, not what was asked for: the operator tokens are padded as the text goes in
+            _searchHistoryWalk.Shown(_searchInput.value);
+
+            var end = (uint)_searchInput.value.Length;
+            _searchInput.setSelectionRange(end, end);
+            SyncScroll();
+        }
+
+        private void RememberSearch(string rawQuery)
+        {
+            _searchHistoryWalk.End();
+
+            var query = NormalizeRawQuery(rawQuery);
+            if (string.IsNullOrWhiteSpace(query)) return;
+
+            //Searching for something again makes it the most recent search, not a second entry
+            _searchesSent.Remove(query);
+            _searchesSent.Add(query);
+        }
+
+        private static string NormalizeRawQuery(string rawQuery) => rawQuery?.Replace(specialWhitespaceString, " ").Trim();
+
+        /// <summary>
+        /// Up/Down through earlier entries, the way a shell walks its history. A walk starts from an empty box
+        /// and lasts as long as the box still shows what the walk last put there: typing, deleting or pasting
+        /// anything changes the text, which ends it without anyone having to listen for the edit.
+        /// </summary>
+        private sealed class HistoryWalk
+        {
+            private string[] _entries = Array.Empty<string>(); // most recent first
+            private int      _index   = -1;                    // -1 is the empty box the walk started from
+            private string   _shown;                           // what the box held after the last step; null while not walking
+
+            public bool IsWalking(string current) => _shown is object && current == _shown;
+
+            public void Start(string[] newestFirst)
+            {
+                _entries = newestFirst;
+                _index   = -1;
+                _shown   = string.Empty;
+            }
+
+            public void End()
+            {
+                _entries = Array.Empty<string>();
+                _index   = -1;
+                _shown   = null;
+            }
+
+            public bool CanStep(bool older) => older ? _index + 1 < _entries.Length : _index >= 0;
+
+            //Coming forward past the most recent entry is the empty box again, and the walk is over: the next Up
+            //starts afresh, from history as it is by then
+            public string Step(bool older)
+            {
+                _index += older ? 1 : -1;
+
+                if (_index >= 0) return _entries[_index];
+
+                End();
+                return string.Empty;
+            }
+
+            //Ignored once a step has ended the walk
+            public void Shown(string text)
+            {
+                if (_shown is object) _shown = text;
+            }
+        }
+
+        /// <summary>
+        /// Enables a help button next to the search input that opens a popup listing the registered
+        /// filter snaps (and snaps), each with the trigger word and an example value (or the description
+        /// as a fallback). When <paramref name="showSyntax"/> is <c>true</c>, the popup also includes a
+        /// "Query syntax" section describing the boolean operators (<c>AND</c>, <c>OR</c>, <c>NOT</c>),
+        /// grouping with parentheses, and exact-phrase quoting, with a short example next to each.
+        /// Recent searches are reached via the separate history button configured with
+        /// <see cref="WithHistory(Func{Task{SearchQuery[]}})"/>.
+        /// </summary>
+        public OmniBox WithHelp(bool showSyntax = false)
+        {
+            if (_mode != Mode.Search && _mode != Mode.SearchAndChat)
+            {
+                throw new InvalidOperationException("WithHelp can only be called when OmniBox is in Search or SearchAndChat mode.");
+            }
+            _helpShowSyntax = showSyntax;
+            _searchHelpBtn.Show();
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a primary-styled action button at the end of the search input — the way out of a search
+        /// that isn't finding it, over to whatever answers the question instead. The button follows the
+        /// box's roundness, so a box made round with <see cref="Rounded(BorderRadius)"/> gets a pill.
+        /// Search modes only: in <see cref="Mode.SearchAndChat"/> the button sits at the end of the
+        /// footer and hides itself while the box is in chat mode. Calling this again updates the button
+        /// that is already there; passing a null or empty <paramref name="text"/> hides it.
+        /// </summary>
+        /// <param name="text">The button label, e.g. "Ask AI".</param>
+        /// <param name="icon">The icon shown before the label.</param>
+        /// <param name="onClick">Called with this OmniBox when the button is clicked — read
+        /// <see cref="SearchText"/> from it to know what was typed.</param>
+        public OmniBox WithAskAI(string text = "Ask AI", UIcons icon = UIcons.Beacon, Action<OmniBox> onClick = null)
+        {
+            if (_mode != Mode.Search && _mode != Mode.SearchAndChat)
+            {
+                throw new InvalidOperationException("WithAskAI can only be called when OmniBox is in Search or SearchAndChat mode.");
+            }
+
+            _onAskAI = onClick;
+
+            if (_askAIBtn is null)
+            {
+                _askAIBtn = Button().Primary().Class("tss-omnibox-ask-ai-btn").OnClick(() =>
+                {
+                    if (!IsEnabled) return;
+                    _onAskAI?.Invoke(this);
+                });
+
+                if (_mode == Mode.Search)
+                {
+                    _searchContainer.appendChild(_askAIBtn.Render());
+                }
+                else
+                {
+                    _footer.appendChild(_askAIBtn.Render());
+                }
+            }
+
+            if (string.IsNullOrEmpty(text))
+            {
+                _askAIBtn.Collapse();
+                return this;
+            }
+
+            _askAIBtn.SetText(text).SetIcon(icon).Show();
+            return this;
+        }
+
+        private void ShowSearchHelp()
+        {
+            var content = VStack().NoDefaultMargin().W(520).MaxHeight(500.px()).ScrollY().Class("tss-omnibox-help-panel");
+            Action hide = null;
+
+            var hasFilters = _filterSnapHandlers.Count > 0;
+            var hasSnaps = _snapHandlers.Count > 0;
+
+            if (hasFilters)
+            {
+                content.Add(TextBlock("ADD A FIELD FILTER").Small().SemiBold().Class("tss-omnibox-help-header"));
+                foreach (var f in _filterSnapHandlers)
+                {
+                    var captured = f;
+                    var trigger = (captured.TriggerWords != null && captured.TriggerWords.Length > 0) ? captured.TriggerWords[0] : captured.FilterId;
+                    var example = !string.IsNullOrEmpty(captured.ExampleValue)
+                        ? captured.ExampleValue
+                        : (captured.IsTimeRange ? "yyyy-MM-dd" : (string.IsNullOrEmpty(captured.Description) ? captured.DisplayName : captured.Description));
+
+                    var btn = Button().Class("tss-omnibox-help-entry").WS().NoPadding().NoMinSize().H(40).MB(4).NoBorder().NoBackground().TextLeft();
+                    var row = HStack().WS().AlignItems(ItemAlign.Center).PaddingLeft(12.px()).PaddingRight(12.px());
+                    if (captured.Icon != null) row.Add(CloneIcon(captured.Icon).MR(8));
+                    var triggerSpan = TextBlock(trigger + ":").Class("tss-omnibox-help-trigger");
+                    row.Add(triggerSpan);
+                    row.Add(TextBlock(example).Class("tss-omnibox-help-example").ML(6));
+                    btn.ReplaceContent(row);
+                    btn.OnClick(() =>
+                    {
+                        InsertFilterTriggerIntoInput(trigger);
+                        hide?.Invoke();
+                    });
+                    content.Add(btn);
+                }
+            }
+
+            if (hasSnaps)
+            {
+                content.Add(TextBlock("ADD A SNAP").Small().SemiBold().Class("tss-omnibox-help-header"));
+                foreach (var s in _snapHandlers)
+                {
+                    var captured = s;
+                    var trigger = (captured.TriggerWords != null && captured.TriggerWords.Length > 0) ? captured.TriggerWords[0] : captured.SnapId;
+                    var example = !string.IsNullOrEmpty(captured.ExampleValue)
+                        ? captured.ExampleValue
+                        : (string.IsNullOrEmpty(captured.Description) ? captured.DisplayName : captured.Description);
+
+                    var btn = Button().Class("tss-omnibox-help-entry").WS().NoPadding().NoMinSize().H(40).MB(4).NoBorder().NoBackground().TextLeft();
+                    var row = HStack().WS().AlignItems(ItemAlign.Center).PaddingLeft(12.px()).PaddingRight(12.px());
+                    if (captured.Icon != null) row.Add(CloneIcon(captured.Icon).MR(8));
+                    var triggerSpan = TextBlock("@" + trigger).Class("tss-omnibox-help-trigger");
+                    row.Add(triggerSpan);
+                    row.Add(TextBlock(example).Class("tss-omnibox-help-example").ML(6));
+                    btn.ReplaceContent(row);
+                    btn.OnClick(() =>
+                    {
+                        InsertSnapTriggerIntoInput(trigger);
+                        hide?.Invoke();
+                    });
+                    content.Add(btn);
+                }
+            }
+
+            if (_helpShowSyntax)
+            {
+                content.Add(TextBlock("QUERY SYNTAX").Small().SemiBold().Class("tss-omnibox-help-header"));
+                AddSyntaxEntry(content, "AND", "Both terms must match", "alpha AND beta", () => hide);
+                AddSyntaxEntry(content, "OR",  "Either term may match", "alpha OR beta",   () => hide);
+                AddSyntaxEntry(content, "NOT", "Exclude matching term", "alpha NOT beta",  () => hide);
+                AddSyntaxEntry(content, "( )", "Group sub-expressions", "(alpha OR beta) AND gamma", () => hide);
+                AddSyntaxEntry(content, "\" \"", "Exact phrase",        "\"load testing\"",           () => hide);
+            }
+
+            if (!hasFilters && !hasSnaps && !_helpShowSyntax)
+            {
+                content.Add(Message("Nothing to show", "Register snaps or filter snaps to populate the help panel").Icon(UIcons.EmptySet).H(160));
+            }
+
+            window.setTimeout(_ =>
+            {
+                Tippy.ShowFor(_searchHelpBtn, content, out hide, placement: TooltipPlacement.BottomStart, maxWidth: 560, delayHide: 500);
+            }, 1);
+        }
+
+        private void InsertFilterTriggerIntoInput(string trigger)
+        {
+            var insertion = trigger + ":";
+            var val = _searchInput.value ?? string.Empty;
+            string newVal;
+            int newCursor;
+            if (string.IsNullOrEmpty(val) || val.EndsWith(" ") || val.EndsWith(specialWhitespaceString))
+            {
+                newVal = val + insertion;
+                newCursor = newVal.Length;
+            }
+            else
+            {
+                newVal = val + " " + insertion;
+                newCursor = newVal.Length;
+            }
+            _searchInput.value = newVal;
+            _searchInput.setSelectionRange((uint)newCursor, (uint)newCursor);
+            OnSearchInputChanged();
+            _searchInput.focus();
+            TryUpdateFilterSnapSuggestions();
+        }
+
+        private void InsertSnapTriggerIntoInput(string trigger)
+        {
+            var insertion = "@" + trigger;
+            var val = _searchInput.value ?? string.Empty;
+            string newVal;
+            int newCursor;
+            if (string.IsNullOrEmpty(val) || val.EndsWith(" ") || val.EndsWith(specialWhitespaceString))
+            {
+                newVal = val + insertion;
+                newCursor = newVal.Length;
+            }
+            else
+            {
+                newVal = val + " " + insertion;
+                newCursor = newVal.Length;
+            }
+            _searchInput.value = newVal;
+            _searchInput.setSelectionRange((uint)newCursor, (uint)newCursor);
+            OnSearchInputChanged();
+            _searchInput.focus();
+            TryUpdateSnapSuggestions();
+        }
+
+        private void AddSyntaxEntry(Stack content, string token, string description, string example, Func<Action> hideAccessor)
+        {
+            var btn = Button().Class("tss-omnibox-help-entry").WS().NoPadding().NoMinSize().H(40).MB(4).NoBorder().NoBackground().TextLeft();
+            var row = HStack().WS().AlignItems(ItemAlign.Center).PaddingLeft(12.px()).PaddingRight(12.px());
+            row.Add(TextBlock(token).Class("tss-omnibox-help-trigger"));
+            row.Add(TextBlock(description).Class("tss-omnibox-help-example").ML(6));
+            row.Add(TextBlock(example).Small().Secondary().ML(UnitSize.Auto()));
+            btn.ReplaceContent(row);
+            btn.OnClick(() =>
+            {
+                InsertExampleIntoInput(example);
+                hideAccessor?.Invoke()?.Invoke();
+            });
+            content.Add(btn);
+        }
+
+        private void InsertExampleIntoInput(string example)
+        {
+            if (string.IsNullOrEmpty(example)) return;
+            var val = _searchInput.value ?? string.Empty;
+            string newVal;
+            if (string.IsNullOrEmpty(val) || val.EndsWith(" ") || val.EndsWith(specialWhitespaceString))
+            {
+                newVal = val + example;
+            }
+            else
+            {
+                newVal = val + " " + example;
+            }
+            _searchInput.value = newVal;
+            _searchInput.setSelectionRange((uint)newVal.Length, (uint)newVal.Length);
+            OnSearchInputChanged();
+            _searchInput.focus();
+        }
+
+        private async Task ShowSearchHistory()
+        {
+            // Clicking the history button while the popup is already open toggles it closed
+            // instead of re-fetching and re-opening.
+            if (_hideSearchHistory != null)
+            {
+                _hideSearchHistory();
+                _hideSearchHistory = null;
+                return;
+            }
+
+            try
+            {
+                var query = await _historyFetcher();
+
+                var content = VStack().NoDefaultMargin().W(450).MaxHeight(500.px()).ScrollY();
+                Action hide = null;
+                var remaining = query.Length;
+
+                if (query.Length > 0)
+                {
+                    foreach(var q in query)
+                    {
+                        var entry = Button(q.RawQuery).Class("tss-omnibox-search-history-entry").SetIcon(UIcons.TimePast).WS().NoPadding().NoMinSize().H(32).MB(4).NoBorder().NoBackground().TextLeft().OnClick(() =>
+                        {
+                            _searchInput.value = q.RawQuery;
+                            OnSearchInputChanged();
+                            TriggerSearch();
+                            hide();
+                        });
+
+                        if (_historyRemover is null)
+                        {
+                            content.Add(entry);
+                            continue;
+                        }
+
+                        var     remover = _historyRemover;
+                        IComponent row  = null;
+
+                        var remove = Button().Class("tss-omnibox-search-history-remove").SetIcon(UIcons.Cross).AriaLabel("Remove from history".t()).NoPadding().NoMinSize().W(32).H(32).MB(4).NoBorder().NoBackground().OnClick(() =>
+                        {
+                            RemoveFromSearchHistory(remover, q, content, row, () => --remaining == 0);
+                        });
+
+                        row = HStack().WS().NoDefaultMargin().AlignItems(ItemAlign.Center).Children(entry.W(10).Grow(), remove);
+                        content.Add(row);
+                    }
+                }
+                else
+                {
+                    content.Children(NoRecentSearchesMessage());
+                }
+
+                window.setTimeout(_ =>
+                {
+                    Tippy.ShowFor(_searchHistoryBtn, content, out hide, placement: TooltipPlacement.BottomStart, maxWidth: 500, delayHide: 500, onHiddenCallback: () => _hideSearchHistory = null);
+                    _hideSearchHistory = hide;
+                }, 1);
+            }
+            catch (Exception ex)
+            {
+                console.error("Failed to fetch history: ", ex);
+            }
+        }
+
+        private static IComponent NoRecentSearchesMessage()
+        {
+            return Message("No recent searches", "Your recent searches will appear here once you start searching").Icon(UIcons.EmptySet).H(200);
+        }
+
+        // The row leaves the list only once the application has forgotten the search; a remover that throws leaves it there.
+        private async void RemoveFromSearchHistory(Func<SearchQuery, Task> remover, SearchQuery query, Stack content, IComponent row, Func<bool> wasLast)
+        {
+            await remover(query);
+
+            _searchesSent.RemoveAll(sent => sent == query.RawQuery);
+            content.Remove(row);
+
+            if (wasLast()) content.Add(NoRecentSearchesMessage());
+        }
+
+        /// <summary>
+        /// Sets the keyboard tab order of the component.
+        /// </summary>
+        public int TabIndex
+        {
+            set
+            {
+                if(_searchInput is object) _searchInput.tabIndex = value;
+                _chatTabIndex = value;
+                foreach (var t in ChatTextAreas) t.tabIndex = value;
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the component is interactive (enabled).
+        /// </summary>
+        public bool IsEnabled
+        {
+            get => !_container.classList.contains("tss-disabled");
+            set
+            {
+                if (value)
+                {
+                    _container.classList.remove("tss-disabled");
+                    if(_searchInput is object) _searchInput.disabled = false;
+                    foreach (var t in ChatTextAreas) t.disabled = false;
+                }
+                else
+                {
+                    _container.classList.add("tss-disabled");
+                    if(_searchInput is object) _searchInput.disabled = true;
+                    foreach (var t in ChatTextAreas) t.disabled = true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the search text.
+        /// </summary>
+        public string SearchText
+        {
+            get => _searchInput.value;
+            set
+            {
+                _searchInput.value = value;
+                OnSearchInputChanged();
+                Input?.Invoke(this, null);
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the chat text.
+        /// </summary>
+        public string ChatText
+        {
+            get => ComposeChatText();
+            set
+            {
+                SetChatSegmentsFromText(value ?? string.Empty);
+                Input?.Invoke(this, null);
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets how many characters a chat message can hold, as <see cref="Config.MaxCharacters"/>
+        /// does at construction. Set it to zero to lift the limit again.
+        /// </summary>
+        public int MaxChatCharacters
+        {
+            get => _maxChatCharacters;
+            set
+            {
+                _maxChatCharacters = value > 0 ? value : 0;
+
+                UpdateChatCounter();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the search placeholder.
+        /// </summary>
+        public string SearchPlaceholder
+        {
+            get => _searchInput.placeholder;
+            set => _searchInput.placeholder = value;
+        }
+
+        /// <summary>
+        /// Gets or sets the chat placeholder.
+        /// </summary>
+        public string ChatPlaceholder
+        {
+            get => _chatPlaceholder;
+            set
+            {
+                _chatPlaceholder = value ?? string.Empty;
+                UpdateChatPlaceholder();
+            }
+        }
+
+
+        /// <summary>
+        /// Gets or sets the CSS background of the component.
+        /// </summary>
+        public string Background { get => _container.style.background; set => _container.style.background = value; }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public HTMLElement Render()
+        {
+            return _container;
+        }
+
+
+        private void TriggerSuggestions()
+        {
+            if (_suggestionsFetcher == null) return;
+
+            window.clearTimeout(_suggestionsDebounceTimeoutId);
+            _suggestionsRequest++;
+            var request = _suggestionsRequest;
+            _suggestionsDebounceTimeoutId = (int)window.setTimeout(async _ =>
+            {
+                var val = _searchInput.value;
+                var suggestions = await _suggestionsFetcher(val);
+                // Another keystroke (or a hide) happened while this was in flight. Its answer is the
+                // one the user is waiting for, so this one is stale whether it succeeded, came back
+                // empty, or is simply late -- drop it rather than draw over the newer one.
+                if (request != _suggestionsRequest) return;
+                if (suggestions == null || suggestions.Length == 0)
+                {
+                    if (_hideSuggestions != null)
+                    {
+                        _hideSuggestions();
+                        _hideSuggestions = null;
+                        _highlightedSuggestionIndex = -1;
+                    }
+                    return;
+                }
+
+                _currentSuggestionButtons.Clear();
+
+                var content = VStack().NoDefaultMargin().W(450).MaxHeight(500.px()).ScrollY();
+
+                var currentCategory = string.Empty;
+
+                foreach(var s in suggestions)
+                {
+                    if (s.Category != currentCategory && !string.IsNullOrEmpty(s.Category))
+                    {
+                        content.Add(TextBlock(s.Category).Small().SemiBold().PaddingBottom(4.px()).PaddingTop(8.px()).PaddingLeft(12.px()).Foreground(Theme.Secondary.Foreground));
+                        currentCategory = s.Category;
+                    }
+
+                    var btn = Button().Class("tss-omnibox-search-history-entry").WS().NoPadding().NoMinSize().H(32).MB(4).NoBorder().NoBackground().TextLeft();
+                    var btnContent = HStack().WS().AlignItems(ItemAlign.Center).PaddingLeft(12.px()).PaddingRight(12.px());
+
+                    if (s.Icon != null) btnContent.Add(s.Icon.MR(8));
+                    if (s.Text != null) btnContent.Add(s.Text);
+                    if (s.RightComponent != null) btnContent.Add(s.RightComponent.ML(UnitSize.Auto()));
+
+                    btn.ReplaceContent(btnContent);
+                    btn.OnClick(() =>
+                    {
+                        if (s.OnSelected != null) s.OnSelected(this);
+                        if (_hideSuggestions != null) _hideSuggestions();
+                        _highlightedSuggestionIndex = -1;
+                    });
+                    content.Add(btn);
+
+                    _currentSuggestionButtons.Add(btn);
+                }
+
+                if (_hideSuggestions != null)
+                {
+                    _hideSuggestions();
+                    _highlightedSuggestionIndex = -1;
+                }
+
+                Tippy.ShowFor(_activeInput, content.Render(), out _hideSuggestions, placement: TooltipPlacement.BottomStart, maxWidth: 500);
+
+            }, 300);
+        }
+
+        private void UpdateHighlightedSuggestion(int offset)
+        {
+            if (_currentSuggestionButtons.Count == 0) return;
+
+            if (_highlightedSuggestionIndex >= 0 && _highlightedSuggestionIndex < _currentSuggestionButtons.Count)
+            {
+                _currentSuggestionButtons[_highlightedSuggestionIndex].RemoveClass("tss-omnibox-suggestion-highlight");
+            }
+
+            _highlightedSuggestionIndex = (_highlightedSuggestionIndex + offset + _currentSuggestionButtons.Count) % _currentSuggestionButtons.Count;
+
+            _currentSuggestionButtons[_highlightedSuggestionIndex].Class("tss-omnibox-suggestion-highlight").ScrollIntoView();
+        }
+
+        /// <summary>
+        /// Registers a global keyboard shortcut that focuses the OmniBox search input when pressed,
+        /// and renders a visual chip showing the shortcut on the right side of the search box.
+        /// In SearchAndChat mode, pressing the shortcut also switches the active mode to Search.
+        /// Modifier names are case-insensitive ("Ctrl", "Cmd", "Meta", "Alt", "Shift").
+        /// Example: <c>SetKeyboardShortcut("Ctrl", "K")</c>.
+        /// </summary>
+        public OmniBox SetKeyboardShortcut(params string[] keys)
+        {
+            if (_mode != Mode.Search && _mode != Mode.SearchAndChat)
+            {
+                throw new InvalidOperationException("SetKeyboardShortcut can only be called when OmniBox is in Search or SearchAndChat mode.");
+            }
+
+            if (_globalShortcutHandler is object)
+            {
+                window.removeEventListener("keydown", _globalShortcutHandler);
+                _globalShortcutHandler = null;
+            }
+
+            while (_searchShortcutContainer.firstChild is object)
+            {
+                _searchShortcutContainer.removeChild(_searchShortcutContainer.firstChild);
+            }
+
+            if (keys is null || keys.Length == 0)
+            {
+                _shortcutKeys = null;
+                _container.classList.remove("tss-omnibox-has-shortcut");
+                return this;
+            }
+
+            _shortcutKeys = keys;
+            _searchShortcutContainer.appendChild(KeyboardShortcut(keys).Render());
+            _container.classList.add("tss-omnibox-has-shortcut");
+
+            _globalShortcutHandler = ev =>
+            {
+                if (!_container.IsMounted()) return;
+                if (!IsEnabled) return;
+
+                var e = ev.As<KeyboardEvent>();
+                if (!KeyboardShortcut.Matches(e, _shortcutKeys)) return;
+
+                StopEvent(e);
+                if (_mode == Mode.SearchAndChat && _activeMode.Value != Mode.Search)
+                {
+                    _modeToggle.Select(Mode.Search);
+                }
+                _searchInput.focus();
+                _searchInput.select();
+            };
+
+            window.addEventListener("keydown", _globalShortcutHandler);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the search right text of the component.
+        /// </summary>
+        public OmniBox SetSearchRightText(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                _searchRightTextContainer.textContent = "";
+                _searchRightTextContainer.style.display = "none";
+            }
+            else
+            {
+                _searchRightTextContainer.textContent = text;
+                _searchRightTextContainer.style.display = "flex";
+            }
+            return this;
+        }
+
+        private void RenderInlineChips(IReadOnlyList<InlineFilterChip> chips)
+        {
+            ClearChildren(_searchInlineChipsContainer);
+            foreach (var chip in chips)
+            {
+                var chipEl = Div(Att("tss-omnibox-inline-chip"));
+                if (!string.IsNullOrEmpty(chip.Background)) chipEl.style.background = chip.Background;
+                if (!string.IsNullOrEmpty(chip.Color)) chipEl.style.color = chip.Color;
+
+                HTMLElement contentEl;
+                if (chip.Content is object)
+                {
+                    contentEl = chip.Content.Render();
+                }
+                else
+                {
+                    contentEl = Span(Att(text: chip.Name));
+                }
+
+                if (chip.OnClick is object)
+                {
+                    chipEl.onclick = (e) =>
+                    {
+                        StopEvent(e);
+                        chip.OnClick(e);
+                    };
+                    chipEl.style.cursor = "pointer";
+                }
+
+                chipEl.appendChild(contentEl);
+
+                if (chip.Removable)
+                {
+                    var closeBtn = Div(Att("tss-omnibox-inline-chip-close"));
+                    closeBtn.appendChild(UI.Icon(UIcons.Cross).Render());
+
+                    closeBtn.onclick = (e) =>
+                    {
+                        StopEvent(e);
+                        InlineFilterChips.Remove(chip);
+                    };
+                    chipEl.appendChild(closeBtn);
+                }
+
+                _searchInlineChipsContainer.appendChild(chipEl);
+            }
+        }
+
+        /// <summary>
+        /// Sets the search text of the component.
+        /// </summary>
+        public OmniBox SetSearchText(string text)
+        {
+            SearchText = text;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the search placeholder of the component.
+        /// </summary>
+        public OmniBox SetSearchPlaceholder(string text)
+        {
+            SearchPlaceholder = text;
+            return this;
+        }
+
+        /// <summary>
+        /// The text currently suggested in the empty search box, or null - see <see cref="SetSuggestedText"/>.
+        /// </summary>
+        public string SuggestedText => _suggestedText;
+
+        /// <summary>
+        /// Shows <paramref name="text"/> in the empty search box in place of the placeholder, followed by a
+        /// Tab keycap: pressing Tab while the box is focused and empty puts the text in the box, as if it had
+        /// been typed. The suggestion steps aside as soon as anything is typed and comes back when the box
+        /// is emptied, until <see cref="ClearSuggestedText"/> is called. <paramref name="onAccepted"/>, if
+        /// given, is called with the text each time the suggestion is accepted.
+        /// </summary>
+        public OmniBox SetSuggestedText(string text, Action<string> onAccepted = null)
+        {
+            if (_mode != Mode.Search && _mode != Mode.SearchAndChat)
+            {
+                throw new InvalidOperationException("SetSuggestedText can only be called when OmniBox is in Search or SearchAndChat mode.");
+            }
+
+            if (string.IsNullOrEmpty(text)) return ClearSuggestedText();
+
+            _suggestedText = text;
+            _onSuggestedTextAccepted = onAccepted;
+            if (string.IsNullOrEmpty(_searchInput.value)) RenderSuggestedText();
+            return this;
+        }
+
+        /// <summary>
+        /// Removes the suggestion set by <see cref="SetSuggestedText"/>; the placeholder shows again and Tab
+        /// moves focus as usual.
+        /// </summary>
+        public OmniBox ClearSuggestedText()
+        {
+            _suggestedText = null;
+            _onSuggestedTextAccepted = null;
+            if (_searchInput is null) return this;
+
+            _container.classList.remove("tss-omnibox-has-suggested-text");
+            if (string.IsNullOrEmpty(_searchInput.value)) ClearTokens();
+            return this;
+        }
+
+        /// <summary>
+        /// Whether the box is showing that a search is running - see <see cref="SetSearching"/>.
+        /// </summary>
+        public bool IsSearching => _isSearching;
+
+        /// <summary>
+        /// Says that a search is running: the magnifier gives its place to a spinner, in the same spot, so
+        /// the box keeps its shape while it runs. A fast answer never makes it blink - the spinner only fades
+        /// in after a moment.
+        /// </summary>
+        public OmniBox SetSearching(bool searching)
+        {
+            if (_isSearching == searching) return this;
+
+            _isSearching = searching;
+
+            if (searching) _container.classList.add("tss-omnibox-searching");
+            else           _container.classList.remove("tss-omnibox-searching");
+
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the chat text of the component.
+        /// </summary>
+        public OmniBox SetChatText(string text)
+        {
+            ChatText = text;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the chat placeholder of the component.
+        /// </summary>
+        public OmniBox SetChatPlaceholder(string text)
+        {
+            ChatPlaceholder = text;
+            return this;
+        }
+
+        /// <summary>
+        /// Replaces the component rendered inside the box above the chat input — the place for whatever
+        /// the message is being written against, e.g. a compact <see cref="ContextCards"/> group of the
+        /// attached documents. Passing <c>null</c> empties the slot, which then takes up no space.
+        /// </summary>
+        public OmniBox SetChatHeader(IComponent component)
+        {
+            if (_chatHeader is null) return this;
+
+            _chatHeader.innerHTML = string.Empty;
+
+            if (component is object) _chatHeader.appendChild(component.Render());
+
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the box with rounded corners (defaults to a fully rounded "pill" shape). The radius
+        /// carries over to everything that meets the box's outline — the search container, the buttons at
+        /// its ends and the "Ask AI" button added with
+        /// <see cref="WithAskAI(string, UIcons, Action{OmniBox})"/> — and the pill shape also drops the
+        /// vertical dividers between them, so the contents sit inside the curve.
+        /// </summary>
+        /// <param name="radius">The border radius to apply. Defaults to <see cref="BorderRadius.Full"/>.</param>
+        public OmniBox Rounded(BorderRadius radius = BorderRadius.Full)
+        {
+            _container.classList.remove("tss-omnibox-rounded-sm", "tss-omnibox-rounded-md", "tss-omnibox-rounded-full");
+
+            switch (radius)
+            {
+                case BorderRadius.Small:
+                    _container.classList.add("tss-omnibox-rounded-sm");
+                    break;
+                case BorderRadius.Medium:
+                    _container.classList.add("tss-omnibox-rounded-md");
+                    break;
+                case BorderRadius.Full:
+                    _container.classList.add("tss-omnibox-rounded-full");
+                    break;
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Disables the component.
+        /// </summary>
+        public OmniBox Disabled(bool value = true)
+        {
+            IsEnabled = !value;
+            return this;
+        }
+
+        /// <summary>
+        /// Moves keyboard focus to the component.
+        /// </summary>
+        public OmniBox Focus()
+        {
+            DomObserver.WhenMounted(_container, () =>
+            {
+                _activeInput.focus();
+            });
+            return this;
+        }
+
+        /// <summary>
+        /// Gets or sets the CSS height of the component.
+        /// </summary>
+        public OmniBox Height(UnitSize unitSize)
+        {
+            var h = unitSize.ToString();
+            if (_mode == Mode.Search || _mode == Mode.SearchAndChat)
+            {
+                _searchInputContainer.style.height = h;
+                _searchInput.style.lineHeight = h;
+                _searchTokensContainer.style.lineHeight = h;
+            }
+            _container.style.height = h;
+            return this;
+        }
+
+        /// <summary>
+        /// Shortcut for setting the height in pixels.
+        /// </summary>
+        public OmniBox H(int unitSize) => Height(unitSize.px());
+
+        public class SearchToken
+        {
+            public enum TokenType
+            {
+                Word,
+                And,
+                Or,
+                Not,
+                ParenthesisOpen,
+                ParenthesisClose,
+                Quote,
+                Whitespace
+            }
+
+            /// <summary>
+            /// Gets or sets the type.
+            /// </summary>
+            public TokenType Type { get; set; }
+            /// <summary>
+            /// Gets or sets the current value of the component.
+            /// </summary>
+            public string Value { get; set; }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public SearchToken(TokenType type, string value)
+            {
+                Type = type;
+                Value = value;
+            }
+        }
+
+        public class SearchQuery
+        {
+            /// <summary>
+            /// Gets or sets the raw query.
+            /// </summary>
+            public string RawQuery { get; set; }
+            /// <summary>
+            /// Gets or sets the tokens.
+            /// </summary>
+            public List<SearchToken> Tokens { get; set; }
+            /// <summary>
+            /// Gets or sets the snaps.
+            /// </summary>
+            public SnapHandler[] Snaps { get; set; }
+            /// <summary>
+            /// Gets or sets the filter snaps.
+            /// </summary>
+            public FilterSnap[] FilterSnaps { get; set; }
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public SearchQuery(string rawQuery, List<SearchToken> tokens)
+            {
+                RawQuery = rawQuery;
+                Tokens = tokens;
+                Snaps = Array.Empty<SnapHandler>();
+                FilterSnaps = Array.Empty<FilterSnap>();
+            }
+        }
+
+        public class ChatMessage
+        {
+            /// <summary>
+            /// Gets or sets the text shown in the component.
+            /// </summary>
+            public string Text { get; set; }
+        }
+
+        /// <summary>
+        /// What was pasted into the chat input, as <see cref="OnChatPaste"/> hands it over.
+        /// </summary>
+        public class ChatPaste
+        {
+            /// <summary>
+            /// The files on the clipboard - a pasted screenshot, a copied file - or an empty array.
+            /// A screenshot arrives here and nowhere else: it is not text, so the input drops it.
+            /// </summary>
+            public File[] Files { get; set; }
+
+            /// <summary>
+            /// The plain text on the clipboard, or an empty string. A clipboard can carry both: a cell
+            /// copied out of a spreadsheet brings a picture of itself along with its text.
+            /// </summary>
+            public string Text { get; set; }
+
+            /// <summary>
+            /// Set this to <c>true</c> to keep the paste out of the input, when the handler has taken
+            /// it. Left <c>false</c>, the paste is inserted as usual.
+            /// </summary>
+            public bool Handled { get; set; }
+        }
+    }
+}

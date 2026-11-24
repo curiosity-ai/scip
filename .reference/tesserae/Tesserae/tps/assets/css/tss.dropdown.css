@@ -1,0 +1,489 @@
+﻿/* Dropdown */
+.tss-dropdown {
+    box-shadow: none;
+    margin: 0px;
+    margin-right: 16px;
+    padding: 0px;
+    height: 32px;
+    align-items: center;
+    font-size: var(--tss-font-size-small);
+    font-weight: var(--tss-font-weight-regular);
+    width: calc(100% - 16px);
+    outline: transparent none medium;
+    padding: 5px 5px;
+    -webkit-user-select: none;
+    user-select: none;
+    flex-wrap: nowrap;
+    display: inline-flex;
+    overflow: hidden;
+}
+
+    .tss-dropdown > .tss-dropdown-search-term {
+        display: none;
+    }
+
+    .tss-dropdown.tss-dropdown-searching > .tss-dropdown-search-term {
+        display: inline-block;
+    }
+    .tss-dropdown.tss-dropdown-searching > .tss-dropdown-item-on-box {
+        display:none;
+    }
+
+    .tss-dropdown-layer {
+        position: absolute;
+        top: 0px;
+        left: 0px;
+        bottom: 0px;
+        right: 0px;
+        margin: 0;
+        padding: 0;
+        visibility: visible;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .tss-dropdown.tss-dropdown-noarrow {
+        margin-right: 0px;
+        width: 100%;
+        padding: 0px;
+    }
+
+.tss-dropdown-container {
+    position: relative;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: 4px;
+    background: var(--tss-default-background-color) none repeat scroll 0% 0%;
+    color: var(--tss-default-foreground-color);
+    cursor: pointer;
+}
+
+    .tss-dropdown-container:hover {
+        color: var(--tss-default-foreground-hover-color);
+        background-color: var(--tss-default-background-hover-color);
+        box-shadow: var(--tss-shadow-hover);
+    }
+
+        .tss-dropdown-container:hover .tss-btn:hover {
+            background-color: transparent !important;
+            box-shadow: unset !important;
+        }
+
+    .tss-dropdown-container.tss-dropdown-nobg {
+        background: unset;
+    }
+
+    /* The closed box is in the tab order, so the keyboard needs to see where it is. */
+    .tss-dropdown-container:has(> .tss-dropdown:focus-visible) {
+        border-color: var(--tss-primary-border-color);
+    }
+
+    .tss-dropdown-container.tss-noborder {
+        border: 1px solid transparent;
+    }
+
+    .tss-dropdown-container.tss-disabled {
+        border-color: var(--tss-disabled-background-color);
+        background-color: var(--tss-disabled-background-color);
+        color: var(--tss-disabled-foreground-color);
+        cursor: default;
+        -webkit-user-select: none;
+        user-select: none;
+        pointer-events: none;
+    }
+
+    .tss-dropdown-container > .tss-dropdown-icon {
+        position: absolute;
+        right: 8px;
+        top: calc(50% - var(--tss-font-size-tiny) / 2);
+    }
+
+    /* The box reserves its right margin for the chevron and takes its width out of the same 100%, so the two
+       have to agree. This one widened the margin to 22px and left the width at the base rule's
+       calc(100% - 16px), which put the box 6px past its own container - measured as a scrollWidth of 104
+       against a clientWidth of 98 - and every dropdown carries this class, since the constructor always sets
+       an arrow icon. Six pixels is invisible until the box is short, and then it is the chevron sitting on
+       top of the last letter. */
+    .tss-dropdown.tss-dropdown-custom-icon {
+        margin-right: 22px;
+        width: calc(100% - 22px);
+    }
+
+
+    .tss-dropdown-container.tss-invalid > .tss-dropdown {
+        border: 1px solid var(--tss-invalid-border-color);
+    }
+
+    .tss-dropdown-container > .tss-spinner {
+        position: absolute;
+        right: calc(50% - 10px);
+        top: calc(50% - 10px);
+        width: 20px;
+        height: 20px;
+    }
+
+    .tss-dropdown-error {
+        color: var(--tss-invalid-border-color);
+        display: none;
+        font-size: var(--tss-font-size-tiny);
+        line-height: 1.4;
+    }
+
+.tss-dropdown-container.tss-invalid > .tss-dropdown-error {
+    display: block;
+}
+
+/* A dropdown that carries validation (.Validation(...) marks it tss-has-validation) keeps its message from moving
+   the fields below it the way a text box does, but the container here is the bordered box itself, so a line held
+   inside it would sit inside the border. The line is reserved as a bottom margin instead, and the message is
+   drawn into that margin from just below the border: one line of the message's own font, visible only while the
+   dropdown is invalid. Margin rather than padding so the popup, the chevron and the border stay anchored to the
+   box alone. */
+.tss-dropdown-container.tss-has-validation {
+    margin-bottom: calc(var(--tss-font-size-tiny) * 1.4);
+}
+
+    .tss-dropdown-container.tss-has-validation > .tss-dropdown-error {
+        display: block;
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(100% + 1px);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        visibility: hidden;
+    }
+
+    .tss-dropdown-container.tss-has-validation.tss-invalid > .tss-dropdown-error {
+        visibility: visible;
+    }
+
+/* The popup is a column: the search box, when there is one, is a fixed band at the top and the rows
+   below it are what scrolls. The popup itself used to be the scroll container, which meant the search
+   box scrolled away with the rows the moment the list was longer than the popup. */
+.tss-dropdown-popup {
+    position: absolute;
+    background: var(--tss-default-background-color) none repeat scroll 0% 0%;
+    min-height: 42px;
+    visibility: visible;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    border-radius: 10px;
+    margin-top: 4px;
+    padding-bottom: 8px;
+    padding-top: 8px;
+    box-shadow: 0px 4px 16px var(--tss-shadow-color, rgba(0, 0, 0, 0.4));
+    border: 1px solid var(--tss-default-border-color);
+}
+
+.tss-dropdown-item {
+    font-size: var(--tss-font-size-small);
+    font-weight: var(--tss-font-weight-regular);
+    background: var(--tss-default-background-color) none repeat scroll 0% 0%;
+    border: 1px solid transparent;
+    color: var(--tss-default-foreground-color);
+    outline: transparent none medium;
+    cursor: pointer;
+    text-align: left;
+    display: block;
+    padding: 0 8px;
+    min-height: 36px;
+    line-height: 20px;
+    width: 100%;
+    position: relative;
+}
+
+    .tss-dropdown-item:hover {
+        background-color: var(--tss-default-background-hover-color);
+        outline: transparent none medium;
+    }
+
+    .tss-dropdown-item:focus,
+    .tss-dropdown-item.tss-dropdown-item-focus {
+        border: 1px solid var(--tss-primary-border-color);
+        background-color: var(--tss-default-background-hover-color);
+        outline: transparent none medium;
+    }
+
+.tss-dropdown-popup.tss-no-focus > .tss-dropdown-item:focus,
+.tss-dropdown-popup.tss-no-focus > .tss-dropdown-item.tss-dropdown-item-focus {
+    border: 1px solid transparent;
+    outline: transparent none medium;
+}
+
+
+.tss-dropdown-header {
+    background: var(--tss-default-background-color) none repeat scroll 0% 0%;
+    border: 1px solid transparent;
+    outline: transparent none medium;
+    text-align: left;
+    display: block;
+    padding: 0 8px;
+    min-height: 36px;
+    line-height: 20px;
+    width: 100%;
+    position: relative;
+    color: var(--tss-primary-background-color);
+    font-size: var(--tss-font-size-small);
+    cursor: default;
+    font-weight: var(--tss-font-weight-semibold);
+}
+
+.tss-dropdown-divider {
+    content: "";
+    height: 1px;
+    line-height: 20px;
+    width: 100%;
+    border: 1px solid transparent;
+    outline: transparent none medium;
+    text-align: left;
+    display: block;
+    padding: 0 8px;
+    position: relative;
+    background-color: var(--tss-default-background-hover-color);
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.tss-dropdown-multi > .tss-dropdown-item {
+    padding-left: 32px !important;
+}
+
+    /* The checkbox and its tick are absolutely positioned, so they need centring against the row
+       rather than a fixed offset from its top: an option whose content is two lines tall (or a badge,
+       or an avatar) is taller than the 32px a fixed 8px offset was measured against, and the checkbox
+       stayed up by the first line instead of sitting beside the content. The tick keeps the 2.5px
+       optical rise above the box's centre that its old top: 10px against top: 8px gave it - the ink
+       of a rotated checkmark sits low in its own box. */
+    .tss-dropdown-multi > .tss-dropdown-item:before {
+        content: " ";
+        display: block;
+        position: absolute;
+        left: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 20px;
+        height: 20px;
+        border-radius: 2px;
+        background-color: var(--tss-default-background-color);
+        border: 1px solid var(--tss-default-foreground-color);
+    }
+
+    .tss-dropdown-multi > .tss-dropdown-item.tss-selected:hover:before {
+        background-color: var(--tss-primary-background-hover-color);
+    }
+
+    .tss-dropdown-multi > .tss-dropdown-item.tss-selected:before {
+        background-color: var(--tss-primary-background-color);
+        border-color: var(--tss-primary-background-color);
+    }
+
+    .tss-dropdown-multi > .tss-dropdown-item:after {
+        content: "";
+        position: absolute;
+        display: none;
+        left: 15px;
+        top: 50%;
+        width: 6px;
+        height: 11px;
+        border: solid var(--tss-default-border-color);
+        border-width: 0 1px 1px 0;
+        transform: translateY(calc(-50% - 2.5px)) rotate(45deg);
+    }
+
+    .tss-dropdown-multi > .tss-dropdown-item:hover:after {
+        display: block;
+    }
+
+    .tss-dropdown-multi > .tss-dropdown-item.tss-selected:after {
+        display: block;
+        border-color: var(--tss-primary-foreground-color);
+    }
+
+.tss-dropdown-item.tss-disabled {
+    color: var(--tss-disabled-foreground-color);
+    cursor: default;
+}
+
+    .tss-dropdown-item.tss-disabled:hover {
+        background-color: var(--tss-default-background-color);
+    }
+
+.tss-dropdown-multi > .tss-dropdown-item.tss-disabled:before {
+    background-color: var(--tss-disabled-background-color);
+    border-color: var(--tss-disabled-foreground-color);
+}
+
+.tss-dropdown-multi > .tss-dropdown-item.tss-disabled.tss-selected:before {
+    background-color: var(--tss-disabled-foreground-color);
+    border-color: var(--tss-disabled-foreground-color);
+}
+
+.tss-dropdown-item-on-box {
+    font-size: var(--tss-font-size-small);
+    font-weight: var(--tss-font-weight-regular);
+    color: var(--tss-default-foreground-color);
+    white-space: nowrap;
+    min-width: unset;
+    background: transparent;
+    border: none;
+    border-width: 0px !important;
+    padding: 0px;
+    margin: 0px;
+    display: inline-flex;
+    text-overflow: ellipsis;
+}
+.tss-dropdown-item-on-box:only-of-type {
+    width:100%;
+}
+
+.tss-dropdown-multi.tss-dropdown-has-multi .tss-dropdown-item-on-box {
+    width: auto;
+}
+
+/* An option's content is usually a Button, and the box shows a clone of it. .tss-btn brings a
+   min-width of 80px and a min-height of 36px, neither of which makes sense for a chip in a
+   comma-separated list inside a 32px row: the width reserves 80px per chip, so the comma after one
+   ends up stranded half a word away from it, and the height overflows the row and gets clipped.
+   .tss-dropdown-item-on-box resets both on the clone's root, but the Button is one level further
+   in - so reset it there too, and let the content size itself. */
+.tss-dropdown-item-on-box .tss-btn {
+    min-width: unset;
+    min-height: unset;
+    padding: 0;
+    margin: 0;
+}
+
+/* The ", " between the selected items shown in the box. The separator is generated on the item that
+   *follows* it, so it has to hug the item before it - any margin on this side of the item lands
+   between the previous word and its comma - and put its breathing room after itself instead.
+   .tss-dropdown-item-on-box is an inline-flex container, so this pseudo-element is a flex item and
+   not inline text: left alone it stretches and draws the comma at the top of that stretched box,
+   which is what "height: 0" used to paper over and why the comma floated above the text. Everything
+   in the box is centred on the row (.tss-dropdown is a centred inline-flex), so centring the
+   separator too is what lines it up - with text, with an avatar, with a chart, with anything. */
+.tss-dropdown > .tss-dropdown-item-on-box:not(:first-child)::before {
+    content: ',';
+    align-self: center;
+    padding-right: 4px;
+    /* Never let the separator be what makes the row taller. */
+    line-height: 1;
+}
+
+.tss-dropdown-fit-content {
+    width:fit-content;
+    max-width: 100%;
+}
+
+.tss-dropdown-popup .tss-dropdown-searchbox {
+    margin: 0px 8px 0px 8px;
+    width: calc(100% - 16px);
+    background: var(--tss-default-background-hover-color);
+    border: 1px solid transparent;
+}
+
+.tss-dropdown-popup .tss-dropdown-searchbox:focus-within {
+    border: 1px solid var(--tss-primary-border-color);
+}
+
+.tss-dropdown-popup > .tss-dropdown-searchbox {
+    flex: 0 0 auto;
+    /* Above the rows: a theme that draws its focus ring outside the box (a box-shadow ring, an offset
+       shadow) draws part of it over the top of the list, and the rows are positioned and scroll into
+       that band, so they painted over the ring's lower edge. */
+    position: relative;
+    z-index: 1;
+}
+
+/* min-height: 0 is what lets this shrink below its content and scroll - a flex item's automatic
+   minimum size would otherwise keep it at its full height and push the popup past its max-height. */
+.tss-dropdown-popup > .tss-dropdown-items {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.tss-dropdown-searchbox + .tss-dropdown-items {
+    padding-top: 8px;
+}
+
+/* A row pays for its breathing room in padding, not in line-height. Using a 32px line-height for it
+   only ever worked for text: line-height sets the strut of a *text* line, so anything else an option
+   renders eats into that space instead of being given its own - a 28px avatar in a 32px line box came
+   out with 1px above and below it, while a plain label got 5 and a badge got 6. The air was whatever
+   the line box happened to have left over, so it changed with the content. Padding gives every row
+   the same margin around whatever it draws, and min-height stays as the floor that keeps a short row
+   from looking cropped. 4px is what leaves the ordinary single-line row at the 34px it has always
+   been, so this costs nothing anywhere it was already right. */
+.tss-dropdown-popup .tss-dropdown-item {
+    margin: 0 8px;
+    width: calc(100% - 16px);
+    box-sizing: border-box;
+    border-radius: 6px;
+    min-height: 32px;
+    line-height: 20px;
+    padding: 4px 8px;
+}
+
+    /* The 32px line-height above is what centres a single line of text in the row, but line-height is
+       inherited: an option whose content is a stack of two text blocks got 32px per line and the row
+       came out twice as tall as its content, with the two lines pushed apart and the centred checkbox
+       stranded in the gap between them. The content keeps its own line-height; the row keeps its. */
+    .tss-dropdown-popup .tss-dropdown-item > * {
+        line-height: normal;
+    }
+
+    .tss-dropdown-popup .tss-dropdown-item .tss-btn {
+        min-height: 24px !important;
+        padding: 0px !important;
+        margin: 0px !important;
+    }
+
+.tss-dropdown-popup .tss-searchbox-container:focus-within > .tss-searchbox-icon {
+    width: 20px;
+}
+
+.tss-dropdown-popup .tss-dropdown-searchbox.tss-searchbox-container {
+    height: 32px;
+}
+
+.tss-dropdown-popup .tss-dropdown-searchbox .tss-searchbox {
+    height: 32px;
+    line-height: 32px;
+}
+
+.tss-dropdown-popup .tss-dropdown-searchbox .tss-searchbox-icon {
+    font-size: 12px;
+}
+
+
+.tss-dropdown-layer {
+    align-items: flex-start;
+}
+
+/* SearchAsync: while a lookup is in flight the search box swaps its magnifier for a spinner. The
+   glyph lives on a span inside the icon container, so hide that and draw the spinner on the
+   container itself rather than fighting the icon font's own ::before. */
+.tss-dropdown-popup .tss-dropdown-searchbox.tss-dropdown-searchbox-busy > .tss-searchbox-icon > span {
+    display: none;
+}
+
+.tss-dropdown-popup .tss-dropdown-searchbox.tss-dropdown-searchbox-busy > .tss-searchbox-icon::after {
+    content: "";
+    align-self: center;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid;
+    border-color: var(--tss-primary-background-color) var(--tss-progress-background-color) var(--tss-progress-background-color);
+    box-sizing: border-box;
+    animation-name: tss-spinner-animation;
+    animation-duration: 1.3s;
+    animation-iteration-count: infinite;
+    animation-timing-function: cubic-bezier(0.53, 0.21, 0.29, 0.67);
+}

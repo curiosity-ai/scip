@@ -14,3 +14,4 @@ Shallow clones (history stripped) of the upstream projects being ported. Read-on
 | scip-ruby | https://github.com/sourcegraph/scip-ruby.git | 31e0d6bbda20f0efb392867d84d296fdcbc0a2fc |
 | scip-typescript | https://github.com/sourcegraph/scip-typescript.git | 7f51391d9770c63be2449463c8eb89f98c9e1468 |
 | rust-analyzer | https://github.com/rust-lang/rust-analyzer.git | 9c74e78e01d7cd31663f4ecf71e65b1cc4b9ccb8 |
+| tesserae | https://github.com/curiosity-ai/tesserae.git | 9d1d68212004a5a80a0d8066ae735edb3fea35ed |  (reference for Curiosity's Azure DevOps NuGet pipeline conventions: `.azure-devops/build-nuget-h5.yml.disabled`)

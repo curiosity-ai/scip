@@ -1,0 +1,186 @@
+.tss-segmentedpivot {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.tss-segmentedpivot-wrapper {
+    margin-bottom: 16px;
+    overflow-x: auto;
+    /* Making this a scroll container drops its flex auto-min-size to 0, so the
+       content panel's flex-grow:1 would otherwise collapse the wrapper down to
+       just the scrollbar. flex-shrink:0 keeps its natural titlebar height. */
+    flex-shrink: 0;
+}
+
+/* Titlebar overflow controls — mirrors the mechanics of the normal Pivot: a
+   horizontally-scrollable strip flanked by chevron scroll buttons and an
+   overflow (⋯) menu that lists every tab. The segmented-control pill background
+   lives on this wrapper (not on the inner titlebar) so the chevrons and the ⋯
+   button sit inside the pill. */
+.tss-segmentedpivot-titlebar-wrapper {
+    display: inline-flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    /* Keep the control compact (sized to its content) instead of stretching to
+       the full column width, but never exceed the available width so the strip
+       can shrink and scroll when the segments overflow. */
+    align-self: flex-start;
+    max-width: 100%;
+    /* Themes that clip the pill (overflow:hidden) drop its flex auto-min-size
+       to 0, so tall content would shrink the bar to a thin sliver with the
+       tab titles cut off. Like .tss-segmentedpivot-wrapper, keep its height. */
+    flex-shrink: 0;
+    box-sizing: border-box;
+    margin-bottom: 16px;
+    border-radius: var(--tss-border-radius-lg);
+    background: var(--tss-secondary-background-color);
+    padding: 4px;
+    box-shadow: inset 0px 2px 8px var(--tss-colors-dark-neutral-1000);
+}
+
+/* Inside the overflow wrapper the pill styling is on the wrapper, so the inner
+   titlebar is a plain transparent flex row. SidebarPivot uses the titlebar
+   directly (outside this wrapper) and keeps its own background. */
+.tss-segmentedpivot-titlebar-wrapper .tss-segmentedpivot-titlebar {
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+}
+
+.tss-segmentedpivot-titlebar-scroller {
+    position: relative;
+    /* Size to the strip's natural width and shrink when it overflows, but never
+       grow past its content so the segmented control stays left-aligned. */
+    flex: 0 1 auto;
+    min-width: 0; /* allow the scroller to shrink below its content size */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none; /* Firefox: hide native scrollbar (scroll buttons handle it) */
+    -ms-overflow-style: none;
+}
+
+.tss-segmentedpivot-titlebar-scroller::-webkit-scrollbar {
+    display: none;
+}
+
+.tss-segmentedpivot-titlebar-more,
+.tss-segmentedpivot-titlebar-scroll-left,
+.tss-segmentedpivot-titlebar-scroll-right {
+    flex-shrink: 0;
+    flex-grow: 0;
+    align-self: center;
+    background: transparent;
+}
+
+/* Give the controls breathing room. The extra selectors (.tss-btn plus the
+   wrapper) raise specificity above .tss-btn.tss-btn-remove-padding /
+   -remove-margin, which the buttons carry from NoPadding()/NoMargin(). */
+.tss-segmentedpivot-titlebar-wrapper .tss-btn.tss-segmentedpivot-titlebar-more,
+.tss-segmentedpivot-titlebar-wrapper .tss-btn.tss-segmentedpivot-titlebar-scroll-left,
+.tss-segmentedpivot-titlebar-wrapper .tss-btn.tss-segmentedpivot-titlebar-scroll-right {
+    padding: 0 4px;
+}
+
+.tss-segmentedpivot-titlebar-wrapper .tss-btn.tss-segmentedpivot-titlebar-more {
+    margin-right: 6px;
+}
+
+.tss-segmentedpivot-titlebar-scroll-left i,
+.tss-segmentedpivot-titlebar-scroll-right i {
+    font-size: 10px;
+}
+
+.tss-segmentedpivot-titlebar {
+    display: inline-flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    border-radius: var(--tss-border-radius-lg);
+    background: var(--tss-secondary-background-color);
+    padding: 4px;
+    box-shadow: inset 0px 2px 8px var(--tss-colors-dark-neutral-1000);
+}
+
+.tss-segmentedpivot-tab {
+    user-select: none;
+    outline: none;
+    padding: 6px 14px;
+    cursor: pointer;
+    background: transparent;
+    border-radius: var(--tss-border-radius-md);
+    transition: background-color 0.2s, box-shadow 0.2s, color 0.2s;
+    font-size: var(--tss-font-size-smallplus);
+    color: var(--tss-secondary-foreground-color);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* A title is one line: when the segments do not fit, the strip scrolls (chevrons and the overflow menu) rather
+   than squeezing each tab until its title wraps. SidebarPivot's tabs are outside this wrapper and keep shrinking
+   to an ellipsis (tss.sidebar.css). */
+.tss-segmentedpivot-titlebar-wrapper .tss-segmentedpivot-tab {
+    flex-shrink: 0;
+}
+
+    .tss-segmentedpivot-tab:hover {
+        background-color: color-mix(in srgb, var(--tss-default-foreground-color) 10%, transparent);
+        color: var(--tss-default-foreground-color);
+    }
+
+    .tss-segmentedpivot-tab.tss-segmentedpivot-selected {
+        background-color: var(--tss-default-background-color);
+        color: var(--tss-default-foreground-color);
+        box-shadow: var(--tss-shadow-sm);
+    }
+
+        /* Tokens (Badge, Tag, Chip) keep the colours of their own tone: a count badge in a selected tab must not go black */
+        .tss-segmentedpivot-tab.tss-segmentedpivot-selected *:not(.tss-token):not(.tss-token *) {
+            color: var(--tss-default-foreground-color);
+        }
+
+.tss-segmentedpivot-content {
+    flex-grow: 1;
+    overflow: auto;
+    /* The pane scrolls, so it clips whatever a flush child draws outside its box (a focus ring, a shadow). Room to
+       draw it: padded by --tss-focus-ring-room and pulled back by as much, so the content does not move. */
+    padding: var(--tss-focus-ring-room);
+    margin: calc(-1 * var(--tss-focus-ring-room));
+    /* Lay the active tab's content out like a Stack with a single child, so
+       panel-filling content expands to the available height whether it fills
+       via .S()/.HS(), .Grow(), or its own height:100%. */
+    display: flex;
+    flex-direction: column;
+}
+
+    /* Keep fixed/intrinsic-height content at its natural size (it scrolls via the
+       pane's overflow:auto) instead of being squeezed by flexbox's default shrink. */
+    .tss-segmentedpivot-content > * {
+        flex-shrink: 0;
+    }
+
+.tss-segmentedpivot-cached-hidden {
+    display: none !important;
+}
+
+.tss-segmentedpivot-tab:focus-visible {
+    box-shadow: 0 0 0 2px var(--tss-default-background-color), 0 0 0 4px var(--tss-default-foreground-color);
+}
+
+.tss-segmentedpivot-tab.tss-segmentedpivot-selected:focus-visible {
+    box-shadow: 0 0 0 2px var(--tss-default-background-color), 0 0 0 4px var(--tss-default-foreground-color);
+}
+
+.tss-segmentedpivot-tab:active {
+    background-color: color-mix(in srgb, var(--tss-default-foreground-color) 20%, transparent);
+}
+
+.tss-segmentedpivot-content > .tss-background-area {
+    border-radius: var(--tss-border-radius-lg);
+}
+
+
+.tss-segmentedpivot-tab > * {
+    display: inline-flex;
+}

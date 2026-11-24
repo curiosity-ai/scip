@@ -1,0 +1,318 @@
+using System;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A large numeric KPI tile used inside dashboards, showing a value with optional label and trend indicator.
+    /// <para>
+    /// Beside the number it can lead with an <see cref="IconTile"/> - the same rounded, tinted square an
+    /// <see cref="OmniResult{T}"/> row leads with - saying what is being counted, and it can hold a chart
+    /// (a <see cref="Sparkline"/>, a <see cref="ContributionBar"/>) under the value to show how the number
+    /// got there.
+    /// </para>
+    /// </summary>
+    [Transpose.Name("tss.Metric")]
+    public class Metric : ComponentBase<Metric, HTMLElement>
+    {
+        private readonly HTMLElement _container;
+        private readonly HTMLElement _iconContainer;
+        private readonly HTMLElement _bodyContainer;
+        private readonly HTMLElement _headerContainer;
+        private readonly HTMLElement _titleContainer;
+        private readonly HTMLElement _valueContainer;
+        private readonly HTMLElement _changeContainer;
+        private readonly HTMLElement _chartContainer;
+
+        private IconTile _iconTile;
+        private bool     _changeInHeader;
+        private bool     _large;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Metric(string title, string value)
+            : this(TextBlock(title).SmallPlus().SemiBold().Foreground(Theme.Secondary.Foreground).Render(),
+                   TextBlock(value).XLarge().SemiBold().Render())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Metric(IComponent title, IComponent value) : this(title.Render(), value.Render())
+        {
+        }
+
+        private Metric(HTMLElement title, HTMLElement value)
+        {
+            _titleContainer  = Div(Att("tss-metric-title"), title);
+            _valueContainer  = Div(Att("tss-metric-value"), value);
+            _changeContainer = Div(Att("tss-metric-change"));
+            _chartContainer  = Div(Att("tss-metric-chart"));
+
+            // The header is the title's own line, so a change indicator can be pulled up level with it
+            // (see ChangeInHeader) without the title and the value ending up side by side.
+            _headerContainer = Div(Att("tss-metric-header"), _titleContainer);
+
+            // The tile lives outside the body, so it stands beside the whole title/value block rather than
+            // above it - and is only put in the DOM once something is actually on it.
+            _iconContainer   = Div(Att("tss-metric-icon"));
+
+            _bodyContainer   = Div(Att("tss-metric-body"), _headerContainer, _valueContainer, _chartContainer, _changeContainer);
+
+            _container       = Div(Att("tss-metric"), _bodyContainer);
+
+            InnerElement = _container;
+
+            // Without it the click OnClick subscribes to is never listened for, and a handler silently does nothing.
+            AttachClick();
+        }
+
+        /// <summary>
+        /// Puts an icon on a tile in front of the title and the value, in the given color, over a paler wash
+        /// of that same color - the same tile an <see cref="OmniResult{T}"/> row leads with. Pass the
+        /// full-strength color the glyph should be; a null color leaves the tile neutral.
+        /// </summary>
+        public Metric SetIcon(UIcons icon, string color = null, UIconsWeight weight = UIconsWeight.Regular)
+        {
+            EnsureIconTile().SetIcon(icon, color, weight);
+
+            return ShowIcon();
+        }
+
+        /// <summary>
+        /// Puts a few letters on the tile in place of a glyph - a unit, a currency, a file type - in the
+        /// given color, over a paler wash of that same color.
+        /// </summary>
+        public Metric SetIcon(string text, string color = null, TextSize? size = null)
+        {
+            EnsureIconTile().SetIcon(text, color, size);
+
+            return ShowIcon();
+        }
+
+        /// <summary>
+        /// Puts the given component on the tile - an <see cref="Image"/>, an <see cref="Avatar"/>, an emoji.
+        /// A null value takes the tile away again.
+        /// </summary>
+        public Metric SetIcon(IComponent iconOrImage, string color = null)
+        {
+            if (iconOrImage is null)
+            {
+                if (_iconContainer.parentElement is object) _container.removeChild(_iconContainer);
+
+                return this;
+            }
+
+            EnsureIconTile().SetIcon(iconOrImage, color);
+
+            return ShowIcon();
+        }
+
+        /// <summary>
+        /// Sets how big the leading tile is drawn - 44px square by default, which is the size a KPI wants
+        /// beside a number two lines tall.
+        /// </summary>
+        public Metric IconSize(UnitSize size)
+        {
+            EnsureIconTile().Size(size);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Draws the value above the title rather than under it - the shape a counter takes when the number
+        /// is the point and the words under it only say what was counted ("5 / In my scope").
+        /// </summary>
+        public Metric ValueFirst(bool value = true)
+        {
+            _container.UpdateClassIf(value, "tss-metric-value-first");
+
+            return this;
+        }
+
+        /// <summary>
+        /// Draws the title and the value on one line instead of two - "42 Open tickets" - for a row of counters,
+        /// a toolbar or a card header that has no room for a tile two lines tall. The title follows the value
+        /// when <see cref="ValueFirst"/> is set and leads it otherwise. A change indicator stays on the same line,
+        /// after both; a chart still goes under them.
+        /// </summary>
+        public Metric Compact(bool value = true)
+        {
+            _container.UpdateClassIf(value, "tss-metric-compact");
+
+            return this;
+        }
+
+        /// <summary>
+        /// Puts the value on a filled, rounded background - a badge for the number, to set it apart from the
+        /// words around it (most of all in a <see cref="Compact"/> metric). Takes any CSS color, or a theme
+        /// variable such as <c>var(--tss-primary-background-color)</c>; the foreground, when given, recolors the
+        /// value to match it. A null background takes the fill away again.
+        /// </summary>
+        public Metric ValueBackground(string background, string foreground = null)
+        {
+            if (string.IsNullOrEmpty(background))
+            {
+                _container.classList.remove("tss-metric-value-filled");
+                _container.style.removeProperty("--tss-metric-value-background");
+            }
+            else
+            {
+                _container.classList.add("tss-metric-value-filled");
+                _container.style.setProperty("--tss-metric-value-background", background);
+            }
+
+            if (string.IsNullOrEmpty(background) || string.IsNullOrEmpty(foreground))
+            {
+                _container.classList.remove("tss-metric-value-recolored");
+                _container.style.removeProperty("--tss-metric-value-foreground");
+            }
+            else
+            {
+                _container.classList.add("tss-metric-value-recolored");
+                _container.style.setProperty("--tss-metric-value-foreground", foreground);
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Pulls the change indicator up onto the title's own line, pushed to its far end - for a card whose
+        /// trend belongs beside the label rather than under the chart.
+        /// </summary>
+        public Metric ChangeInHeader(bool value = true)
+        {
+            _changeInHeader = value;
+            _container.UpdateClassIf(value, "tss-metric-change-in-header");
+
+            PlaceChange();
+
+            return this;
+        }
+
+        /// <summary>
+        /// The large variation, for a dashboard's headline tile: a bigger value with the change indicator on the
+        /// same line, right after it ("63 ms ↗ 43.2%"), and the chart - typically a <see cref="Sparkline"/> -
+        /// given more room under them. Combine it with <see cref="Chart"/> and <see cref="Change"/>; the chart
+        /// takes the width of the tile, so a card that wants it edge to edge gives the tile no padding.
+        /// <see cref="ChangeInHeader"/> still wins when both are set.
+        /// </summary>
+        public Metric Large(bool value = true)
+        {
+            _large = value;
+            _container.UpdateClassIf(value, "tss-metric-large");
+
+            PlaceChange();
+
+            return this;
+        }
+
+        // The change lives in one of three places: the title's line (ChangeInHeader), the value's line (Large) or
+        // under everything else. Which one is a function of the two switches, so neither has to know about the other.
+        private void PlaceChange()
+        {
+            var parent = _changeInHeader ? _headerContainer : _large ? _valueContainer : _bodyContainer;
+
+            if (_changeContainer.parentElement != parent) parent.appendChild(_changeContainer);
+        }
+
+        /// <summary>
+        /// Configures the component to chart.
+        /// </summary>
+        public Metric Chart(IComponent chart)
+        {
+            ClearChildren(_chartContainer);
+            if (chart != null)
+            {
+                var rendered = chart.Render();
+
+                // The chart reads as a trend under the number, so it spans the tile rather than keeping
+                // whatever intrinsic size it came with — a Sparkline's default 100x30 would sit in the
+                // corner of the card. Height goes back to auto so the chart keeps its own proportions at
+                // that width. A caller who asked for a size with .W()/.WS()/.H() left the marker Stack
+                // writes, and that size is kept.
+                if (!rendered.hasAttribute("tss-stk-w")) rendered.style.width  = "100%";
+                if (!rendered.hasAttribute("tss-stk-h")) rendered.style.height = "auto";
+
+                _chartContainer.appendChild(rendered);
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Configures the component to change.
+        /// </summary>
+        public Metric Change(IComponent change)
+        {
+            ClearChildren(_changeContainer);
+            _changeContainer.appendChild(change.Render());
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the tile is clicked - to drill into what the number counts. A
+        /// clickable tile shows the pointer, answers the hover, and becomes keyboard reachable: it is
+        /// activated with Enter or Space while the tile itself has focus.
+        /// </summary>
+        public override Metric OnClick(ComponentEventHandler<Metric, MouseEvent> onClick, bool clearPrevious = true)
+        {
+            if (!_container.classList.contains("tss-metric-clickable"))
+            {
+                _container.classList.add("tss-metric-clickable");
+                _container.setAttribute("role",     "button");
+                _container.setAttribute("tabindex", "0");
+
+                // Only the tile's own keystrokes: a button inside it (a chart's legend, an info icon) keeps Enter and Space for itself.
+                _container.addEventListener("keydown", e =>
+                {
+                    var ev = e.As<KeyboardEvent>();
+
+                    if (ev.target == _container && (ev.key == "Enter" || ev.key == " "))
+                    {
+                        StopEvent(ev);
+                        _container.click();
+                    }
+                });
+            }
+
+            return base.OnClick(onClick, clearPrevious);
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the tile is clicked. See <see cref="OnClick(ComponentEventHandler{Metric, MouseEvent}, bool)"/>.
+        /// </summary>
+        public Metric OnClick(Action action) => OnClick((_, __) => action());
+
+        // The tile is built on the first call that needs one, but only put in the DOM once something is
+        // actually on it - so sizing it before filling it doesn't leave an empty square in the card.
+        private IconTile EnsureIconTile()
+        {
+            if (_iconTile is null)
+            {
+                _iconTile = new IconTile();
+
+                _iconContainer.appendChild(_iconTile.Render());
+            }
+
+            return _iconTile;
+        }
+
+        private Metric ShowIcon()
+        {
+            if (_iconContainer.parentElement is null) _container.insertBefore(_iconContainer, _bodyContainer);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public override HTMLElement Render()
+        {
+            return _container;
+        }
+    }
+}

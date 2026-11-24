@@ -1,0 +1,34 @@
+/* ==========================================================================
+   Phosphor theme - OmniBox
+   --------------------------------------------------------------------------
+   The omnibox is the big command line: square, a single-line box on the
+   field wash, lit by the cursor colour while it has focus.
+   ========================================================================== */
+
+body.tss-theme-phosphor .tss-omnibox-container {
+    --tss-omnibox-radius: 0;
+    border-radius: 0;
+    background: var(--tss-ph-field);
+    box-shadow: none;
+}
+
+body.tss-theme-phosphor .tss-omnibox-container:focus-within {
+    border-color: var(--tss-ph-cursor);
+    box-shadow: var(--tss-ph-box-glow);
+}
+
+body.tss-theme-phosphor .tss-omnibox-container textarea,
+body.tss-theme-phosphor .tss-omnibox-container input {
+    caret-color: var(--tss-ph-cursor);
+    caret-shape: block;
+}
+
+body.tss-theme-phosphor .tss-omnibox-search-trigger-btn {
+    border-radius: 0;
+}
+
+/* The box's focus is the one drawn above, as the theme's fields draw theirs; Tesserae's second line inside the
+   focused box (an overlay that takes the box's border) is not part of it. */
+body.tss-theme-phosphor .tss-omnibox-container:focus-within::after {
+    content: none;
+}

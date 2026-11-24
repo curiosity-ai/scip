@@ -1,0 +1,309 @@
+﻿using System;
+using static Tesserae.UI;
+using static Transpose.Core.dom;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A navigational trail showing the user's position within a hierarchy of pages or sections.
+    /// </summary>
+    [Transpose.Name("tss.Breadcrumb")]
+    public class Breadcrumb : IComponent, IContainer<Breadcrumb, IComponent>
+    {
+        private readonly HTMLElement    _childContainer;
+        private readonly ResizeObserver _resizeObserver;
+        private          int            _maximumItemsToDisplay = 10;
+        private          int            _overflowIndex         = 0;
+        private          bool           _cacheSizes;
+        private          double         _cachedFullWidth      = 0;
+        private          HTMLElement    _chevronToUseAsButton = null;
+
+        private string _chevronIcon = UIcons.AngleRight.ToCssClass();
+
+        private readonly Dictionary<HTMLElement, double> _cachedSizes = new Dictionary<HTMLElement, double>();
+
+        /// <summary>
+        /// Gets or sets the maximum items to display.
+        /// </summary>
+        public int MaximumItemsToDisplay
+        {
+            get => _maximumItemsToDisplay;
+            set
+            {
+                _maximumItemsToDisplay = value;
+                Recompute();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the overflow index.
+        /// </summary>
+        public int OverflowIndex
+        {
+            get => _overflowIndex;
+            set
+            {
+                _overflowIndex = value;
+                Recompute();
+            }
+        }
+
+        /// <summary>
+        /// Returns a value indicating whether the component is small.
+        /// </summary>
+        public bool IsSmall
+        {
+            get => _childContainer.classList.contains("tss-small");
+            set
+            {
+                if (value) { _childContainer.classList.add("tss-small"); }
+                else { _childContainer.classList.remove("tss-small"); }
+            }
+        }
+
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Breadcrumb()
+        {
+            _childContainer = Nav(Att("tss-breadcrumb", ariaLabel: "Breadcrumb"));
+            DomObserver.WhenMounted(_childContainer, Recompute);
+            _resizeObserver = new ResizeObserver((entries, obs) => Recompute());
+            _resizeObserver.observe(document.body);
+        }
+
+        private static IComponent Clone(Node node)
+        {
+            var c = (HTMLElement)(node.cloneNode(true));
+            c.classList.remove("tss-breadcrumb-collapse");
+            return Raw(c);
+        }
+
+        private void Recompute()
+        {
+
+            int childElementCount = (int)_childContainer.childElementCount;
+            if (childElementCount == 0) return;
+
+
+            if (_chevronToUseAsButton is object)
+            {
+                //Reset modified chevron if any
+                _chevronToUseAsButton.classList.add(_chevronIcon, "tss-breadcrumb-collapse");
+                _chevronToUseAsButton.classList.remove(UIcons.MenuDots.ToCssClass(), "tss-breadcrumb-opencolapsed");
+
+                _chevronToUseAsButton.onclick = null;
+                _chevronToUseAsButton         = null;
+            }
+
+            UpdateChildrenSizes();
+
+            bool isChevron(HTMLElement e) => e.classList.contains("tss-breadcrumb-chevron");
+
+            var keep = new int[childElementCount];
+
+            const int KEEP        = 2;
+            const int COLLAPSE    = 1;
+            const int NOTMEASURED = 0;
+
+
+            if (_overflowIndex >= 0)
+            {
+                for (int i = 0; i <= Math.Min(keep.Length - 1, ((_overflowIndex) * 2)); i++)
+                {
+                    keep[i] = KEEP;
+
+                    if ((i + 1 < _overflowIndex - 2))
+                    {
+                        var child = (HTMLElement)_childContainer.children[(uint)i + 1];
+
+                        if (isChevron(child))
+                        {
+                            keep[i + 1] = KEEP;
+                        }
+                    }
+                }
+
+
+                keep[keep.Length - 1] = KEEP;
+
+                var debt = _cachedFullWidth - _cachedSizes.Values.Sum() - 64;
+
+                while (debt < 0)
+                {
+                    var candidate = Array.IndexOf(keep, NOTMEASURED);
+
+                    if (candidate >= 0)
+                    {
+                        keep[candidate] = COLLAPSE;
+                        var child = (HTMLElement)_childContainer.children[(uint)candidate];
+                        debt += _cachedSizes[child];
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                var hidden = new List<HTMLElement>();
+
+                for (uint i = 0; i < _childContainer.childElementCount; i++)
+                {
+                    var child = (HTMLElement)_childContainer.children[i];
+
+                    if (keep[i] == COLLAPSE)
+                    {
+                        if (_chevronToUseAsButton is null)
+                        {
+                            if (isChevron(child))
+                            {
+                                _chevronToUseAsButton = child;
+                                continue; //Don't collapse this, instead keep for menu button
+                            }
+                            else if (i > 0)
+                            {
+                                //previous element is a chevron, so use it instead
+                                _chevronToUseAsButton = (HTMLElement)_childContainer.children[i - 1];
+                            }
+                        }
+
+                        if (!isChevron(child)) hidden.Add(child);
+                        child.classList.add("tss-breadcrumb-collapse");
+                    }
+                    else
+                    {
+                        child.classList.remove("tss-breadcrumb-collapse");
+                    }
+                }
+
+
+                if (_chevronToUseAsButton is object)
+                {
+                    _chevronToUseAsButton.classList.add(UIcons.MenuDots.ToCssClass(), "tss-breadcrumb-opencolapsed");
+                    _chevronToUseAsButton.classList.remove(_chevronIcon, "tss-breadcrumb-collapse");
+
+                    _chevronToUseAsButton.onclick = (e) =>
+                    {
+                        StopEvent(e);
+                        var clones = hidden.Select(element => ContextMenuItem(Clone(element)).OnClick((s2, e2) => element.click())).ToArray();
+                        ContextMenu().Items(clones).ShowFor(_chevronToUseAsButton);
+                    };
+                }
+
+            }
+
+
+        }
+
+        private void UpdateChildrenSizes()
+        {
+            if (!_cacheSizes)
+            {
+                _cachedSizes.Clear();
+
+                for (uint i = 0; i < _childContainer.childElementCount; i++)
+                {
+                    var child = (HTMLElement)_childContainer.children[i];
+                    child.classList.remove("tss-breadcrumb-collapse");
+                }
+
+                var rect = (DOMRect)_childContainer.getBoundingClientRect();
+                _cachedFullWidth = rect.width;
+            }
+
+
+            foreach (HTMLElement child in _childContainer.children)
+            {
+                if (!_cachedSizes.ContainsKey(child))
+                {
+                    var childRect = (DOMRect)child.getBoundingClientRect();
+                    _cachedSizes[child] = childRect.width;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Clears the component's current state.
+        /// </summary>
+        public void Clear()
+        {
+            ClearChildren(_childContainer);
+        }
+
+        /// <summary>
+        /// Replaces an existing item with a new one.
+        /// </summary>
+        public void Replace(IComponent newComponent, IComponent oldComponent)
+        {
+            _childContainer.replaceChild(newComponent.Render(), oldComponent.Render());
+        }
+
+        /// <summary>
+        /// Adds the given item to the component.
+        /// </summary>
+        public void Add(IComponent component)
+        {
+            if (_childContainer.childElementCount > 0)
+            {
+                _childContainer.appendChild(I(Att("tss-breadcrumb-chevron " + _chevronIcon)));
+            }
+            _childContainer.appendChild(component.Render());
+        }
+
+        /// <summary>
+        /// Adds the given items to the component.
+        /// </summary>
+        public Breadcrumb Items(params IComponent[] children)
+        {
+            children.ForEach(x => Add(x));
+            return this;
+        }
+
+        /// <summary>
+        /// Disables the size cache on the component.
+        /// </summary>
+        public Breadcrumb DisableSizeCache()
+        {
+            _cacheSizes = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the overflow index of the component.
+        /// </summary>
+        public Breadcrumb SetOverflowIndex(int i)
+        {
+            _overflowIndex = i;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the chevron of the component.
+        /// </summary>
+        public Breadcrumb SetChevron(UIcons icon)
+        {
+            _chevronIcon = icon.ToCssClass();
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the component at small size.
+        /// </summary>
+        public Breadcrumb Small()
+        {
+            IsSmall = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public HTMLElement Render()
+        {
+            return _childContainer;
+        }
+    }
+}

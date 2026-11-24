@@ -1,0 +1,864 @@
+﻿using System;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+using static TNT.T;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A modal overlay surface that dims the page and centers arbitrary content, with optional header, footer and
+    /// close button.
+    /// </summary>
+    [Transpose.Name("tss.Modal")]
+    public sealed class Modal : Layer<Modal>, ISpecialCaseStyling, IHasBackgroundColor, IBindableComponent<bool>
+    {
+        private event OnShowHandler Shown;
+        public delegate void        OnShowHandler(Modal sender);
+
+        private event OnHideHandler Hidden;
+        public delegate void        OnHideHandler(Modal sender);
+
+        private readonly SettableObservable<bool> _observable = new SettableObservable<bool>();
+
+        private readonly HTMLElement    _closeButton;
+        private readonly HTMLElement    _modalHeader;
+        private readonly HTMLElement    _modalFooter;
+        private readonly HTMLElement    _modalOverlay;
+        private readonly HTMLDivElement _modalContent;
+
+        private readonly HTMLElement    _modalLeftHeaderCommands;
+        private readonly HTMLElement    _modalHeaderCommands;
+        private readonly HTMLElement    _modalLeftFooterCommands;
+        private readonly HTMLElement    _modalFooterCommands;
+        private readonly HTMLElement    _modalHeaderContents;
+        private readonly HTMLElement    _modalFooterContents;
+        private readonly HTMLDivElement _modal;
+
+        private bool             _isDragged;
+        private TranslationPoint _startPoint;
+
+        // DrawerOnMobile: the sheet the modal is moved into while it is shown on a phone
+        private bool   _drawerOnMobile;
+        private Drawer _drawer;
+        private bool   _shownInDrawer;
+
+        // Set when a PixelAvatar is perched on this modal, so ShowEmbedded can move it inside.
+        internal PixelAvatarAttachment _pixelAvatar;
+
+        private readonly Action<Event> _onCloseClickAction;
+        private readonly Action<Event> _onDragMouseDownAction;
+        private readonly Action<Event> _onDragMouseMoveAction;
+        private readonly Action<Event> _onDragMouseUpAction;
+
+        /// <summary>
+        /// Gets or sets the animate on show.
+        /// </summary>
+        public bool AnimateOnShow { get { return base.AnimateOnShow; } set { base.AnimateOnShow = value; } }
+
+        /// <summary>
+        /// Gets or sets the styling container.
+        /// </summary>
+        public HTMLElement StylingContainer => _modal;
+
+        /// <summary>
+        /// Gets whether a sizing helper applied to this component should tag it so a wrapper-building container hoists the style onto the wrapper.
+        /// </summary>
+        public bool PropagateStylesToWrapper => false;
+
+        /// <summary>
+        /// Gets or sets the CSS background of the component.
+        /// </summary>
+        public string Background
+        {
+            get => _modal.style.background;
+            set => _modal.style.background = value;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Modal(IComponent header = null)
+        {
+            _onCloseClickAction    = (ev) => OnCloseClick(ev);
+            _onDragMouseDownAction = (ev) => OnDragMouseDown(ev);
+            _onDragMouseMoveAction = (ev) => OnDragMouseMove(ev);
+            _onDragMouseUpAction   = (ev) => OnDragMouseUp(ev);
+
+            _modalHeaderContents = Div(Att("tss-modal-header-content"));
+            _modalFooterContents = Div(Att("tss-modal-footer-content"));
+
+            _modalHeaderCommands     = Div(Att("tss-modal-header-commands tss-default-component-no-margin"));
+            _modalLeftHeaderCommands = Div(Att("tss-modal-left-header-commands tss-default-component-no-margin"));
+            _modalFooterCommands     = Div(Att("tss-modal-footer-commands tss-default-component-no-margin"));
+            _modalLeftFooterCommands = Div(Att("tss-modal-left-footer-commands tss-default-component-no-margin"));
+
+            _modalHeader = Div(Att("tss-modal-header"), _modalLeftHeaderCommands, _modalHeaderContents, _modalHeaderCommands);
+            _modalFooter = Div(Att("tss-modal-footer"), _modalLeftFooterCommands, _modalFooterContents, _modalFooterCommands);
+
+            if (header != null)
+            {
+                _modalHeaderContents.appendChild(header.Render());
+            }
+            else
+            {
+                _modalHeader.style.display = "none";
+            }
+
+            _closeButton = UI.Button(Att($"tss-modal-button", type: "button", ariaLabel: "Close".t(), el: el => el.onclick = e => Hide()), I(Att("tss-fontsize-small " + UIcons.Cross.ToCssClass())));
+            _modalHeaderCommands.appendChild(_closeButton);
+
+            _modalContent = Div(Att("tss-modal-content"));
+            _modal = Div(Att("tss-modal", role: "dialog", styles: s => s.transform = "translate(0px,0px)"), _modalHeader, _modalContent, _modalFooter);
+            _modal.setAttribute("aria-modal", "true");
+            _modalOverlay = Div(Att("tss-modal-overlay"));
+            _contentHtml  = Div(Att("tss-modal-container"), _modalOverlay, _modal);
+            IsNonBlocking = false; //blocking by default
+
+            // 2020-05-01 DWR: In order to pick up key press events, we need to set the InnerElement on the base class before calling AttachKeys AND we need to give the container a tabindex value, otherwise it's not focusable and can't pick up key
+            // -1 rather than 0: the box takes the focus as it opens (DoShow), but it is not a Tab stop of its own - with 0
+            // the focus trap cycled through the whole dialog as one more stop between its last control and its first.
+            InnerElement    = _modal;
+            _modal.tabIndex = -1;
+            AttachKeys();
+
+            // Look for [Esc] presses and hide the modal if one occurs - note that we don't know at this point whether this modal will have a close button (or be considered "light dismiss"-applicable, which is where clicking outside the modal can close the modal
+            // it - which is logic which we use here to decide whether the User must explicitly click the close button or if they can easily discard it via clicking away or hitting [Esc] <- 2020-05-01 DWR: Checking for light dismiss was Rafa's idea, we MIGHT also
+            // want to allow [Esc] support for modals with a close button that DON'T allow light dismiss in the future). So we'll hook up the key press now and then check the component's configuration if the event occurs. Also note that there is key PRESS event
+            // for [Esc] (unlike other buttons), only key DOWN and key UP and so we'll have to settle for using onKeyUp.
+            SubscribeKeyUp((_, e) =>
+            {
+                if ((e.keyCode == 27) && CanLightDismiss && WillShowCloseButton)
+                {
+                    Hide();
+                }
+            });
+        }
+
+        /// <summary>
+        /// Sets the header of the component.
+        /// </summary>
+        public Modal SetHeader(IComponent header)
+        {
+            _modalHeader.style.display = "";
+            ClearChildren(_modalHeaderContents);
+
+            if (header is object)
+            {
+                _modalHeaderContents.appendChild(header.Render());
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the footer of the component.
+        /// </summary>
+        public Modal SetFooter(IComponent footer)
+        {
+            _modalFooter.style.display = "";
+            ClearChildren(_modalFooterContents);
+
+            if (footer is object)
+            {
+                _modalFooterContents.appendChild(footer.Render());
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the header commands of the component.
+        /// </summary>
+        public Modal SetHeaderCommands(params IComponent[] commands)
+        {
+            _modalHeader.style.display = "";
+            ClearChildren(_modalHeaderCommands);
+
+            if (commands is object)
+            {
+                foreach (var command in commands)
+                {
+                    _modalHeaderCommands.appendChild(command.Render());
+                }
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the footer commands of the component.
+        /// </summary>
+        public Modal SetFooterCommands(params IComponent[] commands)
+        {
+            _modalFooter.style.display = "";
+            ClearChildren(_modalFooterCommands);
+
+            if (commands is object)
+            {
+                foreach (var command in commands)
+                {
+                    _modalFooterCommands.appendChild(command.Render());
+                }
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the left header commands of the component.
+        /// </summary>
+        public Modal SetLeftHeaderCommands(params IComponent[] commands)
+        {
+            _modalHeader.style.display = "";
+            ClearChildren(_modalLeftHeaderCommands);
+
+            if (commands is object)
+            {
+                foreach (var command in commands)
+                {
+                    _modalLeftHeaderCommands.appendChild(command.Render());
+                }
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the left footer commands of the component.
+        /// </summary>
+        public Modal SetLeftFooterCommands(params IComponent[] commands)
+        {
+            _modalFooter.style.display = "";
+            ClearChildren(_modalLeftFooterCommands);
+
+            if (commands is object)
+            {
+                foreach (var command in commands)
+                {
+                    _modalLeftFooterCommands.appendChild(command.Render());
+                }
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the height of the inner content area of the surface.
+        /// </summary>
+        public Modal ContentHeight(UnitSize height)
+        {
+            _modalContent.style.height = height.ToString();
+            return this;
+        }
+
+        /// <summary>
+        /// Removes / disables the header on the component.
+        /// </summary>
+        public Modal NoHeader()
+        {
+            ClearChildren(_modalHeader);
+            _modalHeader.style.display = "none";
+            return this;
+        }
+
+        /// <summary>
+        /// Removes / disables the footer on the component.
+        /// </summary>
+        public Modal NoFooter()
+        {
+            ClearChildren(_modalFooter);
+            _modalFooter.style.display = "none";
+            return this;
+        }
+
+        /// <summary>
+        /// Removes / disables the animation on the component.
+        /// </summary>
+        public Modal NoAnimation()
+        {
+            AnimateOnShow = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the content rendered inside the surface.
+        /// </summary>
+        public override IComponent Content
+        {
+            get => _content;
+            set
+            {
+                ClearChildren(_modalContent);
+                ;
+                _content = value;
+
+                if (_content != null)
+                {
+                    _modalContent.appendChild(_content.Render());
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the surface can be dismissed by clicking outside it (light dismiss).
+        /// </summary>
+        public bool CanLightDismiss
+        {
+            get => _modalOverlay.classList.contains("tss-modal-lightDismiss");
+            set
+            {
+                if (value)
+                {
+                    _modalOverlay.classList.add("tss-modal-lightDismiss");
+                    _modalOverlay.addEventListener("click",       _onCloseClickAction);
+                    _modalOverlay.addEventListener("dblclick",    _onCloseClickAction);
+                    _modalOverlay.addEventListener("contextmenu", _onCloseClickAction);
+                }
+                else
+                {
+                    _modalOverlay.classList.remove("tss-modal-lightDismiss");
+                    _modalOverlay.removeEventListener("click",       _onCloseClickAction);
+                    _modalOverlay.removeEventListener("dblclick",    _onCloseClickAction);
+                    _modalOverlay.removeEventListener("contextmenu", _onCloseClickAction);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the component uses the dark colour theme.
+        /// </summary>
+        public bool IsDark
+        {
+            get => _contentHtml.classList.contains("tss-dark");
+            set
+            {
+                if (value)
+                {
+                    _contentHtml.classList.add("tss-dark");
+                }
+                else
+                {
+                    _contentHtml.classList.remove("tss-dark");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the component can be dragged by the user.
+        /// </summary>
+        public bool IsDraggable
+        {
+            get => _modalHeaderContents.classList.contains("tss-modal-draggable");
+            set
+            {
+                if (value)
+                {
+                    _modalHeaderContents.classList.add("tss-modal-draggable");
+                    _modalHeaderContents.addEventListener("mousedown", _onDragMouseDownAction);
+
+                }
+                else
+                {
+                    _modalHeaderContents.classList.remove("tss-modal-draggable");
+                    _modalHeaderContents.removeEventListener("mousedown", _onDragMouseDownAction);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the surface is non-blocking (allows interaction with the page beneath it).
+        /// </summary>
+        public bool IsNonBlocking
+        {
+            get => _contentHtml.classList.contains("tss-modal-modeless");
+            set
+            {
+                _contentHtml.UpdateClassIf(value, "tss-modal-modeless");
+
+                // Modeless while open means the page behind may scroll again, and back the other way.
+                UpdatePageScrollLock();
+            }
+        }
+
+        /// <summary>
+        /// A blocking modal stops the page behind it scrolling; a modeless one does not.
+        /// </summary>
+        protected override bool LocksPageScroll => !IsNonBlocking;
+
+        /// <summary>
+        /// Shows the embedded.
+        /// </summary>
+        public IComponent ShowEmbedded()
+        {
+            WillShowCloseButton = false;
+            _modal.classList.add("tss-embedded");
+
+            // A perched avatar hangs above a floating modal, where nothing clips it. Embedded, the
+            // modal is just a box in someone else's layout and whatever hosts it usually does clip,
+            // so the cat moves into a reserved band inside the modal instead.
+            _pixelAvatar?.Overlap(false);
+
+            return Raw(_modal);
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the close button is shown.
+        /// </summary>
+        public bool WillShowCloseButton
+        {
+            get => _closeButton.style.display != "none";
+            set
+            {
+                if (value)
+                {
+                    _closeButton.style.display = "";
+                    _modalHeader.style.display = "";
+                }
+                else _closeButton.style.display = "none";
+            }
+
+        }
+
+        /// <summary>
+        /// Centers the content of the surface.
+        /// </summary>
+        public Modal CenterContent()
+        {
+            _modalContent.classList.add("tss-modal-centered-content");
+            return this;
+        }
+
+        /// <summary>
+        /// Removes / disables the padding on the component.
+        /// </summary>
+        public Modal NoPadding()
+        {
+            _modalContent.style.padding = _modalHeader.style.padding = _modalFooter.style.padding = "unset";
+            return this;
+        }
+
+        /// <summary>
+        /// Removes / disables the content padding on the component.
+        /// </summary>
+        public Modal NoContentPadding()
+        {
+            _modalContent.style.padding = "unset";
+            return this;
+        }
+
+        /// <summary>
+        /// Shows the close button.
+        /// </summary>
+        public Modal ShowCloseButton()
+        {
+            WillShowCloseButton = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Hides the close button.
+        /// </summary>
+        public Modal HideCloseButton()
+        {
+            WillShowCloseButton = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Enables light-dismiss behaviour (clicking outside the surface closes it).
+        /// </summary>
+        public Modal LightDismiss()
+        {
+            CanLightDismiss = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Removes / disables the light dismiss on the component.
+        /// </summary>
+        public Modal NoLightDismiss()
+        {
+            CanLightDismiss = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Applies the dark colour scheme to the component.
+        /// </summary>
+        public Modal Dark()
+        {
+            IsDark = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Makes the surface draggable.
+        /// </summary>
+        public Modal Draggable()
+        {
+            IsDraggable = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Makes the surface non-blocking, allowing interaction with the page beneath it.
+        /// </summary>
+        public Modal NonBlocking()
+        {
+            IsNonBlocking = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Makes the surface blocking (the default — interaction with the page beneath is prevented).
+        /// </summary>
+        public Modal Blocking()
+        {
+            IsNonBlocking = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Shows the at.
+        /// </summary>
+        public void ShowAt(UnitSize fromTop = null, UnitSize fromLeft = null, UnitSize fromRight = null, UnitSize fromBottom = null)
+        {
+            if (ShouldShowAsDrawer)
+            {
+                ShowInDrawer();
+                return;
+            }
+
+            _modal.style.marginTop    = fromTop is object ? fromTop.ToString() : UnitSize.Auto().ToString();
+            _modal.style.marginLeft   = fromLeft is object ? fromLeft.ToString() : UnitSize.Auto().ToString();
+            _modal.style.marginRight  = fromRight is object ? fromRight.ToString() : UnitSize.Auto().ToString();
+            _modal.style.marginBottom = fromBottom is object ? fromBottom.ToString() : UnitSize.Auto().ToString();
+            DoShow();
+        }
+
+        /// <summary>
+        /// Shows the component.
+        /// </summary>
+        public override Modal Show()
+        {
+            if (ShouldShowAsDrawer)
+            {
+                ShowInDrawer();
+                return this;
+            }
+
+            _modal.style.marginTop    = "";
+            _modal.style.marginLeft   = "";
+            _modal.style.marginRight  = "";
+            _modal.style.marginBottom = "";
+            DoShow();
+            return this;
+        }
+
+        /// <summary>
+        /// Shows the async.
+        /// </summary>
+        public Task ShowAsync()
+        {
+            var tcs = new TaskCompletionSource<bool>();
+
+            OnHide((_) => tcs.SetResult(true));
+            Show();
+
+            return tcs.Task;
+        }
+
+        /// <summary>
+        /// Shows the modal in a <see cref="Drawer"/> - a sheet sliding up from the bottom of the screen - instead
+        /// of as a dialog while the page is in mobile mode (<see cref="UI.Theme.IsMobileMode"/>), where a dialog
+        /// in the middle of a phone leaves a margin of dimmed page on every side and nothing to hold it by.
+        /// Checked every time the modal is shown, so a window resized in between gets the right one.
+        /// </summary>
+        /// <remarks>
+        /// It is the same modal, moved: its header, commands, footer and close button come along, and
+        /// <see cref="OnShow"/>, <see cref="OnHide"/> and the bound value fire as they do for the dialog.
+        /// <see cref="IsShowingInDrawer"/> says which of the two is on screen; <see cref="Layer{T}.IsVisible"/>
+        /// is only ever the dialog. The sheet can be pulled down to dismiss it when the modal could be
+        /// dismissed anyway (<see cref="CanLightDismiss"/> or a close button).
+        /// </remarks>
+        /// <param name="drawerOnMobile">Whether to use a drawer on mobile.</param>
+        /// <returns>The current instance.</returns>
+        public Modal DrawerOnMobile(bool drawerOnMobile = true)
+        {
+            _drawerOnMobile = drawerOnMobile;
+            return this;
+        }
+
+        /// <summary>
+        /// Gets whether the modal is on screen inside a drawer - see <see cref="DrawerOnMobile"/>.
+        /// </summary>
+        public bool IsShowingInDrawer => _shownInDrawer;
+
+        private bool ShouldShowAsDrawer => _drawerOnMobile && Theme.IsMobileMode;
+
+        private void ShowInDrawer()
+        {
+            if (_drawer is null)
+            {
+                //The modal brings its own header, close button and padding, so the sheet draws none of them
+                _drawer = new Drawer().NoHeader().NoContentPadding();
+
+                _drawer.OnHide(_ =>
+                {
+                    if (!_shownInDrawer) return;
+
+                    _shownInDrawer    = false;
+                    _observable.Value = false;
+                    RaiseOnHide();
+                });
+            }
+
+            var dismissible = CanLightDismiss || WillShowCloseButton;
+
+            _drawer.CanLightDismiss  = dismissible;
+            _drawer.CanDragToDismiss = dismissible;
+
+            _modal.classList.remove("tss-modal-animate");
+            _modal.classList.add("tss-modal-in-drawer");
+            _drawer.Content = Raw(_modal);
+
+            RememberFocus(_modal);
+
+            _shownInDrawer = true;
+            _drawer.Show();
+            _modal.focus();
+
+            _observable.Value = true;
+            RaiseOnShow();
+        }
+
+        // A modal shown in a drawer last time is still inside it
+        private void ReturnFromDrawer()
+        {
+            if (_modal.parentElement == _contentHtml) return;
+
+            _modal.classList.remove("tss-modal-in-drawer");
+            _contentHtml.appendChild(_modal);
+        }
+
+        private void DoShow()
+        {
+            ReturnFromDrawer();
+
+            _modal.style.transform = "translate(0px,0px)";
+            if (AnimateOnShow) _modal.classList.add("tss-modal-animate");
+            RememberFocus(_modal);
+            base.Show();
+            _modal.focus(); // 2020-05-01 DWR: We need to put focus into the modal container in order to pick up keypresses
+            _observable.Value = true;
+            RaiseOnShow();
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the hide event fires.
+        /// </summary>
+        public Modal OnHide(OnHideHandler onHide)
+        {
+            Hidden += onHide;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the show event fires.
+        /// </summary>
+        public Modal OnShow(OnShowHandler onShow)
+        {
+            Shown += onShow;
+            return this;
+        }
+
+
+        /// <summary>
+        /// Internal helper that raises the hide event for this surface.
+        /// </summary>
+        public void RaiseOnHide()
+        {
+            Hidden?.Invoke(this);
+        }
+
+        /// <summary>
+        /// Raises the on show event on the component.
+        /// </summary>
+        public void RaiseOnShow()
+        {
+            Shown?.Invoke(this);
+        }
+
+        /// <summary>
+        /// Hides the component.
+        /// </summary>
+        public override void Hide(Action onHidden = null)
+        {
+            if (_shownInDrawer)
+            {
+                _shownInDrawer    = false;
+                _observable.Value = false;
+                RaiseOnHide();
+                RestoreFocus(_modal);
+                _drawer.Hide(onHidden);
+                return;
+            }
+
+            RaiseOnHide();
+            _observable.Value = false;
+
+            // Back to whatever had the focus when the modal opened (the button that opened it, usually), while the
+            // focus is still inside: once the fade removes the modal the browser drops it on the body.
+            RestoreFocus(_modal);
+
+            base.Hide(onHidden);
+        }
+
+        /// <summary>
+        /// Returns an observable that tracks the visibility of the modal.
+        /// </summary>
+        public IObservable<bool> AsObservable() => _observable;
+
+        /// <summary>
+        /// Programmatically shows or hides the modal as part of a two-way binding.
+        /// </summary>
+        public void SetBoundValue(bool value)
+        {
+            var isShown = IsVisible || _shownInDrawer;
+
+            if (value)
+            {
+                if (!isShown) Show();
+            }
+            else
+            {
+                if (isShown) Hide();
+            }
+        }
+
+        protected override HTMLElement BuildRenderedContent()
+        {
+            var trap = new FocusTrap(_contentHtml);
+
+            if (WillShowCloseButton)
+            {
+                trap.TrapEscape(() => OnCloseClick(null));
+            }
+            return trap.Render();
+        }
+
+        private void OnCloseClick(object ev) => Hide();
+
+        private void OnDragMouseMove(object ev)
+        {
+            if (_isDragged)
+            {
+                var e = ev as MouseEvent;
+                _startPoint.X          += e.movementX;
+                _startPoint.Y          += e.movementY;
+                _modal.style.transform =  _startPoint.To(_modal.getBoundingClientRect().As<DOMRect>());
+            }
+        }
+
+        private void OnDragMouseUp(object ev)
+        {
+            var e = ev as MouseEvent;
+
+            if (_isDragged && e.button == 0)
+            {
+                document.body.removeEventListener("mouseup",    _onDragMouseUpAction);
+                document.body.removeEventListener("mousemove",  _onDragMouseMoveAction);
+                document.body.removeEventListener("mouseleave", _onDragMouseUpAction);
+                document.body.classList.remove("tss-modal-dragging");
+                document.body.style.userSelect = "";
+                _isDragged                     = false;
+            }
+        }
+
+        private void OnDragMouseDown(object ev)
+        {
+            var e = ev as MouseEvent;
+
+            if (e.button == 0)
+            {
+                document.body.addEventListener("mouseup",    _onDragMouseUpAction);
+                document.body.addEventListener("mousemove",  _onDragMouseMoveAction);
+                document.body.addEventListener("mouseleave", _onDragMouseUpAction);
+                document.body.classList.add("tss-modal-dragging");
+                _modal.style.userSelect = "none";
+                _startPoint             = TranslationPoint.From(_modal.style.transform);
+                _isDragged              = true;
+            }
+        }
+
+        class TranslationPoint
+        {
+            static readonly Regex regex      = new Regex(@"translate\(([-0-9.].*?)px,\s?([-0-9.].*?)px\)");
+            static readonly Regex regexShort = new Regex(@"translate\(([-0-9.].*?)px\)");
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public TranslationPoint(double x = 0, double y = 0)
+            {
+                X = x;
+                Y = y;
+            }
+
+            /// <summary>The X (horizontal) translation in pixels.</summary>
+            public double X;
+            /// <summary>The Y (vertical) translation in pixels.</summary>
+            public double Y;
+
+            /// <summary>
+            /// Configures the component to from.
+            /// </summary>
+            public static TranslationPoint From(string translation)
+            {
+                try
+                {
+                    var m = regex.Match(translation);
+                    return new TranslationPoint(double.Parse(m.Groups[1].Value), double.Parse(m.Groups[2].Value));
+                }
+                catch
+                {
+                    var m = regexShort.Match(translation);
+                    return new TranslationPoint(double.Parse(m.Groups[1].Value), double.Parse(m.Groups[1].Value));
+                }
+            }
+
+            /// <summary>
+            /// Configures the component to to.
+            /// </summary>
+            public string To(DOMRect rect)
+            {
+                var x     = X;
+                var y     = Y;
+                var halfW = (window.innerWidth - rect.width) / 2;
+                var halfH = (window.innerHeight - rect.height) / 2;
+
+                if (x < -halfW + 5)
+                {
+                    x = -halfW + 5;
+                }
+
+                if (y < -halfH + 5)
+                {
+                    y = -halfH + 5;
+                }
+
+                if (y > halfH - 5)
+                {
+                    y = halfH - 5;
+                }
+
+                if (x > halfW - 5)
+                {
+                    x = halfW - 5;
+                }
+
+                return $"translate({x}px,{y}px)";
+            }
+        }
+    }
+}

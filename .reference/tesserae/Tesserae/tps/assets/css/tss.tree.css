@@ -1,0 +1,275 @@
+﻿/* Tree component */
+.tss-tree {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.tss-tree-item {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Hidden by Tree.Filter: neither the item nor anything below it matched. */
+.tss-tree-item.tss-tree-filtered-out {
+    display: none;
+}
+
+.tss-tree-item-content {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    color: var(--tss-default-foreground-color);
+}
+
+/* Keyboard focus: the row (the treeitem) holds focus, but the mark - a 2px edge inside the line, where a
+   scrolling tree cannot clip it - goes on its own line only, not around the
+   subtree the <li> also contains. The tree itself only holds focus for the moment it takes to hand it on. */
+.tss-tree:focus,
+.tss-tree-item:focus {
+    outline: none;
+}
+
+.tss-tree-item:focus-visible > .tss-tree-item-content {
+    box-shadow: inset 0 0 0 2px var(--tss-primary-border-color);
+}
+
+.tss-tree-item-content:hover {
+    background-color: var(--tss-default-background-hover-color);
+}
+
+.tss-tree-item-content.tss-selected {
+    background-color: var(--tss-default-background-active-color);
+    color: var(--tss-primary-background-color);
+}
+
+.tss-tree-chevron {
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 4px;
+    color: var(--tss-default-foreground-color);
+    visibility: hidden;
+}
+
+.tss-tree-chevron.tss-has-children {
+    visibility: visible;
+}
+
+.tss-tree-chevron:hover {
+    color: var(--tss-primary-background-color);
+}
+
+.tss-tree-checkbox {
+    margin-right: 8px;
+    font-size: 16px;
+    display: none;
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-tree-checkbox:hover {
+    color: var(--tss-primary-background-color);
+}
+
+.tss-tree-selection-enabled.tss-tree-shift-pressed .tss-tree-icon {
+    display: none;
+}
+
+.tss-tree-selection-enabled.tss-tree-shift-pressed .tss-tree-checkbox {
+    display: inline-block;
+}
+
+.tss-tree-selection-enabled .tss-tree-item-content.tss-selected .tss-tree-icon {
+    display: none;
+}
+
+.tss-tree-selection-enabled .tss-tree-item-content.tss-selected .tss-tree-checkbox {
+    display: inline-block;
+}
+
+/* Multiple selection - every row carries its checkbox next to its icon, so what is picked reads at a glance */
+.tss-tree-selection-multiple .tss-tree-checkbox {
+    display: inline-block;
+}
+
+.tss-tree-selection-multiple .tss-tree-item-content.tss-selected .tss-tree-icon,
+.tss-tree-selection-multiple.tss-tree-shift-pressed .tss-tree-icon {
+    display: inline-block;
+}
+
+.tss-tree-selection-multiple .tss-tree-item-content.tss-selected .tss-tree-checkbox,
+.tss-tree-selection-multiple .tss-tree-item-content.tss-partially-selected .tss-tree-checkbox {
+    color: var(--tss-primary-background-color);
+}
+
+.tss-tree-selection-multiple .tss-tree-item.tss-tree-item-not-selectable > .tss-tree-item-content .tss-tree-checkbox {
+    visibility: hidden;
+}
+
+.tss-tree-selection-multiple .tss-tree-item-content.tss-partially-selected {
+    color: var(--tss-primary-background-color);
+}
+
+.tss-tree-icon {
+    margin-right: 8px;
+    font-size: 16px;
+}
+
+.tss-tree-icon.fi-rr-spinner {
+    animation: tss-tree-spin 1s linear infinite;
+}
+
+@keyframes tss-tree-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.tss-tree-text {
+    flex-grow: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    min-height: 28px;
+    align-content: center;
+    text-overflow: ellipsis;
+}
+
+.tss-tree-commands {
+    display: none;
+    flex-wrap: nowrap;
+    margin-left: 4px;
+    z-index: 2;
+}
+
+.tss-tree-item-content:hover > .tss-tree-commands,
+.tss-tree-item-content.tss-tree-keyboard-focus > .tss-tree-commands,
+.tss-tree-item-content.tss-selected > .tss-tree-commands,
+.tss-tree-item-content.tss-tree-commands-always-visible > .tss-tree-commands {
+    display: flex;
+}
+
+/* No vertical margin: a command carries the standard 4px component margin, and with the commands only
+   shown on hover/selection that margin made the row 8px taller the moment they appeared, shifting
+   every row below it. The horizontal margin stays - it is what separates two commands. */
+.tss-tree-commands > .tss-tree-command,
+.tss-tree-commands > a > .tss-tree-command {
+    min-height: unset;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 4px;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.tss-tree-children {
+    list-style: none;
+    margin: 0 0 0 16px;
+    padding: 0;
+    display: none;
+    flex-direction: column;
+    border-left: 1px solid var(--tss-default-border-color);
+}
+
+.tss-tree-item.tss-expanded > .tss-tree-children {
+    display: flex;
+}
+
+/* Compact density - row height, font size and indentation matching a code editor's file explorer */
+.tss-tree-compact .tss-tree-item-content {
+    padding: 0 6px;
+    border-radius: 3px;
+}
+
+.tss-tree-compact .tss-tree-text {
+    min-height: 22px;
+    line-height: 22px;
+    font-size: 13px;
+}
+
+.tss-tree-compact .tss-tree-chevron {
+    width: 14px;
+    height: 14px;
+    font-size: 11px;
+    margin-right: 2px;
+}
+
+.tss-tree-compact .tss-tree-icon,
+.tss-tree-compact .tss-tree-checkbox {
+    font-size: 14px;
+    margin-right: 5px;
+}
+
+.tss-tree-compact .tss-tree-children {
+    margin-left: 8px;
+}
+
+.tss-tree-compact .tss-tree-commands > .tss-tree-command,
+.tss-tree-compact .tss-tree-commands > a > .tss-tree-command {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 3px;
+    font-size: 12px;
+}
+
+.tss-tree-menu {
+    display: flex;
+    flex-direction: column;
+}
+
+/* width: 100% is what makes every row the same width. A <button> is a form control, so `width: auto`
+   on it is shrink-to-fit and Chromium does not stretch it to the flex line's cross size - which left
+   every item but the widest stopping short of the menu's right edge, showing the panel beside it and
+   painting a danger item's red over only part of its row. */
+.tss-tree-menu > .tss-tree-command,
+.tss-tree-menu > a > .tss-tree-command {
+    border: 1px solid transparent;
+    height: 36px !important;
+    min-height: unset;
+    border-radius: 0px;
+    margin: 0px;
+    padding: 0px 12px;
+    min-width: 52px !important;
+    width: 100%;
+    justify-content: flex-start;
+}
+
+.tss-tree-menu > .tss-tree-command:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success),
+.tss-tree-menu > a > .tss-tree-command:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success) {
+    background: var(--tss-tooltip-background-color);
+    color: var(--tss-tooltip-foreground-color);
+    border-color: var(--tss-tooltip-background-color);
+}
+
+.tss-tree-menu > .tss-tree-command.tss-btn-default:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success):hover,
+.tss-tree-menu > a > .tss-tree-command.tss-btn-default:not(.tss-btn-danger):not(.tss-btn-warning):not(.tss-btn-primary):not(.tss-btn-success):hover {
+    color: var(--tss-default-background-hover-color);
+    background: var(--tss-default-foreground-hover-color);
+    border-color: var(--tss-default-foreground-color);
+}
+
+.tippy-box[data-theme~='tss-tree-tippy'] {
+    padding: 0px;
+    margin: 0px;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.tippy-box[data-theme~='tss-tree-tippy'] .tippy-content {
+    padding: 0px;
+    margin: 0px;
+}

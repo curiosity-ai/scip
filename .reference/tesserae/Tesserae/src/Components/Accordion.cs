@@ -1,0 +1,132 @@
+using System.Collections.Generic;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A vertically-stacked list of expandable sections, of which one or more may be open at a time.
+    /// </summary>
+    [Transpose.Name("tss.Accordion")]
+    public sealed class Accordion : ComponentBase<Accordion, HTMLElement>
+    {
+        private readonly List<Expander> _items;
+        private bool _allowMultiple;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Accordion(params Expander[] items)
+        {
+            InnerElement   = Div(Att("tss-accordion"));
+            _items         = new List<Expander>();
+            _allowMultiple = true;
+
+            AddItems(items);
+        }
+
+        /// <summary>
+        /// Gets or sets whether multiple sections can be expanded at once.
+        /// </summary>
+        public bool AllowMultiple
+        {
+            get => _allowMultiple;
+            set
+            {
+                _allowMultiple = value;
+                if (!_allowMultiple)
+                {
+                    CollapseToSingle();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds the given item to the component.
+        /// </summary>
+        public Accordion AddItem(Expander item)
+        {
+            if (item == null)
+            {
+                return this;
+            }
+
+            _items.Add(item);
+            InnerElement.appendChild(item.Render());
+
+            item.OnToggle(expander =>
+            {
+                if (!_allowMultiple && expander.IsExpanded)
+                {
+                    CollapseOthers(expander);
+                }
+            });
+
+            return this;
+        }
+
+        /// <summary>
+        /// Adds the given items to the component.
+        /// </summary>
+        public Accordion AddItems(params Expander[] items)
+        {
+            if (items == null)
+            {
+                return this;
+            }
+
+            foreach (var item in items)
+            {
+                AddItem(item);
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Adds the given items to the component.
+        /// </summary>
+        public Accordion Items(params Expander[] items) => AddItems(items);
+
+        /// <summary>
+        /// Allows the multiple open.
+        /// </summary>
+        public Accordion AllowMultipleOpen(bool value = true)
+        {
+            AllowMultiple = value;
+            return this;
+        }
+
+        private void CollapseToSingle()
+        {
+            var firstExpanded = _items.Find(item => item.IsExpanded);
+
+            foreach (var item in _items)
+            {
+                if (item != firstExpanded)
+                {
+                    item.Collapse();
+                }
+            }
+        }
+
+        private void CollapseOthers(Expander keepOpen)
+        {
+            foreach (var item in _items)
+            {
+                if (item != keepOpen)
+                {
+                    item.Collapse();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public override HTMLElement Render()
+        {
+            return InnerElement;
+        }
+    }
+}

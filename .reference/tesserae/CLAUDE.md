@@ -1,0 +1,818 @@
+# CLAUDE.md
+
+## Repository overview
+
+Tesserae is a C# UI toolkit for building web applications, compiled to JavaScript via the **Transpose** compiler.
+
+- Core UI components: `Tesserae/src/Components`
+- Component factories and helpers: `Tesserae/src/Base/UI.Components.cs`
+- Fluent extensions: `Tesserae/src/Extensions`
+- Samples and demos: `Tesserae.Tests/`
+- Custom theme packages: `Tesserae.Themes.Curiosity/` (see "Custom themes" below)
+- Project and build config: `Tesserae/Tesserae.csproj`, `Tesserae/tps.json`
+
+## Skills
+
+`Tesserae/skills/` is a **single Claude skill** named `tesserae`, structured per
+Anthropic's skill guidance (one root `SKILL.md`, with detail layered into a
+`references/` folder for progressive disclosure):
+
+- `Tesserae/skills/SKILL.md` — the root skill. Explains the library basics, using
+  components, layout with `Stack`/`Grid`, the key sizing/spacing/alignment helpers,
+  and an index of every reference file and how to find it.
+- `Tesserae/skills/references/<slug>.md` — one reference per component or topic
+  (kebab-case slug, e.g. `button.md`, `details-list.md`, `context-menu.md`), plus
+  the cross-cutting references `icomponent.md` (the `IComponent` interface and every
+  fluent extension method), `core-concepts.md`, `creating-a-component.md`,
+  `javascript-interop.md`, `wrap-a-javascript-library.md`, and the styling/layout
+  topic docs. Each has the factory signature, key fluent methods, and an example.
+
+These skills are written for **consumers of the Tesserae NuGet package**, not for
+this repo, which is why they live under the project folder (`Tesserae/skills/`)
+rather than this repo's `.claude/`.
+
+### How the skills ship to consumers
+
+The skill is packed into the Tesserae NuGet package and extracted into a
+referencing project's `.claude/skills/tesserae/` on build. The plumbing lives in
+[`Tesserae/Tesserae.csproj`](Tesserae/Tesserae.csproj) and
+[`Tesserae/buildTransitive/Tesserae.targets`](Tesserae/buildTransitive/Tesserae.targets):
+
+- The csproj packs everything under `Tesserae/skills/**` (the root `SKILL.md` and
+  the whole `references/` tree) into the package's `skills/` folder, and a
+  `_WriteSkillsVersion` target stamps the package version into
+  `skills/.skills-version` (`NoDefaultExcludes` lets the dot-file pack).
+- `Tesserae.targets` (auto-imported via `buildTransitive/`, so it reaches both
+  direct and transitive consumers) walks up from the consuming project to find a
+  `.claude` folder. If one exists, it compares the shipped `.skills-version`
+  against the installed marker and, when they differ, wipes and re-copies the
+  whole `skills/` payload into `.claude/skills/tesserae/`. No `.claude` folder →
+  it does nothing.
+
+So a Tesserae app that has a `.claude` folder automatically gets the skill
+refreshed whenever it upgrades the package. Changes here reach consumers on the
+next package version bump (the version marker is what triggers the re-copy). Note
+the install folder is `tesserae` (the skill `name`, lowercase kebab-case); the
+targets *filename* must stay `Tesserae.targets` (= the csproj `<PackageId>`) so
+NuGet auto-imports it, and `_SkillsPackageId` inside the targets sets the install
+folder name.
+
+### Keep skills in sync with the code
+
+The skill is documentation that drifts out of date if the code changes underneath
+it. Whenever you change the public surface of the toolkit, update the skill in the
+same change:
+
+- **New component** — add `Tesserae/skills/references/<slug>.md` (slug = the
+  doc/kebab-case name), link it from related references, and add it to the index in
+  `Tesserae/skills/SKILL.md`.
+- **Changed factory or fluent method** (renamed, new/removed parameters, new
+  configuration method, changed default) — update that component's reference so the
+  signatures and examples still compile.
+- **New or changed `IComponent` extension method** (under
+  `Tesserae/src/Extensions/`) — update `references/icomponent.md` (and the sizing
+  cheat-sheet in `SKILL.md` if it's a common one).
+- **Removed component** — delete its `references/<slug>.md`, drop it from the
+  `SKILL.md` index, and fix any "Related" links that pointed at it.
+
+The root `SKILL.md` `name` must be `tesserae` and its `description` must state what
+it does and when to use it (no `<`/`>`). Keep `SKILL.md` a focused overview and
+push detail into `references/`. The same applies to the matching pages in the
+`documentation` repo under `tesserae/` — update them alongside the references.
+
+## Icon fonts
+
+Everything about the bundled icon set is generated: the woff2 files under
+`Tesserae/tps/assets/fonts/`, the `uicons-*.css` files, and
+`Tesserae/src/Icons/UIcons.cs`. **`Build.UpdateInterfaceIcons` owns all of it** —
+never edit those files by hand.
+
+```bash
+dotnet run --project Build.UpdateInterfaceIcons   # download, regenerate, re-centre
+dotnet run --project Build.UpdateInterfaceIcons -- --help
+```
+
+One run, four stages in a fixed order: download the nine weights, rewrite the
+stylesheets and the enum, measure every glyph in headless Chromium, then bake the
+optical centering into the glyph outlines and re-measure to prove it landed. It exits
+non-zero if any check fails and only then writes the `uicons-source.txt` marker, so a
+failed run does not look finished. The only prerequisite is a Chromium for Playwright
+(`bin/Debug/net10.0/playwright.ps1 install chromium`); the font surgery is C#
+(`Woff2File.cs`, `TransformedGlyf.cs`, `CmapLookup.cs`) and needs nothing installed.
+
+Bumping icons is rare and the run takes minutes, so it is gated: the downloaded
+version plus a hash of every woff2 is compared against
+`Build.UpdateInterfaceIcons/uicons-source.txt`, and an unchanged set stops the run.
+`--force` overrides; `--centre-only` re-centres what is already in the tree
+without downloading. The fonts in the tree no longer match the vendor bytes, which
+is why the marker records what was *downloaded* rather than hashing the tree.
+
+The centering used to be a generated stylesheet that nudged icons with
+`position: relative`. It was removed because measurement showed it could not work
+at Tesserae's sizes: a paint-time offset is rounded to a whole CSS pixel, so at the
+13px `Icon()` default a 0.02–0.035em nudge did nothing, and the rounding applies to
+the accumulated position, so the same icon moved a pixel in one container and not in
+another. An offset baked into the outline is part of the shape the rasterizer draws
+and survives at any size.
+
+**When touching any of this, read `.claude/skills/uicons-fonts/SKILL.md`** — it
+covers the two traps in these fonts (declared bboxes that disagree with the
+outlines, and the 300-unit em square), the rules that keep composed icons
+registered with each other, and which checks fail the run.
+
+## Custom themes
+
+A custom theme is a separate NuGet package that restyles every component while it is active,
+switched at run time through `UI.Theme.SetCustomTheme(ICustomTheme)` / `ClearCustomTheme()`
+([UI.Theme.CustomTheme.cs](Tesserae/src/Base/UI.Theme.CustomTheme.cs)). The contract is
+[`ICustomTheme`](Tesserae/src/Interfaces/ICustomTheme.cs) and the standard implementation is the
+abstract [`CustomTheme`](Tesserae/src/Base/CustomTheme.cs): a theme owns one **root class name**,
+`Activate()` loads its stylesheet the first time and then adds the class to `document.body`,
+`Deactivate()` removes it. Every rule in the theme is scoped under that class, so its CSS can stay
+loaded while it is off. The first theme is **`Tesserae.Themes.Curiosity`**
+([Tesserae.Themes.Curiosity/](Tesserae.Themes.Curiosity/)), the Curiosity brand (the `website` repo's
+design language); the gallery opens in it and switches from the Theme nav at the foot of its sidebar.
+
+What makes it work, and what to keep when touching it:
+
+- **The stylesheet ships unlinked.** The theme's `tps.json` combines its per-component files into one
+  resource with `"load": false`, which the Transpose compiler copies into a consuming app's output
+  without adding a `<link>` to `index.html`. The URL `CustomTheme` loads is that group's `output` plus
+  its `name` (`assets/css/tss-theme-curiosity.css`).
+- **One file per Tesserae stylesheet, same name** (`tss.button.css`, `tss.dropdown.css`, …), listed in
+  Tesserae's own order, after `tss.fonts.css` and `tss.common.css` (the tokens). A theme file restates
+  only what differs, every selector starting `body.tss-theme-curiosity` (dark:
+  `body.tss-theme-curiosity.tss-dark-mode`).
+- **Redefine derived variables with their roots.** `--tss-x-color: rgb(var(--tss-x-color-root))` is
+  resolved where it is declared, so a theme that changes only `--tss-x-color-root` on the body leaves
+  every `--tss-x-color` at Tesserae's value. The theme's `tss.common.css` restates both, light and dark.
+- **An app's own colours beat the theme.** While any custom theme is active the body also carries
+  `tss-custom-theme` (`UI.Theme.CustomThemeMarkerClass`), and `SetPrimary` / `SetBackground` /
+  `SetHighlight` / `ThemeBuilder` restate their variables under it as `!important`
+  (`WithCustomThemeOverrides`). Without that, a theme's body-level variables silently beat anything those
+  write to `:root`. With no custom theme the class is absent and their output behaves as it always did.
+- **Chart series are themable.** A series without an explicit colour reads `--tss-chart-series-N`
+  (N = 1…8) before the toolkit palette (`ChartBase.DefaultPalette`).
+- **Scrollbars are hairline rails, in CSS only.** A 1px rule for the track and a square thumb that is a
+  ghost at rest, grey with the rail while the pointer is over the scroller, solid ink on paper (paper on ink
+  in dark) under the pointer, Signal while dragged. Firefox has no thumb part to hover, so it stops at grey:
+  the pointer is over the scroller whenever it scrolls, and solid-on-hover would show on every scroll.
+  No script touches them: see "Scrollbars are CSS only".
+- **Shadows are hairlines.** The Curiosity theme turns every `--tss-*shadow*` token into a
+  `0 0 0 1px` ring, so a component that draws its edge with a shadow token keeps an edge.
+- **A theme follows the components.** A change to a component's markup or classes can orphan its theme
+  rules, and a new component gets the theme's tokens but none of its shape. When you add or restyle a
+  component, look at it with the Curiosity theme on too (it is the gallery default) and add or update
+  the matching file under `Tesserae.Themes.Curiosity/tps/assets/css/`.
+- The fonts (Schibsted Grotesk, Geist Mono, OFL) are bundled in the package rather than loaded from
+  Google Fonts. The skill reference is `Tesserae/skills/references/custom-themes.md`.
+- **Tooltips open instantly once one is open** (`Tesserae/tps/assets/js/tippy.warm.js`, a default Tippy plugin like
+  `tippy.unmount.js`): while a hover tooltip is mounted, and for 300ms after the last one closes, the next skips its
+  show delay and animation, and the one being left is unmounted without fading. A lazily created tooltip
+  (`Tooltip(...)`, `OverflowTooltip`) calls `tippy.tssShowWhenHovered`, which applies the show delay itself on the
+  first hover and skips it when warm.
+- **A second theme: `Tesserae.Themes.Stratus`** ([Tesserae.Themes.Stratus/](Tesserae.Themes.Stratus/)), an aerospace
+  design language built from the tokens and component behaviour of an open-source aerospace design system (used as a reference
+  only; the package is deliberately not named after it): deep navy accent, cool greys, filled inputs with a bottom rule, 3px/6px/8px radii, shadows from a
+  tiered elevation scale (`--tss-str-elev-N`, level 1 to 6), Inter and Roboto Mono, a 2px blue focus ring. It follows
+  the same mechanics as Curiosity (root class `tss-theme-stratus`, one file per Tesserae stylesheet, `tps.json` resource
+  group with `"load": false`, derived variables restated with their roots) and is picked in the gallery's Theme nav
+  (`localStorage["tss-sample-theme"] = "stratus"`). Its tokens are `--tss-str-*` in its `tss.common.css`; a component
+  stylesheet there reads those rather than hex values. It ships no components of its own.
+- **A fourth theme: `Tesserae.Themes.Rechenwerk`** ([Tesserae.Themes.Rechenwerk/](Tesserae.Themes.Rechenwerk/)), after
+  Kraftwerk's record sleeves (an homage, not named after the band: *Rechenwerk* is German for a computer's arithmetic
+  unit). Light is *Die Mensch-Maschine* (cream, ink, signal red), dark is *Computerwelt* (black screen with a faint
+  raster, cream type, terminal yellow). Root class `tss-theme-rechenwerk`, tokens `--tss-rw-*` in its `tss.common.css`
+  (`--tss-rw-signal` is the mode's accent, red or yellow), Jost / Big Shoulders Display / Doto / Space Mono bundled.
+  Two things it does that the others do not: the **sidebar is a dark island in both modes** (the dark token block is
+  also applied to `.tss-sidebar`, so a component inside the sidebar draws itself for black without a rule of its
+  own), and selection is the same solid yellow block with black type in both modes. Its README lists the design
+  rules every stylesheet follows. Picked in the gallery's Theme nav (`localStorage["tss-sample-theme"] = "rechenwerk"`).
+- **A skeuomorphic theme: `Tesserae.Themes.Weniger`** ([Tesserae.Themes.Weniger/](Tesserae.Themes.Weniger/)), after
+  the West German industrial design of the 1950s to 80s (*Weniger, aber besser*; an homage, named after the motto
+  rather than any manufacturer). Warm light-grey plastic with a hairline groove inside every panel (a negative
+  `outline-offset`), brushed and turned aluminium for knobs, toggle thumbs, slider caps and the sidebar plate, buttons as
+  extruded slabs with their side wall showing, a shade darker of the key's own colour (OKLCH), pushed in when pressed,
+  recessed wells for fields, signal orange as the one accent, green and orange LED lamps, and
+  metrics on a grey-green LCD in 7-segment figures. Dark mode is the charcoal edition. Root class `tss-theme-weniger`,
+  tokens `--tss-wg-*` in its `tss.common.css` (materials, depths, lamps, LCD), Hanken Grotesk / DSEG7 and DSEG14 /
+  JetBrains Mono bundled (OFL). Its README lists the design rules every stylesheet follows. Picked in the gallery's
+  Theme nav (`localStorage["tss-sample-theme"] = "weniger"`).
+- **Nine more themes, one package each, same mechanics** (root class `tss-theme-<id>`, tokens `--tss-<short>-*` in
+  the package's `tss.common.css`, a README with the design rules every stylesheet follows, all fonts OFL and bundled),
+  picked in the gallery's Theme nav by id (`localStorage["tss-sample-theme"] = "<id>"`):
+  - **`Tesserae.Themes.Zeitung`** (`zeitung`): a broadsheet newspaper; morning edition on newsprint, night edition on
+    dark stock, one spot red. Typography carries it: a serif with real small caps and old-style figures (a renamed
+    subset of Source Serif 4, since "Source" is a Reserved Font Name), double rules instead of shadows.
+  - **`Tesserae.Themes.Blaupause`** (`blaupause`): engineering drawings; cyanotype blueprint in dark, whiteprint in
+    light, drafting grid, no shadows, registration ticks, dimension-line separators, red-pencil focus.
+  - **`Tesserae.Themes.Phosphor`** (`phosphor`): a character terminal; green phosphor CRT with glow and scanlines in
+    dark, green-bar line-printer paper in light, box-drawing frames, inverse-video cursor for focus and selection.
+  - **`Tesserae.Themes.Glas`** (`glas`): refractive liquid glass over a colour field. Overlays blur and, in Chromium,
+    refract through an inline SVG displacement filter. Blur only where content passes behind, never nested (a nested
+    `backdrop-filter` blurs nothing), and never on a container that holds a fixed-position pane.
+  - **`Tesserae.Themes.Kristall`** (`kristall`): after the translucent macOS desktop look; wallpaper, frosted source-list
+    sidebar, glass menus and toasts, sheet modals, system-blue capsule buttons, segmented controls. Blur only on
+    body-mounted layers; `prefers-reduced-transparency` makes everything opaque.
+  - **`Tesserae.Themes.Kontrast`** (`kontrast`): accessibility first, drawn like a wayfinding sign system; 7:1 text,
+    a two-tone focus ring that is never removed, state never shown by colour alone, `forced-colors` and
+    `prefers-contrast` handled. It doubles as a test instrument for focus and contrast bugs in components.
+  - **`Tesserae.Themes.Memphis`** (`memphis`): after the 1980s Memphis movement; six bright fills, thick outlines,
+    hard offset shadows in a second colour, inline-SVG confetti and squiggles that frame content, never sit under it.
+  - **`Tesserae.Themes.Washi`** (`washi`): Japanese paper and ink; vermilion seal stamp for what is chosen, tapered
+    brush-stroke rules, a shoji lattice sidebar; dark mode is urushi lacquer with gold focus.
+  - **`Tesserae.Themes.Graustufe`** (`graustufe`): an e-paper display; a 16-level grey ramp and nothing else (the
+    colour palette, AI tokens and inline colours are mapped onto it), dithered edges instead of shadows, and **no
+    motion**. It is the stress test for components that wait on `transitionend`/`animationend`: Tippy unmounts a
+    hidden popup on `transitionend`, which never fires without a transition. Core now covers that for every
+    consumer (`tippy.unmount.js`, a default Tippy plugin that unmounts a popup still mounted after its hide
+    duration); the theme also keeps a 1ms `visibility` transition on `.tippy-box` so cleanup is immediate.
+- **The package also carries components**: the website's signature elements rebuilt in C#
+  (`Tesserae.Themes.Curiosity/src/Components/`): `PixelIntro`, `FlowField`, `PixelGlyph`, `DashMosaic`, `GeneratingImage` (the "image is being made" placeholder: an aspect ratio, half the parent's width, an optional progress badge). They
+  draw with `BrandColors` directly so they work without the theme active, run their animation loops only while
+  on screen, and stand still under reduced motion. The gallery lists them in a "Curiosity Components" nav that
+  only shows while the Curiosity theme is active (`SampleGroup.Curiosity`, kept out of `InDisplayOrder` and the
+  landing page). The glyph data in `PixelGlyphKind.cs` is the website's own (`site/figures.js`, and the landing
+  page's pixel plays run to frames), in the same frame notation: when the website's glyphs change, copy the new
+  frame strings across rather than redrawing them.
+
+## Mermaid diagrams in Markdown
+
+A `mermaid` fence in `MarkdownBlock` / `Markdown.RenderMarkdownSanitized`, and the standalone `Mermaid`
+component ([Mermaid.cs](Tesserae/src/Components/Mermaid.cs)), are drawn by
+[Pele](https://pele.run) (not the Mermaid library), see
+[Pele.cs](Tesserae/src/Helpers/Pele.cs) (the loader and the calls, shared) and
+[MarkdownDiagrams.cs](Tesserae/src/Helpers/MarkdownDiagrams.cs). The minified build
+(`pele.global.js` of the npm package, `Tesserae/tps/assets/js/pele.min.js`) ships as the
+unlinked `tss-pele.min.js` resource (`"load": false` in `tps.json`) and is fetched with
+`Require.LoadScriptAsync` the first time a diagram appears; the fence stays a code block
+until then and when it fails to draw. To update, replace that file with the new
+`dist/pele.global.js`. The look is `tss.mermaid.css`: it maps Pele's `--pele-*` variables
+onto Tesserae tokens (and `--tss-chart-series-N`), so a theme's fonts, radius, colours and series
+already follow; each theme package also has a small `tss.mermaid.css` that matches the diagram frame
+and lines to its code blocks (RetroOS: ink frame with hard shadow, Stratus: filled surface, Curiosity:
+ink lines and the Signal accent, Rechenwerk: the code-block frame with its hard signal-colour shadow).
+
+## Where Markdown may load content from (`MarkdownContentSources`)
+
+`MarkdownContentSources` ([MarkdownContentSources.cs](Tesserae/src/Helpers/MarkdownContentSources.cs)) is the policy for
+what rendered Markdown may make the browser fetch with no click: `Any` (default, nothing filtered and nothing looked at),
+`SameOrigin`, `SameOriginAnd(hosts)`. It is separate from `MarkdownSanitization` and composes with it. `MarkdownBlock`
+holds it (`.ContentSources(...)`, constructor parameter) and passes it to every render. It is enforced in **three**
+places, and a new way for Markdown to reach the network has to join one of them:
+
+- **Prose**: `Markdown.ConvertMarkdownSanitized` sanitizes through `MarkdownContentSources.Sanitize`, a DOMPurify
+  `afterSanitizeAttributes` hook added for that one `sanitize` call and removed by reference in a `finally`. It never
+  touches `<a href>`.
+- **Diagrams**: the policy is inside the `sanitize` function `Pele.Options` hands Pele (`SvgSanitizer`), not around the
+  mount. Pele calls that function on every draw: the first one, which is asynchronous when the library is still
+  loading, and each relayout. A scope around `Pele.Mount` would miss both.
+- **Charts**: `FlintChartDrawing.MountAsync` calls `ContentSources.CheckChart(input)` on the spec of every draw, before
+  Flint sees it, and a spec that would load from elsewhere fails like any other that cannot be drawn. Flint exposes no
+  hook on Vega's loader, so it is a walk over the spec (the rules are in the XML doc of `CheckChart`): any `url`
+  property, the built-in basemap hosts of `Map` / `Choropleth`, and the tooltip, which vega-tooltip draws as
+  `<img src>` for a value keyed `image`. When `Build.Flint` is next rebuilt, passing a restricted Vega `loader`
+  and a tooltip handler from `entry.js` would replace the walk with something that cannot miss a case. The policy's
+  `Key` is part of `MarkdownCharts.KeyOf`, so a parked chart is never adopted under another policy.
+
+## Flint charts (Markdown and FlintChart)
+
+A `flint` (or `flint-chart`) fence in `MarkdownBlock` is drawn as a chart by Microsoft's
+[Flint](https://github.com/microsoft/flint-chart) once `.Flint()` is called on it (off by default;
+`Markdown.RenderMarkdownSanitized(text, sanitization, IFlintTheme)` for the static helper). The same
+spec draws as a component, `UI.FlintChart(json)` / `UI.FlintChart(FlintChartType)`
+([FlintChart/](Tesserae/src/Components/FlintChart/)), which can also report clicks. The pieces:
+
+- **[Flint.cs](Tesserae/src/Helpers/Flint.cs)** loads `tss-flint.min.js` (unlinked, `"load": false`, like
+  Pele) the first time a chart appears and wraps the calls. The file is **built**, not downloaded:
+  [`Build.Flint/`](Build.Flint/README.md) bundles flint-chart from its TypeScript sources with Vega,
+  Vega-Lite and vega-tooltip into one IIFE, and stubs the ECharts / Chart.js / Plotly backends out.
+  **Vega-Lite is the only backend**, because it is the one Flint's themes and interactions apply to.
+- **[FlintChartDrawing.cs](Tesserae/src/Helpers/FlintChartDrawing.cs)** is the drawing both share: it
+  applies the theme where the chart will sit, validates, mounts out of sight and swaps in once drawn,
+  relays out on resize, redraws on a theme change (found off the DOM through `data-tss-flint`, no
+  registry), and can move to another host drawn or mid-draw (`Rehost`, which is what Markdown's
+  adoption is). A component chart has no plate (`.tss-flint-frame` only); Markdown's frame is also
+  `.tss-flint-chart`. With `FillHeight` it sets Flint's target height and measures what Flint draws
+  around its canvas (titles, a key), laying out again until it fits: Flint treats the height as a
+  ceiling, never a target.
+- **Clicks** come from `clickReport`, an interaction defined in `Build.Flint/entry.js` that changes
+  nothing and only makes the surface emit `click-element` / `click-legend` / `click-axis` events
+  (Flint reports no clicks unless an interaction listens). Flint gives a key-entry or axis-label
+  click to one interaction only, and a code definition beats a spec's, so `clickReport` leaves those
+  to the spec's interactions that click them (`ClickHighlight`, `LegendToggle`) and
+  `FlintChartClick.From` reads them from their events; mark clicks are shared and read from
+  `clickReport`'s own (`Flint.ClickReportId`) so they are not reported twice. Keep both halves.
+- **[MarkdownCharts.cs](Tesserae/src/Helpers/MarkdownCharts.cs)** turns each fence into one
+  `div.tss-flint` holding the code block and, once drawn, the chart's frame (`.tss-flint-chart`). It
+  parses, applies the theme, runs Flint's `validateChartInput` (a missing field otherwise draws an
+  `undefined` axis), and mounts out of sight, swapping in only when drawn, so a redraw never flashes.
+  A fence that cannot be drawn stays a code block with the reason as its tooltip.
+- **Streaming relies on two things.** The host carries `DeltaComponent.KeyAttribute`, a key made from
+  the (trimmed) spec, theme instance and options, so `DeltaComponent` keeps the drawn chart rather than
+  patching it back into a code block from Markdown that never reached the page. And a chart whose host
+  leaves the page (a `Text` re-render, a swap while the closing ``` arrives a backtick at a time) is
+  **parked** for ten seconds and **adopted** by the next host of the same key, even mid-draw; one nobody
+  adopts is destroyed. Keep both if you touch it: without them a streamed chart is drawn on every chunk.
+- **Legend and scale binding** (Vega-Lite's [`bind`](https://vega.github.io/vega-lite/docs/bind.html)) come from
+  the spec's top-level `bind` (`{ "legend": …, "scales": … }`), a Tesserae key Flint never reads, which
+  `FlintChart.LegendBinding` / `ScaleBinding` write and a fence can carry. [`Build.Flint/bind.js`](Build.Flint/bind.js)
+  turns it into selection params on the Vega-Lite spec Flint built (plus the fade, clipping and free ticks on a bound
+  axis); Flint has no hook there, so `build.mjs` rewrites its one `compile(shapedSpec)` call to go through it, and
+  fails the build when a Flint update moves that call. `Flint.Validate` rejects a malformed `bind` up front.
+- **[FlintThemes.cs](Tesserae/src/Helpers/FlintThemes.cs)** / **[IFlintTheme](Tesserae/src/Interfaces/IFlintTheme.cs)**:
+  an `IFlintTheme` returns Flint's `theme_spec` as JSON for the element the chart is drawn in.
+  `FlintThemes.Tesserae` (the default) reads the tokens there and resolves them to hex through a 1px
+  canvas (Flint parses hex only; tokens can be `oklch()`, `color-mix()`, translucent), on the surface
+  the chart really sits on (backgrounds composited outwards; a transitioning one read at its end
+  value). It says `"source": "host"`, which makes Markdown leave the SVG unpainted so the frame shows
+  through. Presets come from Flint; one instance per id, since the key tells themes apart by instance.
+  Charts redraw on `Theme.OnThemeChanged` only when the theme JSON changed.
+- **Themes**: `tss.flint.css` frames the chart like a Mermaid diagram, and every theme package has a
+  `tss.flint.css` that frames it like its own `tss.mermaid.css` does. A plate that is not the page's
+  surface restates the tokens on `.tss-flint-chart` (Weniger's terminal glass) and gives a gradient
+  plate a `background-color` too, since a gradient has no colour to read contrast against.
+
+## Yjs (collaborative editing)
+
+`Tesserae/src/Yjs/` declares [Yjs](https://docs.yjs.dev) to the compiler and builds on it: `Y` (the `Y` global:
+`Y.Doc`, the shared types, `Y.UndoManager`, relative positions, updates, snapshots), `Awareness` and `YProtocols`
+(y-protocols' sync and awareness, lib0's encoders) are `[External]` declarations with no emitted code, and
+`YjsSyncProvider`, `YjsInputBinding`, `YjsUserColors` and `YjsBinary` are ordinary classes on top. The skill
+reference is `Tesserae/skills/references/yjs.md`; the gallery sample is **Yjs** (Utilities).
+
+- **The script is built, not downloaded**: [`Build.Yjs/`](Build.Yjs/README.md) bundles yjs, y-protocols and lib0
+  (pinned exactly) into one IIFE, `tps/assets/js/yjs.min.js`, shipped as the unlinked `tss-yjs.min.js` resource
+  (`"load": false`) and fetched by `Yjs.LoadAsync()` through `Transpose.Require.RequireAsync`. Its licences are in
+  `yjs.LICENSE.txt` beside it.
+- **Exactly one copy of yjs.** Yjs breaks with two instances on a page; `build.mjs` fails when any package was
+  bundled from two folders. A consumer must not load its own yjs beside this one.
+- **Events are one templated method per event** (`doc.onUpdate(f)` for `doc.on('update', f)`), and nothing on
+  those types is overloaded: two declarations of one JavaScript name get a `$1` suffix. A static member named
+  `length` is escaped by the compiler (`$length`), so `YProtocols.encoding.length` is a `[Template]`.
+- **Null checks on an external value are `!= null`**, never `is object` / `is null` on the external type.
+
+## Installing Transpose
+
+Install or update the Transpose compiler and the dotnet serve tool globally before getting started:
+
+```bash
+dotnet tool update --global Transpose.Compiler
+dotnet tool update --global dotnet-serve
+```
+
+## Build
+
+```bash
+dotnet build
+```
+
+The Transpose compiler translates C# to JavaScript. Output lands in `bin/Debug/netstandard2.0/tps/` (or `bin/Release/...`).
+
+To serve locally:
+
+```bash
+cd bin/Debug/netstandard2.0/tps/
+dotnet serve --port 5000
+```
+
+## UI composition patterns
+
+- Component creation goes through the static `UI` class (`UI.Components.cs`), which exposes factory methods like `UI.Button`, `UI.TextBlock`, etc.
+- `UI` is a static partial class with a static constructor used as the central entry point.
+- Components are configured via fluent-style extension methods (e.g., `UI.Id`, `UI.Class`, `UI.Do`).
+- `UI` carries **`[Transpose.SkipTypeClustering]`**, which is load-bearing for the module build and
+  must stay. A module chunk is a strongly-connected component of the reference graph, and a facade
+  whose factories construct half the library — while every component calls back into it for
+  `Div`/`VStack` — fuses that half into one 1.6 MB chunk. The attribute moves the facade's outgoing
+  edges to its call sites, where a static method body actually runs. See
+  [docs/module-output.md](docs/module-output.md).
+
+## Tesserae is a library, and its consumers are invisible
+
+Tesserae ships as a NuGet package to applications whose source this repo never sees. A mechanism
+that only behaves correctly for the components defined in here is not finished, however complete
+the sample gallery looks.
+
+- **A consumer's component must not have to declare anything to get correct behaviour.** No
+  attribute, no interface to implement, no registration call, no naming convention to follow.
+  Anything the toolkit needs to know about a component has to be derived where the toolkit already
+  has the component in hand.
+- **Look for the choke point the component already passes through.** `Stack.GetItem` and
+  `Grid.GetItem` receive every container child as an `IComponent`, so `GetType()` is available
+  there without the component's cooperation. That is how `DeltaComponent` knows which component
+  rendered an element, and why it works for a component written in an application rather than here
+  (`UI.MarkComponent` in [UI.Components.cs](Tesserae/src/Base/UI.Components.cs), read back by
+  `UI.ComponentOf`).
+- **A convention this repo can follow is not a mechanism.** "Every component puts its own class on
+  its root before anything else" is true of the components in here, once someone checks, and can
+  never be true of a consumer's. Do not build behaviour on one. A heuristic like that is fine as a
+  fallback for what the real mechanism did not reach, never as the thing the correctness rests on.
+- **An opt-in API is an escape hatch, not a design.** Adding one is acceptable only for something
+  the toolkit genuinely cannot infer, and only once the inferring path covers the ordinary case. A
+  feature whose correctness depends on consumers remembering to call something is a feature that is
+  wrong in the field.
+
+## Conventions
+
+### Accessible names: icons are hidden, icon-only controls are named
+
+Browser automation and screen readers find a control by its role and accessible name, and an icon's
+CSS `::before` glyph is part of that name unless something says otherwise. So `UI.I(...)` - the one
+way the toolkit creates an `<i>`, and it only ever creates icons and decorative marks - marks every
+one `aria-hidden="true"`, and `Tooltip(string)` names an element that has nothing else to be named by
+(`NameAfterTooltipIfNameless`). A new component inherits both by building its icons with `I(...)` and
+its icon-only buttons with a tooltip; a control with no tooltip and no text still needs an
+`.AriaLabel(...)` - the OmniBox's search-row buttons are the worked example.
+
+Hidden has to mean hidden to the accessibility tree too. Zero height and zero opacity hide an element
+from the eye only: a collapsed sidebar group's items stayed findable, and a click on one landed on
+whatever was drawn in its place. So `.tss-sidebar-nav-children` is also `visibility: hidden` while
+collapsed (switched after the fade), and a group's arrow carries `aria-expanded` and an
+`Expand <group>` / `Collapse <group>` name.
+
+### Loading a script, module or stylesheet at run time
+
+Use **`Transpose.Require.RequireAsync`** — the loader in the Transpose runtime. `Tesserae.Require`
+still exists so applications that call it keep compiling, but it is now four forwarding lines: the
+loading itself is shared with every other library on Transpose rather than reimplemented here.
+
+What the shared one does that the old `Require` did not: it picks the element from the URL (`.css`
+→ a stylesheet link, `.mjs` → a module, anything else → a classic script), resolves the URL against
+the document base first — so every spelling of one file is one entry, and a file `index.html`
+already carries is waited on rather than fetched twice — forgets a failed load instead of
+remembering it as done, and falls back between the `.js` and `.min.js` spellings of the same file,
+which is what lets a library published once work in a site built either way.
+
+### Blocking the page behind an overlay
+
+`Layers` is the only thing in the toolkit that may write `document.body.style.overflow*`. A layer
+opts in by overriding `Layer<T>.LocksPageScroll` (`Modal` and `Panel` do, conditionally on
+`IsNonBlocking`), and anything that is not a layer — `ModalStack` — calls
+`Layers.LockPageScroll` / `ReleasePageScroll` itself.
+
+Two things that has to get right, and both were bugs before it existed:
+
+- **Restore what was there, not the empty string.** Every app shell declares `body { overflow:
+  hidden }` for itself (`Tesserae.Tests`, `Tesserae.Bench` and Tesserae.Monaco's gallery all do,
+  because `tss.body.css` sets `overflow-y: scroll` for document-shaped pages). A component that
+  "restored" by assigning `""` wiped that, and the stylesheet's permanent scrollbar reappeared
+  beside the app's own — two scrollbars from the first modal close onwards, on every page, for the
+  rest of the session.
+- **Only the release that ends the last lock may restore**, and only from an element that was
+  actually holding one. Overlapping overlays are ordinary (a `Dialog` over a `Modal`, a `Modal`
+  over the `ModalStack`), and whichever closes first must not unlock the page under the one still
+  open. Which elements hold the page is read off the DOM by marker class, the way
+  `Layers.CurrentZIndex` reads z-indices, so there is no counter to get out of step: an element
+  removed without releasing simply stops being found.
+
+### Scrollbars are CSS only
+
+A scrollbar is styled with CSS and nothing else: `::-webkit-scrollbar*` where the engine draws
+those, `scrollbar-color` / `scrollbar-width` where it only has the standard properties (see the
+scrollbar block in `Tesserae.Themes.Curiosity/tps/assets/css/tss.common.css`). **No JavaScript
+manages a scrollbar**:
+
+- No `scroll` listener that adds or removes a class or attribute on a scroller to reflect a state
+  such as "is scrolling", whether the listener is per component or one capture-phase listener on
+  `window`.
+- No scrollbar library (simplebar and the like) and no script-drawn replacement for the native bar.
+- No code that measures, hides or re-creates the native scrollbar, and no per-component scrollbar
+  hook a consumer would have to call.
+
+Why: a script reaches the scrollers of an application only by listening to every one of them, which
+puts work on every scroll event of every consumer, and its state drifts from the engine's own (a
+class that is still on when the engine has already stopped). The engines restyle a scrollbar for the
+states CSS can see: rest, `:hover` on the scroller, `:hover` and `:active` on the thumb. If CSS
+cannot see a state, the scrollbar does not have it. An idea that needs "is scrolling" (an ink thumb
+only while it moves, auto-hiding after a delay) is out; do not bring it back as "just one small
+listener". The `.simplebar-*` rules in `tss.common.css` only style an application that loads
+simplebar itself; Tesserae does not load it, and nothing new should depend on it.
+
+### Type safety
+
+Favor strong, static typing. Avoid `dynamic` unless absolutely necessary
+(e.g. untyped JavaScript interop that can't be modeled otherwise); keep its
+use narrow, convert back to a concrete type ASAP, and add a brief comment
+explaining why a typed alternative isn't possible.
+
+### Adding a component
+
+When adding a new component:
+
+1. Add the implementation under `Tesserae/src/Components`.
+2. Add a factory method in `UI.Components.cs`.
+3. Add fluent helpers or extension methods in `Tesserae/src/Extensions` if needed.
+4. Add a sample in `Tesserae.Tests` demonstrating usage — see below for where it goes.
+
+### Where a sample goes in the gallery
+
+The gallery groups samples by *what you are trying to do*, not by how the component
+is implemented. The categories live in one place,
+[`Tesserae.Tests/src/Samples/SampleGroup.cs`](Tesserae.Tests/src/Samples/SampleGroup.cs):
+a constant per category plus `InDisplayOrder`, which is what the sidebar sorts by
+(`App.cs` orders groups through `SampleGroup.DisplayIndex`, not alphabetically). A
+sample picks its category on its attribute, and `Order` places it inside that
+category — the list runs from the most fundamental member outwards, in steps of 10:
+
+```csharp
+[SampleDetails(Group = SampleGroup.Inputs, Order = 10, Icon = UIcons.InputText, Description = "Single-line text input, with icons and prefixes")]
+```
+
+`Description` is what the landing page prints under the component's name, so it is
+required on every sample: one line saying what the *component* is for, not what the
+sample page shows. It is drawn on a single ellipsized line about 310px wide, which
+is room for roughly fifty characters — anything longer is only reachable through the
+card's tooltip.
+
+Two conventions keep it navigable: the file lives in
+`Tesserae.Tests/src/Samples/<Constant>/` (the folder is named after the *constant* —
+`Inputs`, `DateTime`, `Overlays` — not the display string), and the icon is unique
+within the gallery, since the sidebar is read by glyph as much as by label. The same
+categories are used by the `tesserae` skill's reference index and by the
+`documentation` repo under `tesserae/`; a component that moves category has to move
+in all three.
+
+The gallery's home page, [`Tesserae.Tests/src/LandingPage.cs`](Tesserae.Tests/src/LandingPage.cs),
+draws that same list as a grid of `ContextCard`s under a header per category, in
+`SampleGroup.InDisplayOrder` — so it needs nothing done to it when a sample is added,
+beyond the attribute above. A category added to `SampleGroup` should get a colour in
+the landing page's `GroupColors`, which is indexed by `SampleGroup.DisplayIndex`.
+
+## Layout system
+
+Tesserae has a small set of layout containers and a unified set of sizing
+helpers that work across all of them. Understanding how a child becomes a
+stack/grid item, below, is the key to debugging layout problems.
+
+### Sizing helpers (apply to any `IComponent`)
+
+Defined in `Tesserae/src/Extensions/IComponentExtensions.cs`:
+
+- `.Width(unitSize)` / `.Height(unitSize)` — fixed size (e.g. `.W(100)`, `.W(50.percent())`).
+- `.MinWidth` / `.MaxWidth` / `.MinHeight` / `.MaxHeight` — bounds.
+- `.WidthStretch()` / `.WS()` — `width: 100%`.
+- `.HeightStretch()` / `.HS()` — `height: 100%`.
+- `.Stretch()` / `.S()` — both width and height `100%`.
+- `.Grow(int = 1)` — sets `flex-grow` (only meaningful inside a `Stack`).
+- `.Shrink()` / `.NoShrink()` — sets `flex-shrink` to `1` or `0`.
+- `.GridColumn(start, end)` / `.GridColumnStretch()` / `.GridRow(...)` /
+  `.GridRowStretch()` — placement inside a `Grid` (call before `Add`).
+- `.AlignStretch()` — `align-self: stretch` on the stack item.
+
+All of these write the CSS property to the element and tag it with a marker
+attribute (`tss-stk-w`, `tss-stk-h`, `tss-stk-fg`, `tss-grd-c`, …) so that a
+container which *does* build a wrapper can hoist the property onto it — see
+`CopyStylesDefinedWithExtension` below. A component implementing
+`ISpecialCaseStyling` suppresses the tagging by answering `false` to
+`PropagateStylesToWrapper`, which is what a component that sizes its own
+container (Masonry, Modal, DetailsList, Diagram) does.
+
+### How a child becomes a stack/grid item
+
+Flexbox/Grid only obey sizing properties on the **direct child** of the
+container, and that direct child is the component's own rendered element:
+`Stack.GetItem` / `Grid.GetItem` add the `tss-stack-item` class to it and add it
+as-is. So `.WS()` and friends write to exactly the box the container measures,
+and nothing has to be moved afterwards.
+
+`Masonry`, `SectionStack` and `KeyedObservableStack` are the exceptions — they
+still build a real wrapper element because their item carries its own structure
+(a masonry cell, a section card). Those go on calling
+`CopyStylesDefinedWithExtension`, which reads the marker attributes the fluent
+helpers set (`tss-stk-w`, `tss-stk-h`, `tss-grd-c`, …) and moves the matching
+CSS property from the inner element onto the wrapper. That copy is a no-op when
+the source and target are the same element, which is the ordinary Stack/Grid case.
+
+Stack and Grid used to wrap every child in an item div too. It was between a
+quarter and a third of every node in a component-heavy page, and it hid a class
+of bug: because the size landed on the wrapper and the component was stretched to
+fill it, a component's own `min-width`/`min-height` could silently beat an
+explicit `.Width()`/`.Height()`. `SetWidth`/`SetHeight` now clear that intrinsic
+floor (unless `.MinWidth()`/`.MinHeight()` was asked for), so an explicit size
+wins — see the note on `ExplicitMinWidth` in [Stack.cs](Tesserae/src/Components/Stack.cs).
+
+The other thing the wrapper used to absorb is a component's own `width: 100%`. For the
+input components that declaration meant "fill the stack item wrapping me", and the
+wrapper was content-sized on the main axis — so it came out as the input's intrinsic
+width. As the flex item itself, the same declaration resolves against the *row* and
+becomes a flex-basis of the whole line: one `SearchBox` in a toolbar claimed all of it
+and every sibling was shrunk to fit around it. `tss.stack.css` rows those three roots
+(`.tss-searchbox-container`, `.tss-textbox`, `.tss-picker-container`) back to
+`width: auto` under `.tss-stack-horizontal`, the class `StackOrientation` maintains so a
+stylesheet can see the direction at all. They are listed one by one on purpose: a
+stylesheet width is not always a leftover (`.tss-sidebar` asks for 250px and means it),
+only `width: 100%` carries the old meaning, and CSS cannot select on a value. A
+component that turns out to want the same treatment adds itself to that list.
+
+A component can still take charge of its own styling by implementing
+`ISpecialCaseStyling` and exposing a `StylingContainer` — the sizing helpers then
+write onto that container. This is how nested containers (e.g. a `Grid` inside a
+`Stack`) route sizing to the right element.
+
+The other half of that story is the flex **automatic minimum size**, which a flex
+item only gets while its own `overflow` is `visible`. `.tss-grid` sets
+`overflow: auto`, so once the grid was the stack item itself a column stack whose
+content did not fit squeezed every grid in it to a sliver with its own scrollbar —
+the wrapper div used to carry that floor. `.tss-grid` now declares
+`min-height: min-content` to restore it, and the two grids that really are scroll
+viewports (`ItemsList`, `InfiniteScrollingList`) opt out with `.MinHeight(0.px())`.
+A component whose stylesheet sets a non-visible `overflow` needs the same thought.
+
+**Debugging tip:** if `.WS()` "doesn't work", inspect the rendered DOM — the
+sizing styles are on the element you called the helper on, unless the component
+is inside a Masonry/SectionStack, where they are on its wrapper.
+
+### Layout containers
+
+- **`Stack`** (`Tesserae/src/Components/Stack.cs`) — the workhorse. A flexbox
+  container with `Orientation.Vertical` (default), `Horizontal`,
+  `VerticalReverse`, `HorizontalReverse`. Use `.Grow()` on children to claim
+  leftover main-axis space; cross-axis stretches by default.
+- **`Grid`** (`Tesserae/src/Components/Grid.cs`) — CSS Grid container with
+  explicit `Columns(...)` and `Rows(...)` tracks (`UnitSize[]`), `.Gap()`,
+  `.RowGap()`, `.ColumnGap()`, `.AutoRows()`, `.AutoColumn()`, `.FlowColumn()`.
+  Children position with `.GridColumn(s, e)` / `.GridRow(s, e)` or stretch
+  with `.GridColumnStretch()`.
+- **`SplitView`** (vertical split, left/right) and **`HorizontalSplitView`**
+  (top/bottom) — two-pane resizable layouts. `Left(...)` / `Right(...)` (or
+  `Top` / `Bottom`) take the panes; `LeftIsSmaller(size, max, min)` /
+  `RightIsSmaller(...)` pin one pane to a fixed size; `SplitInMiddle()` is the
+  default 50/50; `.Resizable(onResizeEnd)` enables the drag handle.
+- **`DockPanel`** (`Tesserae/src/Components/DockPanel/`) — IDE-style workspace: a
+  `Document(...)` with `DockPane`s docked to its edges, tab groups, splitters,
+  auto-hide rails and drag-to-redock; `GetLayout()` / `LoadLayout()` persist it.
+- **`Float`** (`Tesserae/src/Components/Float.cs`) — corner/edge-anchored
+  overlay. Takes a child and a `Position` enum (TopLeft, TopRight, Center, …).
+  Parent must be position-relative (`Grid.Relative()` exists for this).
+- **`Masonry`** (`Tesserae/src/Components/Masonry.cs`) — Pinterest-style
+  variable-height columns. Wraps the `masonry-layout` JS library; relayout is
+  debounced. Use only when CSS Grid can't model the layout you need.
+- **`BackgroundArea`** — full-bleed app-shell wrapper around a single child.
+- **`Layer`** / **`LayerHost`** / **`Layers`** — overlay infrastructure
+  (modals, dialogs, popovers). Layers render outside the normal DOM tree to
+  escape `overflow: hidden` and z-index stacking contexts. `Layers.PushLayer`
+  hands out monotonically increasing z-indices that also account for Tippy
+  popovers. Use a `LayerHost` to confine layers to a sub-tree of the layout.
+
+### Picking a layout
+
+- One-axis flow (toolbar, sidebar, form) → `Stack`.
+- Two-axis grid with named tracks → `Grid`.
+- Two resizable panes → `SplitView` / `HorizontalSplitView`.
+- Tool panes docked around a document → `DockPanel`.
+- Pinned overlay on a parent → `Float`.
+- Variable-height tile feed → `Masonry`.
+- Modal/popover that must escape clipping → `Layer` (usually wrapped by
+  higher-level components like `Dialog`, `Modal`, `ContextMenu`).
+
+## Module output — in Release
+
+`Tesserae/tps.json` and `Tesserae.Tests/tps.json` set `"outputBy": "Module"`, so a **Release** build
+emits one ES module per chunk and the gallery fetches a sample's code when it is opened — 1,055 KB of
+initial JavaScript instead of 3,542 KB.
+
+**A Debug build is one readable bundle and no chunks**, whatever `outputBy` says: that is the
+compiler's decision, not a setting, because stepping through one file is what a Debug build is for
+(`JsOutputProfile` in the transpose repo). So a chunking bug reproduces in Release only, and a Debug
+build is the fastest way to rule chunking out of a symptom. `outputFormatting` no longer exists — the
+Tesserae **package** ships all three variants of its compiled code (formatted bundle, minified bundle,
+module entry plus chunks) and the application referencing it picks the one its own configuration calls
+for, which is what lets one published Tesserae be debugged as a single file by one app and fetched in
+pieces by another.
+
+Two consequences to know about when working here:
+
+- **Constructing a deferred type is asynchronous.** `Activator.CreateInstanceAsync` loads the module
+  and then constructs; the synchronous `Activator.CreateInstance` throws and names the module. That
+  is why `Sample.ContentGenerator` returns a `Task<IComponent>`.
+- **Reflection still sees everything.** A deferred type is registered as a stub carrying its name,
+  interfaces and attributes, so `Assembly.GetTypes()`, `IsAssignableFrom` and `GetCustomAttributes`
+  work with the code absent — which is what keeps the sample discovery working.
+
+[docs/module-output.md](docs/module-output.md) has the numbers and the full change list.
+
+## Testing
+
+Playwright scripts under `Tesserae.Tests/playwright/` are local-only — use them
+to verify components in the browser during development, but do **not** commit
+them. The same applies to any screenshots or other artifacts produced by those
+runs.
+
+The committed harness lives in `Tesserae.Bench/` instead: a ten-page app shaped
+like a real product, plus the Playwright scripts that measure its build cost and
+prove a change did not alter what renders. Use it whenever you touch `Stack`,
+`Grid`, the sizing extensions or anything under `Tesserae/tps/assets/css` — the
+sample gallery is the real surface, and `textdiff-samples.js` is what tells you
+whether it still renders the same. See
+[`Tesserae.Bench/README.md`](Tesserae.Bench/README.md) and the
+`tesserae-benchmarking` skill. One-off probe scripts go in
+`Tesserae.Bench/playwright/_*.js`, which is gitignored.
+
+### Test and screenshot in every theme
+
+When you verify a component in the browser or take screenshots of it, cover **every theme**,
+not just whichever one the gallery happened to open in. A change that looks right in one theme
+can be broken in another: the Curiosity theme restyles components with its own rules, and dark
+mode swaps the colour tokens. The matrix today is:
+
+| Theme     | Light | Dark |
+|-----------|-------|------|
+| Default   | yes   | yes  |
+| Curiosity | yes   | yes  |
+| Stratus   | yes   | yes  |
+| RetroOS   | yes   | yes  |
+| Rechenwerk | yes  | yes  |
+| Weniger   | yes   | yes  |
+| Zeitung   | yes   | yes  |
+| Blaupause | yes   | yes  |
+| Phosphor  | yes   | yes  |
+| Glas      | yes   | yes  |
+| Kristall  | yes   | yes  |
+| Kontrast  | yes   | yes  |
+| Memphis   | yes   | yes  |
+| Washi     | yes   | yes  |
+| Graustufe | yes   | yes  |
+
+- The gallery opens in Curiosity. Pick the theme before load by setting
+  `localStorage["tss-sample-theme"]` to `"default"`, `"curiosity"`, `"stratus"`, `"retroos"`, `"rechenwerk"`, `"weniger"`, `"zeitung"`, `"blaupause"`, `"phosphor"`, `"glas"`, `"kristall"`, `"kontrast"`, `"memphis"`, `"washi"` or `"graustufe"` (`_themeKey` in
+  [App.cs](Tesserae.Tests/src/App.cs)), or click the Theme nav at the foot of the sidebar.
+- Dark mode is the sun/moon command in the sidebar (`Theme.Dark()` / `Theme.Light()`); it puts
+  `tss-dark-mode` on `body`.
+- Name screenshots after the theme and mode (e.g. `button-curiosity-dark.png`) so a reviewer can
+  tell them apart, and report a defect with the theme it shows up in.
+- A new custom theme package adds a row to this matrix.
+
+### Screenshots in a PR
+
+Screenshots for a PR are hosted in
+[`curiosity-ai/temporary-screenshots`](https://github.com/curiosity-ai/temporary-screenshots),
+one **orphan branch per PR** named `pr-assets/<repo>/<pr-number>` (e.g.
+`pr-assets/tesserae/1234`). Never commit screenshots to the repository the PR is in.
+
+1. Open the PR first: the branch name needs its number.
+2. Attach the screenshots repo to the session with push access (`add_repo`, owner
+   `curiosity-ai`, repo `temporary-screenshots`, `access: "push"`).
+3. Push the images to a fresh orphan branch, files at the branch root:
+
+   ```bash
+   REPO=tesserae PR=1234 BRANCH="pr-assets/$REPO/$PR"
+   DIR=$(mktemp -d) && cd "$DIR"
+   git init -q && git checkout -q --orphan "$BRANCH"
+   cp /path/to/screenshots/*.png .
+   git add . && git commit -qm "Screenshots for curiosity-ai/$REPO#$PR"
+   git remote add origin https://github.com/curiosity-ai/temporary-screenshots.git
+   git push -u origin "$BRANCH"
+   ```
+
+   To add or replace screenshots later, `git fetch origin "$BRANCH"`, check it out,
+   commit on top and push. The branch stays orphan: it never shares history with
+   `main` or with another PR's branch.
+4. Reference them from the PR description with the `?raw=true` blob URL, which
+   renders inline for anyone who can see the repo:
+
+   ```markdown
+   ![button, curiosity dark](https://github.com/curiosity-ai/temporary-screenshots/blob/pr-assets/tesserae/1234/button-curiosity-dark.png?raw=true)
+   ```
+
+Name files after what they show (and the theme and mode, for UI), and put a
+before/after pair side by side in a table rather than one under the other.
+
+### Samples must render the same on every run
+
+A sample that fakes data uses `SampleRandom`
+([`Tesserae.Tests/src/Samples/SampleRandom.cs`](Tesserae.Tests/src/Samples/SampleRandom.cs)) —
+a seeded `Random` — **not** `new Random()`, `Math.Random()` or `Guid.NewGuid()`. Two
+captures of the gallery have to differ only where the change under test made them differ,
+and an unseeded generator makes `textdiff-samples.js` report noise on every run. Each
+sample constructs its own `SampleRandom` with its own fixed seed, so the sequence a page
+sees does not depend on which samples were opened before it — which matters with the
+on-demand module loading. `SampleRandom.NextId()` replaces `Guid.NewGuid().ToString()`
+where a sample shows its own ids (`NodeViewSample` prints its state as JSON).
+
+The clock is the same problem: a date rendered as text makes a page differ from itself
+minute to minute. Values a sample *displays* come from `SampleDate`
+([`SampleDate.cs`](Tesserae.Tests/src/Samples/SampleDate.cs)) — May 25th of the **current**
+year, so the page is stable within a run without looking stale a year later. Validation
+rules that judge what the user just typed stay on the real clock; they are about the
+person using the page and render nothing until someone interacts.
+
+Not everything is anchored yet: `DetailsListSample`, `NotificationCenterSample`, the
+month/week pickers and `PivotSample` still render clock-derived text, so they drift
+across days (or, for Pivot, every second). `PixelAvatar`'s timing jitter is deliberately
+left random — it is an animation, not data.
+
+### Expected console noise
+
+The **Sandbox** sample logs a browser error on load, and it is correct:
+
+```
+Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed
+and the 'allow-scripts' permission is not set.
+```
+
+That is the "Fit height to content (host-side, no scripts)" demo, which sets
+`.AllowScripts(false)` on purpose to prove the host-side measurement path works with no
+script in the frame. The browser blocks `Sandbox`'s injected bootstrap script and says
+so; the frame still resizes because the host measures it through `AllowSameOrigin`.
+Don't "fix" it, and don't let a test fail the run on it.

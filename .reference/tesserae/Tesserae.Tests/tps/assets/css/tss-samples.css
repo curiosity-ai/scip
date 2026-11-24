@@ -1,0 +1,71 @@
+@keyframes highlight {
+    0% { background-color: orange; }
+    100% { background-color: transparent; }
+}
+
+.flash-bg {
+    animation: highlight 2s ease-out;
+}
+/* CodeDiffSample bug repro: let long diff lines wrap instead of scrolling
+   horizontally (what consumer apps do for prose-like diffs). With wrapping
+   enabled, the absolutely-positioned diff2html line-number cells stay one
+   line tall, so the gutter numbers/backgrounds drift out of alignment with
+   their (now multi-line) content rows. */
+.tss-codediff-wrap .d2h-code-line,
+.tss-codediff-wrap .d2h-code-side-line {
+    white-space: normal;
+}
+
+.tss-codediff-wrap .d2h-code-line-ctn {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* SidebarCommandsSample: a skin that insets a row's commands from the edge, the way a product's own
+   stylesheet does. It goes on the row rather than on the strip of commands, because the label's
+   reservation reads the same value and a custom property only reaches it from an ancestor they share. */
+.tss-sample-commands-inset {
+    --tss-sidebar-commands-inset: 12px;
+}
+
+/* SidebarCommandsSample: and the skin that gives the label a longer fade under the commands. Same
+   reason it goes on the row: that is where the fade reads the property from. */
+.tss-sample-commands-long-fade {
+    --tss-sidebar-label-fade: 64px;
+}
+
+/* LandingPage under the Curiosity theme: the brand draws categories by tone, not hue, so the per-group
+   colours drop to the text tone (stone tiles with ink glyphs) and the group names become the theme's mono
+   eyebrows. The colour is read through --tss-landing-group-color (LandingPage.Section). */
+body.tss-theme-curiosity {
+    --tss-landing-group-color: var(--tss-default-foreground-color);
+}
+
+body.tss-theme-curiosity .tss-landing-group {
+    font-family: var(--tss-monospace-font-family);
+    font-size: var(--tss-font-size-xsmall);
+    font-weight: var(--tss-font-weight-regular);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--tss-secondary-foreground-color);
+}
+
+/* SchedulerSample: the unscheduled jobs that can be dragged onto the calendar */
+.tss-scheduler-sample-queue {
+    padding: 8px 10px;
+    border: 1px dashed var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-md);
+    background: var(--tss-default-background-color);
+}
+
+/* DockPanelSample: the fake editor and output lines */
+.tss-dockpanel-sample-code {
+    font-family: var(--tss-monospace-font-family);
+    font-size: var(--tss-font-size-small);
+    white-space: pre;
+}
+
+.tss-dockpanel-sample-layout {
+    word-break: break-all;
+    font-family: var(--tss-monospace-font-family);
+}

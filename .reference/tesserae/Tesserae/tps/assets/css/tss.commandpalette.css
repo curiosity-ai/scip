@@ -1,0 +1,281 @@
+.tss-commandpalette-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    visibility: visible;
+}
+
+.tss-commandpalette-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.tss-commandpalette-positioner {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 12vh 16px 16px;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+.tss-commandpalette-animator {
+    width: min(720px, 100%);
+    background: var(--tss-secondary-background-color);
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: 12px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    max-height: 70vh;
+    overflow: hidden;
+}
+
+.tss-commandpalette-search-container {
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--tss-default-border-color);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    min-height: 60px;
+    padding-right:10px;
+}
+
+/* The palette is typed into an OmniBox, which brings its own outline - inside the palette's own box that
+   would be a border around a border, so it gives its chrome up and keeps only its behaviour. */
+.tss-omnibox-container.tss-commandpalette-search {
+    flex: 1 1 auto;
+    min-width: 0;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+}
+
+.tss-commandpalette-breadcrumbs {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-commandpalette-back {
+    border: none;
+    background: transparent;
+    color: var(--tss-default-foreground-color);
+    cursor: pointer;
+    padding: 0;
+    font-size: 12px;
+}
+
+/* The close button, off unless the palette is asked for one - see WillShowCloseButton. It sits after the
+   search box, so it lines up with that box's own trigger button rather than floating over the row. */
+.tss-commandpalette-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* The box and the glyph of the search box's own trigger button, which it stands beside: a pair of
+       buttons the same size reads as one cluster, one 28px and one 36px reads as an afterthought. */
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--tss-secondary-foreground-color);
+    cursor: pointer;
+    padding: 0;
+}
+
+    .tss-commandpalette-close:hover {
+        background: var(--tss-default-background-hover-color);
+        color: var(--tss-default-foreground-color);
+    }
+
+.tss-commandpalette-close-icon {
+    /* cross-small at 16px paints the same weight as the magnifier at 12px: the plain cross glyph fills far
+       more of its em box, so matching the font sizes would not have matched what is drawn. */
+    font-size: 16px;
+    /* At line-height normal the 16px glyph sits in a taller line box and draws about 1px above the 12px
+       icons beside it; a line box of exactly one em puts its centre level with theirs. */
+    line-height: 1;
+}
+
+.tss-commandpalette-path {
+    color: var(--tss-secondary-foreground-color);
+    user-select: none;
+}
+
+.tss-commandpalette-results {
+    overflow-y: auto;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* With no rows to show - while a search is running, or before one has been asked for - the list is not a
+   thinner list, it is not there: its padding alone would read as a strip of empty palette under the box. */
+.tss-commandpalette-results:empty {
+    display: none;
+}
+
+.tss-commandpalette-section {
+    padding: 8px 12px 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-commandpalette-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-commandpalette-item:hover {
+    background: var(--tss-default-background-hover-color);
+}
+
+.tss-commandpalette-item.tss-active {
+    background: var(--tss-primary-background-color);
+    color: var(--tss-primary-foreground-color);
+}
+
+.tss-commandpalette-item.tss-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* A row of the host's own - a search result, a preview card - brings its own layout and its own padding,
+   so the palette gives it the full width and only keeps the part of an item that says "this is the one":
+   the rounded highlight behind it. */
+.tss-commandpalette-result {
+    display: inline-flex;
+    align-items: stretch;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+    min-height: fit-content;
+    padding:4px 8px;
+}
+
+/* The row is the only thing in the item, so it takes all of it - and may shrink below its content's
+   intrinsic width, which is what lets a long title ellipsize instead of widening the palette. */
+.tss-commandpalette-result > * {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* The active row is filled with the primary colour, which a result's own hover background would fight -
+   the highlight has to be the thing that says where you are. */
+.tss-commandpalette-result.tss-active,
+.tss-commandpalette-result:hover {
+    background: color-mix(in srgb, var(--tss-primary-background-color) 12%, transparent);
+}
+
+.tss-commandpalette-result.tss-active {
+    box-shadow: inset 0 0 0 1px var(--tss-primary-background-color);
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-commandpalette-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: var(--tss-default-background-hover-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.tss-commandpalette-icon-item {
+    font-size: 14px;
+}
+
+.tss-commandpalette-icon-placeholder {
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-commandpalette-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tss-commandpalette-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.tss-commandpalette-subtitle {
+    font-size: 12px;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-commandpalette-item.tss-active .tss-commandpalette-subtitle {
+    color: var(--tss-primary-foreground-color);
+}
+
+.tss-commandpalette-shortcuts {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.tss-commandpalette-shortcut {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--tss-default-border-color);
+    color: var(--tss-secondary-foreground-color);
+    background: var(--tss-secondary-background-color);
+}
+
+.tss-commandpalette-item.tss-active .tss-commandpalette-shortcut {
+    border-color: rgba(255, 255, 255, 0.4);
+    color: var(--tss-primary-foreground-color);
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.tss-commandpalette-submenu {
+    font-size: 16px;
+    margin-left: 4px;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-commandpalette-item.tss-active .tss-commandpalette-submenu {
+    color: var(--tss-primary-foreground-color);
+}
+
+.tss-commandpalette-empty {
+    display: none;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--tss-secondary-foreground-color);
+}
+
+
+.tss-commandpalette-search-container .tss-omnibox-container:not(.tss-omnibox-chat-and-search):hover .tss-omnibox-search-container {
+    border-color: unset;
+    box-shadow: unset;
+}
+
+.tss-commandpalette-search-container .tss-omnibox-container:focus-within .tss-omnibox-search-container {
+    border-color: unset;
+    box-shadow: unset;
+}

@@ -1,0 +1,216 @@
+---
+name: icomponent
+description: The IComponent interface and the complete catalog of fluent extension methods available on every component (sizing, layout, spacing, text, styling, tooltips, accessibility, gestures, binding, visibility, lifecycle). Use when configuring any Tesserae component fluently or looking up which `.Method()` exists in a Tesserae (C#/Transpose) app.
+---
+
+# IComponent and its extension methods
+
+`IComponent` is the one interface every Tesserae component implements:
+
+```csharp
+namespace Tesserae
+{
+    public interface IComponent
+    {
+        HTMLElement Render();   // produce the component's root DOM element
+    }
+}
+```
+
+Almost all of the fluent API you call on components — `.WS()`, `.Margin(8)`,
+`.Tooltip(...)`, `.Class(...)`, `.Bind(...)` — are **extension methods on
+`IComponent`**, not members of the individual components. They are generic
+(`T Method<T>(this T component) where T : IComponent`) so they return the
+concrete type and keep the chain going. Bring them into scope with:
+
+```csharp
+using static Tesserae.UI;
+```
+
+Call them before adding the component to a container. In a `Stack` or `Grid` they
+write straight onto the component's own element, which is the item the container
+measures; `Masonry` and `SectionStack` build a real wrapper for their item and the
+markers are transferred onto it. See `stack.md`, `grid.md` and
+`layout-alignment.md`.
+
+## Sizing — `IComponentExtensions.cs`
+
+| Method | Effect |
+| --- | --- |
+| `.Width(UnitSize)` / `.W(...)` | fixed `width` |
+| `.Height(UnitSize)` / `.H(...)` | fixed `height` |
+| `.MinWidth` / `.MaxWidth` / `.MinHeight` / `.MaxHeight` | bounds |
+| `.WidthAuto()` / `.HeightAuto()` | `width`/`height: auto` |
+| `.WidthStretch()` / `.WS()` | `width: 100%` |
+| `.HeightStretch()` / `.HS()` | `height: 100%` |
+| `.MinHeightStretch()` | `min-height: 100%` |
+| `.Stretch()` / `.S()` | both `width` and `height` `100%` |
+| `.Grow(int = 1)` | `flex-grow` (inside a `Stack`) |
+| `.Shrink()` / `.NoShrink()` | `flex-shrink` `1` / `0` |
+
+`UnitSize` comes from helpers like `100.px()`, `50.percent()`, `2.fr()`,
+`100.vw()`, `100.vh()` — plus `UnitSize.Auto()` / `UnitSize.FitContent()` and raw
+`new UnitSize("1em")` (see `styling`).
+
+## Spacing — `IComponentExtensions.cs`
+
+`.Margin(UnitSize)` / `.MarginLeft` / `.MarginRight` / `.MarginTop` /
+`.MarginBottom`, with shorthands `.M()` / `.ML()` / `.MR()` / `.MT()` / `.MB()`.
+Same set for padding: `.Padding(...)` / `.PaddingLeft…` and `.P()` / `.PL()` /
+`.PR()` / `.PT()` / `.PB()`. (Direct CSS forms also live in `StyleExtensions`:
+`.Margin(string)`, `.Padding(string)`.)
+
+The two are not interchangeable. A child's own element is the flex item, so padding
+lands inside the component's own box: it inflates a `Button` rather than spacing it,
+and a control with a fixed height swallows it outright. Measured in Chromium on a
+`SearchBox`, whose container is `height: 36px` under the toolkit's global
+`box-sizing: border-box`:
+
+| | box height | content box | next sibling |
+| --- | --- | --- | --- |
+| no spacing | 36px | 34px | flush |
+| `.PB(8)` | 36px | 27px (the 36px input overflows it) | flush |
+| `.MB(8)` | 36px | 34px | 8px below |
+
+So **space between components is margin**; use padding only when you mean the
+component's own inner padding.
+
+## Alignment & grid placement — `IComponentExtensions.cs`
+
+- Self cross-axis: `.AlignAuto()`, `.AlignStretch()`, `.AlignBaseline()`,
+  `.AlignStart()`, `.AlignCenter()`, `.AlignEnd()`.
+- Self main-axis (justify-self): `.JustifyStart()`, `.JustifyCenter()`,
+  `.JustifyEnd()`.
+- Grid: `.GridColumn(start, end)`, `.GridColumnStretch()`, `.GridRow(start, end)`,
+  `.GridRowStretch()` (call before `.Add`).
+
+## Visibility & animation — `IComponentExtensions.cs`
+
+`.Show()`, `.Collapse()`, `.Fade()` / `.Fade(Action andThen)` /
+`.Fade(Func<Task>)`, `.LightFade()`, `.FadeThenCollapse()`.
+
+## Text formatting — `ITextFormatingExtensions.cs`
+
+For text-bearing components (`TextBlock`, `Button`, `Label`, …):
+
+- Size presets: `.Tiny()`, `.XSmall()`, `.Small()`, `.SmallPlus()`, `.Medium()`,
+  `.MediumPlus()`, `.Large()`, `.XLarge()`, `.XXLarge()`, `.Mega()`.
+- Weight: `.Regular()`, `.SemiBold()`, `.Bold()`.
+- Align: `.TextLeft()`, `.TextCenter()`, `.TextRight()`.
+- Explicit: `.SetTextSize(TextSize)`, `.SetTextWeight(TextWeight)`,
+  `.SetTextAlign(TextAlign)`.
+- Wrapping: `.SetCanWrap(bool)` (`IHaveTextWrappingOptionsExtensions`).
+
+## Styling — `StyleExtensions.cs` / `UI.Components.cs`
+
+- `.Class(string)` / `.RemoveClass(string)` — add/remove a CSS class.
+- `.Style(Action<CSSStyleDeclaration>)` — set inline CSS directly:
+  `.Style(s => s.color = "red")`.
+- `.Background(...)`, `.Foreground(...)`.
+- `.Rounded(BorderRadius radius = BorderRadius.Medium)` — apply one of the theme's radius levels
+  (`Small`, `Medium`, `Full`). The size of a level belongs to the theme: the Curiosity theme sets
+  `Small` and `Medium` to 0, so there only `Full` is round and `.Rounded()` gives a square corner.
+  Need a size of your own? Use `.Style(s => s.borderRadius = "12px")`.
+- `.Id(string)` — set the element id.
+
+## Tooltips — `IComponentExtensions.cs`
+
+```csharp
+.Tooltip("Plain text", placement: TooltipPlacement.Top)   // shown as text, never parsed as HTML; "\n" starts a new line
+.Tooltip(componentTooltip, interactive: true)             // rich IComponent tooltip - the way to get markup
+.RemoveTooltip()
+```
+
+`Tooltip(string)` shows the string as **text**: a label, a name or a file name is data, and markup in it is
+displayed, not interpreted. For bold text, a link or several styled lines, build components and pass them
+to `Tooltip(IComponent)`.
+
+A `Tooltip(string)` on an element with no text and no `aria-label` also becomes its `aria-label`,
+so an icon-only button is named after what its tooltip says (see `accessibility.md`).
+
+`IComponentExtensions.TooltipTextOf(element)` returns the plain text of a `Tooltip(string)`
+set on an element - the tooltip itself is only built on the first hover, which a touch
+layout never has, so this is how one finds out what an icon-only control is for.
+
+A tooltip waits `delayShow` (250ms) before it appears, on the first hover too. While one is open
+(and for 300ms after it closes), hovering another tooltip shows it at once, with no delay and no
+animation, and the one being left goes without fading. This is a default Tippy plugin
+(`tippy.warm.js`), so it applies to every hover tooltip, including an application's own `tippy()`
+calls; menus and popovers shown by hand are not affected.
+
+A component can skip a tooltip that would only repeat what it already shows in full. `InlineLabel`
+does this: a tooltip matching its own text shows only while that text is ellipsized, checked on every
+hover.
+
+The reverse needs no tooltip at all: a `TextBlock`, a `Label`'s caption or an `InlineLabel` whose text
+is cut short shows the whole text in a tooltip on hover, unless it (or something around it) already has
+a `.Tooltip(...)` or a `title` (see `text-block.md`).
+
+(See `tippy` for the underlying Tippy.js wrapper.)
+
+## Accessibility — `IAccessibilityExtensions.cs`
+
+`.AriaLabel`, `.AriaLabelledBy`, `.AriaDescribedBy`, `.AriaRole`, `.AriaHidden`,
+`.AriaExpanded`, `.AriaSelected`, `.AriaChecked`, `.AriaDisabled`, `.AriaBusy`,
+`.AriaCurrent`, `.AriaLive`, `.AriaAtomic`, `.AriaControls`, `.AriaHasPopup`.
+Focus order: `.TabIndex(int)`, `.SkipTab()`. (See `accessibility`.)
+
+## Gestures — `GestureExtensions.cs`
+
+`.OnTapped(...)`, `.OnDoubleTapped(...)`, `.OnLongPress(...)`, `.OnPan(...)`,
+`.OnPinch(...)`, `.OnRotate(...)`. (See `gestures`.)
+
+## Reactive binding — `BindingExtensions.cs`
+
+`.Bind(SettableObservable<T> source)` — keep the component in sync with an
+observable (also overloads for `IReadOnlyList<T>` and an explicit
+`SubscriptionScope`). Two-way, on input components (`IBindableComponent<T>`).
+One-way observable inputs are not `Bind`: they overload the setter they drive, e.g.
+`TextBlock.Text(IObservable<T> source[, format])`. (See `observables`, `text-block`.)
+
+## Validation — `ICanValidateExtensions.cs` / `ValidationExtensions.cs`
+
+On validatable inputs: `.Validation(c => error-or-null)`, `.Error("msg")`,
+`.IsInvalid()`. (See `validator`.)
+
+## Lifecycle & utility — `IComponentExtensions.cs` / `UI.Components.cs`
+
+- `.WhenMounted(Action)`, `.WhenMountedDelayed(TimeSpan, Action, bool)`,
+  `.WhenRemoved(Action)` — run code when the element enters/leaves the DOM. If the
+  component renders a node that isn't an element (a text node, for instance), the
+  closest parent element is tracked instead. Each registration fires **once**: a
+  component removed from the DOM and re-added gets no second `.WhenMounted(...)`
+  callback unless something registers again. `.WhenMounted(...)` on an element that
+  is already mounted runs the callback immediately. See
+  `wrap-a-javascript-library` for the teardown-and-re-arm recipe a component that
+  owns a live instance needs.
+- `.ScrollIntoView()`.
+- `.Do(Action<T>)` — run an arbitrary action on the component inside a chain.
+- `.Var(out T var)` — capture the component into a variable mid-chain.
+- `.ToToggle()` — wrap a `Button` as a `ToggleButton`.
+
+## Example
+
+```csharp
+using static Tesserae.UI;
+
+var name = TextBox().SetPlaceholder("Name");
+
+var row = HStack().Children(
+    TextBlock("Profile").Bold().Large(),
+    name.WS().Validation(t => string.IsNullOrEmpty(t.Text) ? "Required" : null),
+    Button("Save")
+        .Primary()
+        .Margin(8.px())
+        .Tooltip("Save changes")
+        .AriaLabel("Save profile")
+        .Do(b => b.WidthStretch())
+).Grow().AlignCenter();
+```
+
+## Related
+
+- `creating-a-component` — implementing `IComponent` yourself.
+- `styling`, `layout-alignment`, `accessibility`, `gestures`, `observables`,
+  `tippy`, `validator` — deeper dives on each extension group.
+- `SKILL.md` — the sizing/spacing cheat-sheet and how a child becomes a stack item.

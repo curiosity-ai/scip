@@ -1,0 +1,406 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A multi-select input that lets the user pick one or more typed items from a dropdown, with optional async
+    /// loading and free-text entry.
+    /// </summary>
+    [Transpose.Name("tss.Picker")]
+    public sealed class Picker<TPickerItem> : IComponent, ITabIndex, IObservableListComponent<TPickerItem>, IRoundedStyle where TPickerItem : class, IPickerItem
+    {
+        private event ComponentEventHandler<Picker<TPickerItem>, ItemPickedEvent> SelectedItem;
+
+        private readonly ObservableList<TPickerItem> _pickerItems = new ObservableList<TPickerItem>();
+        private readonly HTMLElement                 _container;
+        private readonly TextBox                     _textBox;
+        private readonly SuggestionsLayer            _suggestionsLayer;
+        private readonly bool                        _renderSelectionsInline;
+        private readonly HTMLElement                 _selectionsElement;
+
+        private          double _debounce;
+        private readonly double _debounceTimeout = 50;
+        private          double _hideSugestionsTimeout;
+
+        private HTMLElement _textBoxElement;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Picker(int maximumAllowedSelections = int.MaxValue, bool duplicateSelectionsAllowed = false, int suggestionsTolerance = 0, bool renderSelectionsInline = true, string suggestionsTitleText = null)
+        {
+            MaximumAllowedSelections   = maximumAllowedSelections;
+            DuplicateSelectionsAllowed = duplicateSelectionsAllowed;
+            SuggestionsTolerance       = suggestionsTolerance;
+            _renderSelectionsInline    = renderSelectionsInline;
+            _selectionsElement         = Div(Att("tss-picker-selections"));
+
+            var pickerContainer = Div(Att("tss-picker-container"));
+
+            if (_renderSelectionsInline)
+            {
+                pickerContainer.classList.add("tss-picker-container-inline-selections");
+                _selectionsElement.classList.add("tss-picker-selections-inline");
+            }
+
+            _container        = Div(Att("tss-picker"));
+            _textBox          = TextBox();
+            _suggestionsLayer = new SuggestionsLayer(new Suggestions(suggestionsTitleText));
+
+            CreatePicker(pickerContainer);
+        }
+
+        /// <summary>
+        /// Sets the keyboard tab order of the component.
+        /// </summary>
+        public int TabIndex
+        {
+            set
+            {
+                _textBox.TabIndex = value;
+            }
+        }
+
+
+        /// <summary>
+        /// Returns the component's state as a(n) observable.
+        /// </summary>
+        public IObservable<IReadOnlyList<TPickerItem>> AsObservable()
+        {
+            return _pickerItems;
+        }
+
+        /// <summary>
+        /// Gets or sets the picker items.
+        /// </summary>
+        public IEnumerable<TPickerItem> PickerItems => _pickerItems;
+
+        /// <summary>
+        /// Gets or sets the selected picker items.
+        /// </summary>
+        public IEnumerable<TPickerItem> SelectedPickerItems => _pickerItems.Where(pickerItem => pickerItem.IsSelected);
+
+        /// <summary>
+        /// Gets or sets the unselected picker items.
+        /// </summary>
+        public IEnumerable<TPickerItem> UnselectedPickerItems => _pickerItems.Where(pickerItem => !pickerItem.IsSelected);
+
+        /// <summary>
+        /// Gets or sets the maximum allowed selections.
+        /// </summary>
+        public int? MaximumAllowedSelections { get; }
+
+        /// <summary>
+        /// Gets or sets the duplicate selections allowed.
+        /// </summary>
+        public bool DuplicateSelectionsAllowed { get; }
+
+        /// <summary>
+        /// Gets or sets the suggestions tolerance.
+        /// </summary>
+        public int SuggestionsTolerance { get; }
+
+        /// <summary>
+        /// Adds the given items to the component.
+        /// </summary>
+        public Picker<TPickerItem> Items(params TPickerItem[] items)
+        {
+            return Items(items.AsEnumerable());
+        }
+
+        /// <summary>
+        /// Adds the given items to the component.
+        /// </summary>
+        public Picker<TPickerItem> Items(IEnumerable<TPickerItem> items)
+        {
+            if (items == null)
+            {
+                throw new ArgumentNullException(nameof(items));
+            }
+
+            items = items.ToList();
+
+            if (!items.Any())
+            {
+                throw new ArgumentException(nameof(items));
+            }
+
+            if (PickerItems.Any(pickerItem => items.Any(item => pickerItem.Name.Equals(item.Name))))
+            {
+                throw new ArgumentException("Can not add duplicate items");
+            }
+
+            _pickerItems.AddRange(items);
+
+            foreach (var item in items)
+            {
+                if (item.IsSelected)
+                {
+                    CreateSelection(item);
+                }
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the item selected event fires.
+        /// </summary>
+        public Picker<TPickerItem> OnItemSelected(ComponentEventHandler<Picker<TPickerItem>, ItemPickedEvent> eventHandler)
+        {
+            SelectedItem += eventHandler;
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public HTMLElement Render() => _container;
+
+        private void CreatePicker(HTMLElement pickerContainer)
+        {
+            _container.appendChild(pickerContainer);
+
+            _textBox.OnInput((_, __) => OnTextBoxInput());
+            _textBox.OnFocus((_, __) => OnTextBoxInput());
+            _textBox.OnBlur((_,  __) => OnTextBoxBlur());
+
+            _textBoxElement = _textBox.Render();
+
+            pickerContainer.appendChild(_textBoxElement);
+
+            if (_renderSelectionsInline)
+            {
+                pickerContainer.insertBefore(_selectionsElement, _textBoxElement);
+            }
+            else
+            {
+                pickerContainer.appendChild(_selectionsElement);
+            }
+        }
+
+        private void OnTextBoxInput()
+        {
+            window.clearTimeout(_hideSugestionsTimeout);
+            window.clearTimeout(_debounce);
+            _debounce = window.setTimeout(_ => ShowSuggestions(), _debounceTimeout);
+        }
+
+        private void ShowSuggestions()
+        {
+            ClearSuggestions();
+
+            if (SuggestionsTolerance > 0 &&
+                (string.IsNullOrWhiteSpace(_textBox.Text) || (_textBox.Text.Length < SuggestionsTolerance)))
+            {
+                _suggestionsLayer.Hide();
+                return;
+            }
+
+            var suggestions = GetSuggestions(_textBox.Text);
+
+            CreateSuggestions(suggestions);
+        }
+
+        private void OnTextBoxBlur()
+        {
+            _hideSugestionsTimeout = window.setTimeout(
+                _ =>
+                {
+                    ClearSuggestions();
+                    _suggestionsLayer.Hide();
+                },
+                150
+            );
+        }
+
+        private IEnumerable<TPickerItem> GetPickerItems()
+        {
+            if (!MaximumAllowedSelections.HasValue || SelectedPickerItems.Count() < MaximumAllowedSelections)
+            {
+                return DuplicateSelectionsAllowed ? PickerItems : UnselectedPickerItems;
+            }
+
+            return Enumerable.Empty<TPickerItem>();
+        }
+
+        private IEnumerable<TPickerItem> GetSuggestions(string textBoxText)
+        {
+            if (string.IsNullOrWhiteSpace(textBoxText))
+            {
+                return GetPickerItems();
+            }
+
+            textBoxText = textBoxText.ToUpper();
+
+            return GetPickerItems().Where(pickerItem => pickerItem.Name.ToUpper().Contains(textBoxText));
+        }
+
+        private void CreateSuggestions(IEnumerable<TPickerItem> suggestions)
+        {
+            suggestions = suggestions.ToList();
+
+            if (!suggestions.Any())
+            {
+                _suggestionsLayer.Hide();
+                return;
+            }
+
+            foreach (var suggestion in suggestions)
+            {
+                // TODO: Add to a component cache.
+                var suggestionContainerElement = Div(Att("tss-picker-suggestion"), suggestion.Render().Render());
+
+                suggestionContainerElement.onclick += e =>
+                {
+                    StopEvent(e);
+                    CreateSelection(suggestion);
+                };
+
+                _suggestionsLayer.SuggestionsContent.appendChild(suggestionContainerElement);
+            }
+
+            if (!_suggestionsLayer.IsVisible)
+            {
+                _suggestionsLayer.Show();
+            }
+
+            PositionSuggestions();
+        }
+
+        private void ClearSuggestions()
+        {
+            var suggestions = _suggestionsLayer.SuggestionsContent.getElementsByClassName("tss-picker-suggestion");
+
+            while (suggestions.length > 0)
+            {
+                suggestions[0].parentNode.removeChild(suggestions[0]);
+            }
+        }
+
+        private void CreateSelection(TPickerItem selectedItem)
+        {
+            UpdateSelection(selectedItem, true);
+
+            var selectionContainerElement = Div(Att("tss-picker-selection"));
+            var selectionComponent        = selectedItem.Render();
+
+            var removeButton = Button()
+               .Link()
+               .SetIcon(UIcons.Cross, size: TextSize.Tiny, color: "var(--tss-default-foreground-color)")
+               .OnClick((_, __) =>
+                {
+                    UpdateSelection(selectedItem, false);
+                    selectionContainerElement.remove();
+                }).Render();
+
+            removeButton.classList.add("tss-picker-remove");
+
+            selectionContainerElement.appendChild(selectionComponent.Render());
+            selectionContainerElement.appendChild(removeButton);
+
+            _selectionsElement.appendChild(selectionContainerElement);
+
+            SelectedItem?.Invoke(this, new ItemPickedEvent(selectedItem));
+        }
+
+        private void UpdateSelection(TPickerItem selectedItem, bool isSelected)
+        {
+            selectedItem.IsSelected = isSelected;
+            _textBox.ClearText();
+            window.clearTimeout(_hideSugestionsTimeout);
+
+            _hideSugestionsTimeout = window.setTimeout(_ =>
+            {
+                ClearSuggestions();
+                _suggestionsLayer.Hide();
+            }, 150);
+        }
+
+        private void PositionSuggestions()
+        {
+            _suggestionsLayer.SuggestionsContainer.classList.add("tss-layer-picker-suggestions");
+
+            var suggestionsContentClientHeight = _suggestionsLayer.SuggestionsContent.clientHeight;
+            var textBoxClientRect              = (ClientRect)_textBoxElement.getBoundingClientRect();
+            var bodyClientRect                 = (ClientRect)document.body.getBoundingClientRect();
+
+            if (suggestionsContentClientHeight + textBoxClientRect.bottom + 10 >= bodyClientRect.height)
+            {
+                _suggestionsLayer.SuggestionsContainer.style.top = $"{(textBoxClientRect.bottom - suggestionsContentClientHeight - textBoxClientRect.height - 10).px()}";
+            }
+            else
+            {
+                _suggestionsLayer.SuggestionsContainer.style.top = $"{(textBoxClientRect.bottom + 10).px()}";
+            }
+
+            _suggestionsLayer.SuggestionsContainer.style.left  = textBoxClientRect.left.px().ToString();
+            _suggestionsLayer.SuggestionsContainer.style.width = $"{(textBoxClientRect.width / 2).px()}";
+        }
+
+        public sealed class ItemPickedEvent
+        {
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public ItemPickedEvent(TPickerItem item) => Item = item;
+            /// <summary>
+            /// Adds the given item to the component.
+            /// </summary>
+            public TPickerItem Item { get; }
+        }
+
+        private class SuggestionsLayer : Layer<SuggestionsLayer>
+        {
+            private readonly HTMLElement _suggestions;
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public SuggestionsLayer(IComponent suggestions)
+            {
+                _suggestions = suggestions.Render();
+                _contentHtml = Div(Att("tss-layer-content"), _suggestions);
+            }
+
+            /// <summary>
+            /// Gets or sets the suggestions content.
+            /// </summary>
+            public Element SuggestionsContent => _suggestions;
+
+            /// <summary>
+            /// Gets or sets the suggestions container.
+            /// </summary>
+            public HTMLElement SuggestionsContainer => _renderedContent;
+        }
+
+        private class Suggestions : IComponent
+        {
+            private readonly HTMLElement _suggestions;
+
+            /// <summary>
+            /// Initializes a new instance of this class.
+            /// </summary>
+            public Suggestions(string suggestionsTitleText)
+            {
+                _suggestions = Div(Att("tss-picker-suggestions"));
+
+                if (!string.IsNullOrWhiteSpace(suggestionsTitleText))
+                {
+                    var suggestionsLabel = Div(Att("tss-picker-label tss-fontsize-medium tss-fontweight-semibold tss-fontcolor-primary", text: suggestionsTitleText));
+
+                    _suggestions.appendChild(suggestionsLabel);
+                }
+            }
+
+            /// <summary>
+            /// Renders the component's root HTML element.
+            /// </summary>
+            public HTMLElement Render() => _suggestions;
+        }
+    }
+}

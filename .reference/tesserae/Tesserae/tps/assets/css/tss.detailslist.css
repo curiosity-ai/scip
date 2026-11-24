@@ -1,0 +1,82 @@
+.tss-detailslist {
+    display: block;
+    overflow-y: auto;
+    overflow-x: auto;
+    max-width: 100%;
+    max-height: 100%;
+    position: relative;
+}
+
+.tss-detailslist-container {
+    width: 100%;
+    height: 100%;
+}
+
+.tss-detailslist-header {
+    display: inline-flex;
+    float: left;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--tss-default-background-color);
+}
+
+.tss-detailslist-column-header, .tss-detailslist-list-items-container {
+    display: inline-block;
+    position: relative;
+    float: left;
+}
+
+.tss-detailslist-list-item-container {
+    display: inline-flex;
+    align-items: center;
+}
+.tss-detailslist-column-header, .tss-detailslist-list-items-container, .tss-detailslist-list-item-container,
+.tss-detailslist-list-item {
+    width: 100%;
+}
+
+.tss-detailslist-list-item-container {
+    border-top: 1px;
+    border-top-color: var(--tss-default-separator-color);
+    border-top-style: solid;
+}
+
+    .tss-detailslist-list-item-container:last-of-type {
+        border-bottom: 1px;
+        border-bottom-color: var(--tss-default-separator-color);
+        border-bottom-style: solid;
+    }
+
+.tss-detailslist-list-item-container:hover {
+    background-color: var(--tss-default-background-hover-color);
+}
+
+.tss-detailslist-column-header {
+    padding: var(--tss-detailslist-default-padding);
+    display: inline-flex;
+}
+
+.tss-detailslist-column-header-sorting-icon {
+    padding-left: 5px;
+}
+
+/* The interactive column headers and the rows are reached from the keyboard (the rows one at a time, as a
+   roving Tab stop). Drawn inside the box: the list clips at its edges and the rows sit edge to edge. */
+.tss-detailslist-column-header-interactive:focus-visible,
+.tss-detailslist-list-item-container:focus-visible {
+    outline: 2px solid var(--tss-primary-border-color);
+    outline-offset: -2px;
+}
+.tss-detailslist-list-item {
+    display: inline-block;
+    padding: var(--tss-detailslist-default-padding);
+    position: relative;
+    float: left;
+}
+
+
+.tss-detailslist.tss-small > .tss-detailslist-list-item,
+.tss-detailslist.tss-small > .tss-detailslist-column-header {
+    padding: var(--tss-detailslist-compact-padding);
+}

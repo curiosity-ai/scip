@@ -1,0 +1,764 @@
+﻿using System;
+using System.Threading.Tasks;
+using static Transpose.Core.dom;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// Provides comprehensive extension methods for IComponent instances,
+    /// covering lifecycle events, layout, styling, and animations.
+    /// </summary>
+    [Transpose.Name("tss.ICX")]
+    public static class IComponentExtensions
+    {
+        /// <summary>
+        /// Registers a callback to be executed when the component is mounted in the DOM.
+        /// </summary>
+        /// <typeparam name="T">The type of the component.</typeparam>
+        /// <param name="component">The component.</param>
+        /// <param name="callback">The callback action.</param>
+        /// <returns>The component instance.</returns>
+        public static T WhenMounted<T>(this T component, Action callback) where T : IComponent
+        {
+            //No need to double check if already mounted here, as teh DomObserver already do it
+            DomObserver.WhenMounted(component.Render(), callback);
+            return component;
+        }
+
+        /// <summary>
+        /// Registers a callback to be executed after a delay once the component is mounted.
+        /// </summary>
+        /// <typeparam name="T">The type of the component.</typeparam>
+        /// <param name="component">The component.</param>
+        /// <param name="delay">The delay duration.</param>
+        /// <param name="callback">The callback action.</param>
+        /// <param name="onlyIfStillMounted">Whether to only execute if still mounted after the delay.</param>
+        /// <returns>The component instance.</returns>
+        public static T WhenMountedDelayed<T>(this T component, TimeSpan delay, Action callback, bool onlyIfStillMounted = true) where T : IComponent
+        {
+            //No need to double check if already mounted here, as teh DomObserver already do it
+            DomObserver.WhenMounted(component.Render(), () =>
+            {
+                window.setTimeout(_ =>
+                {
+                    if (component.IsMounted())
+                    {
+                        callback();
+                    }
+                }, delay.TotalMilliseconds);
+            });
+            return component;
+        }
+
+        /// <summary>
+        /// Registers a callback to be executed when the component is removed from the DOM.
+        /// </summary>
+        /// <typeparam name="T">The type of the component.</typeparam>
+        /// <param name="component">The component.</param>
+        /// <param name="callback">The callback action.</param>
+        /// <returns>The component instance.</returns>
+        public static T WhenRemoved<T>(this T component, Action callback) where T : IComponent
+        {
+            DomObserver.WhenRemoved(component.Render(), callback);
+            return component;
+        }
+
+        // The WhenMountedOrRemoved method shouldn't be used, as it would leak the component memory on the DomObserver forever (because whenever it's mounted it's registered with WhenRemoved and whenever it's removed it's re-registered with WhenMounted)
+        // We left the code here as a reminder.
+        //     public static T WhenMountedOrRemoved<T>(T component, Action onMounted, Action onRemoved) where T : IComponent
+        //     {
+        //         void Mounted()
+        //         {
+        //             onMounted?.Invoke();
+        //             DomObserver.WhenRemoved(component.Render(), Removed);
+        //         }
+
+        //         void Removed()
+        //         {
+        //             onRemoved?.Invoke();
+        //             DomObserver.WhenMounted(component.Render(), Mounted);
+        //         }
+
+        //         DomObserver.WhenMounted(component.Render(), Mounted);
+        //         return component;
+        //     }
+
+        /// <summary>Sets automatic alignment for the component.</summary>
+        public static T AlignAuto<T>(this T component) where T : IComponent
+        {
+            Stack.SetAlign(component, ItemAlign.Auto);
+            return component;
+        }
+
+        /// <summary>Sets stretch alignment for the component.</summary>
+        public static T AlignStretch<T>(this T component) where T : IComponent
+        {
+            Stack.SetAlign(component, ItemAlign.Stretch);
+            return component;
+        }
+
+        /// <summary>Sets baseline alignment for the component.</summary>
+        public static T AlignBaseline<T>(this T component) where T : IComponent
+        {
+            Stack.SetAlign(component, ItemAlign.Baseline);
+            return component;
+        }
+
+        /// <summary>Sets start alignment for the component.</summary>
+        public static T AlignStart<T>(this T component) where T : IComponent
+        {
+            Stack.SetAlign(component, ItemAlign.Start);
+            return component;
+        }
+
+        /// <summary>Sets center alignment for the component.</summary>
+        public static T AlignCenter<T>(this T component) where T : IComponent
+        {
+            Stack.SetAlign(component, ItemAlign.Center);
+            return component;
+        }
+
+        /// <summary>Sets end alignment for the component.</summary>
+        public static T AlignEnd<T>(this T component) where T : IComponent
+        {
+            Stack.SetAlign(component, ItemAlign.End);
+            return component;
+        }
+
+        /// <summary>Sets start justification for the component.</summary>
+        public static T JustifyStart<T>(this T component) where T : IComponent
+        {
+            Stack.SetJustify(component, ItemJustify.Start);
+            return component;
+        }
+
+        /// <summary>Sets center justification for the component.</summary>
+        public static T JustifyCenter<T>(this T component) where T : IComponent
+        {
+            Stack.SetJustify(component, ItemJustify.Center);
+            return component;
+        }
+
+        /// <summary>Sets end justification for the component.</summary>
+        public static T JustifyEnd<T>(this T component) where T : IComponent
+        {
+            Stack.SetJustify(component, ItemJustify.End);
+            return component;
+        }
+
+        /// <summary>Sets the margin for all sides of the component.</summary>
+        public static T Margin<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMarginLeft(component, unitSize);
+            Stack.SetMarginRight(component, unitSize);
+            Stack.SetMarginTop(component, unitSize);
+            Stack.SetMarginBottom(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the left margin for the component.</summary>
+        public static T MarginLeft<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMarginLeft(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the right margin for the component.</summary>
+        public static T MarginRight<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMarginRight(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the top margin for the component.</summary>
+        public static T MarginTop<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMarginTop(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the bottom margin for the component.</summary>
+        public static T MarginBottom<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMarginBottom(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the padding for all sides of the component.</summary>
+        public static T Padding<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetPaddingLeft(component, unitSize);
+            Stack.SetPaddingRight(component, unitSize);
+            Stack.SetPaddingTop(component, unitSize);
+            Stack.SetPaddingBottom(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the left padding for the component.</summary>
+        public static T PaddingLeft<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetPaddingLeft(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the right padding for the component.</summary>
+        public static T PaddingRight<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetPaddingRight(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the top padding for the component.</summary>
+        public static T PaddingTop<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetPaddingTop(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the bottom padding for the component.</summary>
+        public static T PaddingBottom<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetPaddingBottom(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the width of the component to auto.</summary>
+        public static T WidthAuto<T>(this T component) where T : IComponent
+        {
+            Stack.SetWidth(component, UnitSize.Auto());
+            return component;
+        }
+
+        /// <summary>Sets the width of the component.</summary>
+        public static T Width<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetWidth(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the minimum width of the component.</summary>
+        public static T MinWidth<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMinWidth(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the maximum width of the component.</summary>
+        public static T MaxWidth<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMaxWidth(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the width of the component to 100%.</summary>
+        public static T WidthStretch<T>(this T component) where T : IComponent
+        {
+            Stack.SetWidth(component, 100.percent());
+            return component;
+        }
+
+        /// <summary>Sets the height of the component to auto.</summary>
+        public static T HeightAuto<T>(this T component) where T : IComponent
+        {
+            Stack.SetHeight(component, UnitSize.Auto());
+            return component;
+        }
+
+        /// <summary>Sets the height of the component.</summary>
+        public static T Height<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetHeight(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the minimum height of the component.</summary>
+        public static T MinHeight<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMinHeight(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the maximum height of the component.</summary>
+        public static T MaxHeight<T>(this T component, UnitSize unitSize) where T : IComponent
+        {
+            Stack.SetMaxHeight(component, unitSize);
+            return component;
+        }
+
+        /// <summary>Sets the height of the component to 100%.</summary>
+        public static T HeightStretch<T>(this T component) where T : IComponent
+        {
+            Stack.SetHeight(component, 100.percent());
+            return component;
+        }
+
+        /// <summary>Sets the minimum height of the component to 100%.</summary>
+        public static T MinHeightStretch<T>(this T component) where T : IComponent
+        {
+            Stack.SetMinHeight(component, 100.percent());
+            return component;
+        }
+
+        /// <summary>Sets both width and height of the component to 100%.</summary>
+        public static T Stretch<T>(this T component) where T : IComponent
+        {
+            Stack.SetWidth(component, 100.percent());
+            Stack.SetHeight(component, 100.percent());
+            return component;
+        }
+
+        /// <summary>Sets the flex-grow property for the component.</summary>
+        public static T Grow<T>(this T component, int grow = 1) where T : IComponent
+        {
+            Stack.SetGrow(component, grow);
+            return component;
+        }
+
+        /// <summary>Sets the flex-shrink property for the component to true.</summary>
+        public static T Shrink<T>(this T component) where T : IComponent
+        {
+            Stack.SetShrink(component, true);
+            return component;
+        }
+
+        /// <summary>Sets the flex-shrink property for the component to false.</summary>
+        public static T NoShrink<T>(this T component) where T : IComponent
+        {
+            Stack.SetShrink(component, false);
+            return component;
+        }
+
+        /// <summary>Sets the grid column placement for the component.</summary>
+        public static T GridColumn<T>(this T component, int start, int end) where T : IComponent
+        {
+            Grid.SetGridColumn(component, start, end);
+            return component;
+        }
+
+        /// <summary>Sets the grid column placement to stretch across all columns.</summary>
+        public static T GridColumnStretch<T>(this T component) where T : IComponent
+        {
+            Grid.SetGridColumn(component, 1, -1);
+            return component;
+        }
+
+        /// <summary>Sets the grid row placement for the component.</summary>
+        public static T GridRow<T>(this T component, int start, int end) where T : IComponent
+        {
+            Grid.SetGridRow(component, start, end);
+            return component;
+        }
+
+        /// <summary>Sets the grid row placement to stretch across all rows.</summary>
+        public static T GridRowStretch<T>(this T component) where T : IComponent
+        {
+            Grid.SetGridRow(component, 1, -1);
+            return component;
+        }
+
+        /// <summary>Collapses the component by adding the tss-collapse class.</summary>
+        public static T Collapse<T>(this T component) where T : IComponent
+        {
+            var (el, _) = Stack.GetCorrectItemToApplyStyle(component);
+            el.classList.add("tss-collapse");
+            return component;
+        }
+
+        /// <summary>Fades out the component and then collapses it.</summary>
+        public static T FadeThenCollapse<T>(this T component) where T : IComponent => Fade(component, async () =>
+        {
+            await Task.Delay(1000);
+            Collapse(component);
+        });
+
+
+        /// <summary>Fades out the component.</summary>
+        public static T Fade<T>(this T component) where T : IComponent                            => Fade(component, (Action)null);
+        /// <summary>Fades out the component and executes a task afterwards.</summary>
+        public static T Fade<T>(this T component, Func<Task> andThen) where T : IComponent => Fade(component, () => andThen.Invoke().FireAndForget());
+
+        /// <summary>Fades out the component and executes an action afterwards.</summary>
+        public static T Fade<T>(this T component, Action andThen) where T : IComponent
+        {
+            var (el, _) = Stack.GetCorrectItemToApplyStyle(component);
+            el.classList.add("tss-fade");
+            el.classList.remove("tss-fade-light", "tss-show");
+            component.Render().classList.remove("tss-fade-light", "tss-show"); //Need to remove from component as well, because it could have been set before it was added to a stack
+
+            if (andThen is object)
+            {
+                // The opacity transition time on "tss-fade" is 0.15s, so this is the amount of time after which we want to make the optional "andThen" callback
+                setTimeout(
+                    _ => andThen(),
+                    150
+                );
+            }
+            return component;
+        }
+
+        /// <summary>Fades out the component using a light fade effect.</summary>
+        public static T LightFade<T>(this T component) where T : IComponent => LightFade(component, () => { });
+
+        /// <summary>Fades out the component using a light fade effect and executes a task afterwards.</summary>
+        public static T LightFade<T>(this T component, Func<Task> andThen = null) where T : IComponent => LightFade(component, andThen is object ? (Action)(() => andThen.Invoke().FireAndForget()) : null);
+
+        /// <summary>Fades out the component using a light fade effect and executes an action afterwards.</summary>
+        public static T LightFade<T>(this T component, Action andThen = null) where T : IComponent
+        {
+            var (el, _) = Stack.GetCorrectItemToApplyStyle(component);
+            el.classList.add("tss-fade-light");
+            el.classList.remove("tss-fade", "tss-show");
+            component.Render().classList.remove("tss-fade", "tss-show"); //Need to remove from component as well, because it could have been set before it was added to a stack
+
+            if (andThen is object)
+            {
+                // The opacity transition time on "tss-fade" is 0.15s, so this is the amount of time after which we want to make the optional "andThen" callback
+                setTimeout(
+                    _ => andThen(),
+                    150
+                );
+            }
+            return component;
+        }
+
+        /// <summary>Shows the component by adding the tss-show class and removing collapse/fade classes.</summary>
+        public static T Show<T>(this T component) where T : IComponent
+        {
+            var (el, _) = Stack.GetCorrectItemToApplyStyle(component);
+            el.classList.add("tss-fade", "tss-show");
+            el.classList.remove("tss-fade-light", "tss-collapse");
+            component.Render().classList.remove("tss-fade-light", "tss-collapse", "tss-fade"); //Need to remove all from component as well, because it could have been set before it was added to a stack
+            return component;
+        }
+
+        /// <summary>The element property a text tooltip is remembered under - see <see cref="TooltipTextOf"/>.</summary>
+        private const string TOOLTIP_TEXT_PROPERTY = "_tssTooltipText";
+
+        /// <summary>
+        /// The text of the tooltip set on an element with <c>Tooltip(string)</c>, as plain text, or null. The
+        /// tooltip itself is attached on the first hover, so this is how a touch layout - which never hovers -
+        /// finds out what an icon-only control is for.
+        /// </summary>
+        public static string TooltipTextOf(HTMLElement element)
+        {
+            if (element is null || !element.HasOwnProperty(TOOLTIP_TEXT_PROPERTY)) return null;
+
+            //What Tooltip(string) was given, as it was given: the string is text, so there is nothing to parse out of it.
+            return element[TOOLTIP_TEXT_PROPERTY].As<string>();
+        }
+
+        /// <summary>
+        /// Gives an element with nothing to be named by - no text of its own, no <c>aria-label</c>, no
+        /// <c>aria-labelledby</c> - its tooltip's text as its accessible name.
+        /// </summary>
+        /// <remarks>
+        /// An icon-only button says what it does only in its tooltip, which screen readers and browser automation
+        /// never see: to both it is an unnamed button. Only a nameless element is touched, so a button whose text is
+        /// its name keeps it, and a label set explicitly wins. Checked when the tooltip is set, so text added to the
+        /// element afterwards does not take the name back - set an explicit <c>.AriaLabel(...)</c> for that case.
+        /// </remarks>
+        private static void NameAfterTooltipIfNameless(HTMLElement element)
+        {
+            //A name this method gave keeps following the tooltip - a toggle's "Expand" becomes "Collapse" - while a
+            //name somebody set on purpose is never touched.
+            var ours = element.hasAttribute(TOOLTIP_NAME_ATTRIBUTE);
+
+            if (!ours)
+            {
+                if (element.hasAttribute("aria-label") || element.hasAttribute("aria-labelledby")) return;
+                if (!string.IsNullOrWhiteSpace(element.textContent)) return;
+            }
+
+            var text = TooltipTextOf(element);
+
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            element.setAttribute("aria-label", text.Trim());
+            element.setAttribute(TOOLTIP_NAME_ATTRIBUTE, "");
+        }
+
+        private const string TOOLTIP_NAME_ATTRIBUTE = "data-tss-tooltip-name";
+
+        /// <summary>Adds a tooltip showing <paramref name="text"/> to the component.</summary>
+        /// <remarks>
+        /// The string is shown as text, never parsed as HTML: a tooltip is usually a label, a name or a file name, which
+        /// is data. A line break in it (<c>\n</c>) starts a new line. For a tooltip with markup or components in it,
+        /// build the content and pass it to the overload that takes an <see cref="IComponent"/>.
+        /// </remarks>
+        public static T Tooltip<T>(this T component, string text, TooltipAnimation animation = TooltipAnimation.None, TooltipPlacement placement = TooltipPlacement.Top, int delayShow = 250, int delayHide = 0, bool followCursor = false, int maxWidth = 350, bool arrow = false, string theme = null, IComponent parent = null) where T : IComponent
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return component;
+
+            //The tooltip itself is only built on the first hover, which a phone never has - this is what a
+            //touch layout reads instead to say what an icon-only button does (see OmniBox's options sheet)
+            var rendered = component.Render();
+            rendered[TOOLTIP_TEXT_PROPERTY] = text;
+
+            NameAfterTooltipIfNameless(rendered);
+
+            return component.Tooltip(
+                UI.TextBlock(text).Style(s => s.whiteSpace = "pre-line"),
+                animation: animation,
+                placement: placement,
+                delayShow: delayShow,
+                delayHide: delayHide,
+                followCursor: followCursor,
+                maxWidth: maxWidth,
+                arrow: arrow,
+                parent: parent,
+                theme: theme
+            );
+        }
+
+        /// <summary>Removes the tooltip from the component.</summary>
+        public static T RemoveTooltip<T>(this T component) where T : IComponent
+        {
+            var (element, _) = Stack.GetCorrectItemToApplyStyle(component);
+
+            if (element.HasOwnProperty("_tippy"))
+            {
+                Transpose.Script.Write("{0}._tippy.destroy();", element);
+            }
+
+            var rendered = component.Render();
+
+            rendered.onmouseenter = null;
+
+            if (rendered.HasOwnProperty("tooltipMarker"))
+            {
+                rendered["tooltipMarker"] = null;
+            }
+
+            if (UI.Remembers(rendered, component)) UI.Remember(component, () => component.RemoveTooltip(), replayAfterPatch: false);
+
+            return component;
+        }
+
+        /// <summary>Adds a tooltip with component content to the component.</summary>
+        public static T Tooltip<T>(this T component, IComponent tooltip, bool interactive = false, TooltipAnimation animation = TooltipAnimation.None, TooltipPlacement placement = TooltipPlacement.Top, int delayShow = 250, int delayHide = 0, bool appendToBody = true, bool followCursor = false, int maxWidth = 350, bool hideOnClick = true, bool arrow = false, string theme = null, IComponent parent = null) where T : IComponent
+        {
+            if (tooltip is null)
+                return component;
+
+            var rendered = component.Render();
+
+            var marker = new object();
+
+            rendered["tooltipMarker"] = marker;
+
+            rendered.onmouseenter += AttachTooltip;
+
+            //A tooltip is a listener and, once shown, a tippy instance on this element - neither of
+            //which can be moved. A component that replaces its element calls this again instead.
+            if (UI.Remembers(rendered, component)) UI.Remember(component, () => component.Tooltip(tooltip, interactive, animation, placement, delayShow, delayHide, appendToBody, followCursor, maxWidth, hideOnClick, arrow, theme, parent), replayAfterPatch: false);
+
+            //Asked on every hover and every show, not only the first: a label that fits in a wide window
+            //can be cut short in a narrow one, and the other way round.
+            bool IsRedundant() => component is InlineLabel label && label.IsTooltipRedundant(tooltip.Render().textContent);
+
+            void AttachTooltip(MouseEvent e)
+            {
+                //Nothing to add right now: attach nothing and stay armed, so the next hover asks again.
+                if (rendered["tooltipMarker"] == marker && IsRedundant()) return;
+
+                rendered.onmouseenter -= AttachTooltip;
+
+                if (rendered["tooltipMarker"] != marker) return;
+
+                var renderedTooltip = UI.DIV(tooltip.Render());
+                renderedTooltip.style.display      = "block";
+                renderedTooltip.style.overflow     = "hidden";
+                renderedTooltip.style.textOverflow = "ellipsis";
+                document.body.appendChild(renderedTooltip);
+
+                var (element, _) = Stack.GetCorrectItemToApplyStyle(component);
+
+                if (element.HasOwnProperty("_tippy"))
+                {
+                    Transpose.Script.Write("{0}._tippy.destroy();", element);
+                }
+
+                // Stack the tooltip into the application z-index lane so it always sits above any
+                // currently-visible Layer (Panel, Modal, Dropdown, …). Without this, lazy tooltips
+                // fall to tippy.js's hard-coded default of 9999, which lands behind any Layer
+                // pushed above an existing tippy-root by Layers.PushLayer. Same approach as
+                // Tippy.ShowFor uses for imperative popovers.
+                if (!int.TryParse(Layers.AboveCurrent(), out var zIndex)) zIndex = 9999;
+
+                // Once attached, tippy opens on its own hover handlers, so onShow is where every later
+                // hover asks IsRedundant - returning false cancels that show without destroying anything.
+
+                if (animation == TooltipAnimation.None)
+                {
+                    Transpose.Script.Write("tippy({0}, { content: {1}, interactive: {2}, placement: {3}, delay: [{4},{5}], appendTo: {6}, followCursor: {7}, maxWidth: {8}, hideOnClick:{9}, arrow: {10}, theme: {11}, zIndex: {12}, onShow: function() { if ({13}()) return false; } });", element, renderedTooltip, interactive, placement.ToString(), delayShow, delayHide, appendToBody ? document.body.As<object>() : "parent".As<object>(), followCursor, maxWidth, hideOnClick, arrow, theme, zIndex, (Func<bool>)IsRedundant);
+                }
+                else
+                {
+                    Transpose.Script.Write("tippy({0}, { content: {1}, interactive: {2}, placement: {3},  animation: {4}, delay: [{5},{6}], appendTo: {7}, followCursor: {8}, maxWidth: {9}, hideOnClick: {10}, arrow: {11}, theme: {12}, zIndex: {13}, onShow: function() { if ({14}()) return false; } });", element, renderedTooltip, interactive, placement.ToString(), animation.ToString(), delayShow, delayHide, appendToBody ? document.body.As<object>() : "parent".As<object>(), followCursor, maxWidth, hideOnClick, arrow, theme, zIndex, (Func<bool>)IsRedundant);
+                }
+
+                //Tippy's own mouseenter has already gone by, so show it here: after the usual delay if the pointer is
+                //still on the element, or at once when another tooltip is open (see tippy.warm.js)
+                Transpose.Script.Write("tippy.tssShowWhenHovered({0}._tippy, {0}, {1}, {2});", element, delayShow, (Func<bool>)(() => rendered["tooltipMarker"] == marker && !IsRedundant()));
+
+                var currentTippy = Transpose.Script.Write<object>("{0}._tippy", element);
+
+                // 2020-10-05 DWR: Sometimes a tooltip will be attached to an element that is removed from the DOM and then the tooltip is left hanging, orphaned. 
+                if (parent is null) parent = component;
+
+                parent.WhenRemoved(() =>
+                {
+                    // 2020-10-05 DWR: I presume that have to check this property before trying to kill it in case it's already been tidied up
+                    if (element.HasOwnProperty("_tippy"))
+                    {
+                        if (currentTippy == Transpose.Script.Write<object>("{0}._tippy", element))
+                        {
+                            Transpose.Script.Write("{0}._tippy.destroy();", element);
+                        }
+                    }
+                    if (rendered["tooltipMarker"] != marker) return;
+                    rendered.onmouseenter += AttachTooltip; //Add mount again as needed
+                });
+            }
+            return component;
+        }
+
+
+        /// <summary>Sets the tab index for the component.</summary>
+        public static T TabIndex<T>(this T component, int tabIndex) where T : IComponent
+        {
+            if (component is ITabIndex hasTabIndex)
+            {
+                hasTabIndex.TabIndex = tabIndex;
+                return component;
+            }
+            else
+            {
+                var rendered = component.Render();
+                rendered.tabIndex = tabIndex;
+                return component;
+            }
+        }
+
+        /// <summary>Allows applying custom CSS styles to the component's underlying element.</summary>
+        public static T Style<T>(this T component, Action<CSSStyleDeclaration> style) where T : IComponent
+        {
+            style(component.Render().style);
+
+            //The lambda is kept rather than the properties it set: run against the next element it
+            //produces the same result, where copying the declaration would have to guess which of
+            //the properties on the old element came from here.
+            var styled = component.Render();
+
+            if (UI.Remembers(styled, component)) UI.Remember(component, () => component.Style(style));
+
+            return component;
+        }
+
+
+        /// <summary>Sets the tab index to -1 so the component is skipped during tab navigation.</summary>
+        public static T SkipTab<T>(this T component) where T : IComponent => TabIndex(component, -1);
+
+        //Shortcuts:
+
+        /// <summary>Width</summary>
+        public static T W<T>(this T component, UnitSize unitSize) where T : IComponent => Width(component, unitSize);
+
+        /// <summary>Height</summary>
+        public static T H<T>(this T component, UnitSize unitSize) where T : IComponent => Height(component, unitSize);
+
+        /// <summary>Width</summary>
+        public static T W<T>(this T component, int pixels) where T : IComponent => Width(component, pixels.px());
+
+        /// <summary>Height</summary>
+        public static T H<T>(this T component, int pixels) where T : IComponent => Height(component, pixels.px());
+
+        /// <summary>Stretch</summary>
+        public static T S<T>(this T component) where T : IComponent => Stretch(component);
+
+        /// <summary>WidthStretch</summary>
+        public static T WS<T>(this T component) where T : IComponent => WidthStretch(component);
+
+        /// <summary>HeightStretch</summary>
+        public static T HS<T>(this T component) where T : IComponent => HeightStretch(component);
+
+        /// <summary>Margin</summary>
+        public static T M<T>(this T component, UnitSize unitSize) where T : IComponent => Margin(component, unitSize);
+
+        /// <summary>MarginLeft</summary>
+        public static T ML<T>(this T component, UnitSize unitSize) where T : IComponent => MarginLeft(component, unitSize);
+
+        /// <summary>MarginRight</summary>
+        public static T MR<T>(this T component, UnitSize unitSize) where T : IComponent => MarginRight(component, unitSize);
+
+        /// <summary>MarginTop</summary>
+        public static T MT<T>(this T component, UnitSize unitSize) where T : IComponent => MarginTop(component, unitSize);
+
+        /// <summary>MarginBottom</summary>
+        public static T MB<T>(this T component, UnitSize unitSize) where T : IComponent => MarginBottom(component, unitSize);
+
+        /// <summary>Padding</summary>
+        public static T P<T>(this T component, UnitSize unitSize) where T : IComponent => Padding(component, unitSize);
+
+        /// <summary>PaddingLeft</summary>
+        public static T PL<T>(this T component, UnitSize unitSize) where T : IComponent => PaddingLeft(component, unitSize);
+
+        /// <summary>PaddingRight</summary>
+        public static T PR<T>(this T component, UnitSize unitSize) where T : IComponent => PaddingRight(component, unitSize);
+
+        /// <summary>PaddingTop</summary>
+        public static T PT<T>(this T component, UnitSize unitSize) where T : IComponent => PaddingTop(component, unitSize);
+
+        /// <summary>PaddingBottom</summary>
+        public static T PB<T>(this T component, UnitSize unitSize) where T : IComponent => PaddingBottom(component, unitSize);
+
+        /// <summary>Margin</summary>
+        public static T M<T>(this T component, int pixels) where T : IComponent => Margin(component, pixels.px());
+
+        /// <summary>MarginLeft</summary>
+        public static T ML<T>(this T component, int pixels) where T : IComponent => MarginLeft(component, pixels.px());
+
+        /// <summary>MarginRight</summary>
+        public static T MR<T>(this T component, int pixels) where T : IComponent => MarginRight(component, pixels.px());
+
+        /// <summary>MarginTop</summary>
+        public static T MT<T>(this T component, int pixels) where T : IComponent => MarginTop(component, pixels.px());
+
+        /// <summary>MarginBottom</summary>
+        public static T MB<T>(this T component, int pixels) where T : IComponent => MarginBottom(component, pixels.px());
+
+        /// <summary>Padding</summary>
+        public static T P<T>(this T component, int pixels) where T : IComponent => Padding(component, pixels.px());
+
+        /// <summary>PaddingLeft</summary>
+        public static T PL<T>(this T component, int pixels) where T : IComponent => PaddingLeft(component, pixels.px());
+
+        /// <summary>PaddingRight</summary>
+        public static T PR<T>(this T component, int pixels) where T : IComponent => PaddingRight(component, pixels.px());
+
+        /// <summary>PaddingTop</summary>
+        public static T PT<T>(this T component, int pixels) where T : IComponent => PaddingTop(component, pixels.px());
+
+        /// <summary>PaddingBottom</summary>
+        public static T PB<T>(this T component, int pixels) where T : IComponent => PaddingBottom(component, pixels.px());
+
+        /// <summary>
+        /// Scrolls the component's rendered element into the visible area of its scrollable ancestor.
+        /// Prefers <c>scrollIntoViewIfNeeded</c> when available, falling back to <c>scrollIntoView</c> otherwise.
+        /// </summary>
+        public static T ScrollIntoView<T>(this T component) where T : IComponent
+        {
+            var rendered = component.Render();
+            try
+            {
+                rendered.scrollIntoViewIfNeeded();
+            }
+            catch
+            {
+                rendered.scrollIntoView();
+            }
+            return component;
+        }
+    }
+}

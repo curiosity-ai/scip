@@ -1,0 +1,428 @@
+variables:
+  buildConfiguration: 'Release'
+  repo: 'https://$(username):$(pat)@github.com/curiosity-ai/tesserae.git'
+  msg: 'update_demo_$(build.buildId)'
+
+trigger:
+- master
+
+pool:
+  vmImage: 'windows-latest'
+
+steps:
+- checkout: self
+  submodules: true
+  persistCredentials: true
+
+- task: PowerShell@2
+  displayName: 'Set Version'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $date=$(Get-Date -Format yyyy.M);
+      Write-Host "##vso[task.setvariable variable=buildVersion]$date.$(build.buildId)"
+      # Tesserae stays on yyyy.M.build (switching would sort new packages below the old ones on NuGet);
+      # packages that started later, like Tesserae.Themes.Curiosity, use yy.M.build from the start.
+      # Never name a variable here after an MSBuild property: every pipeline variable is also exported as an
+      # environment variable, and MSBuild reads those as properties. A variable called packageVersion became
+      # PackageVersion in every project, so Tesserae itself packed as yy.M.build and the theme depended on it.
+      $short=$(Get-Date -Format yy.M);
+      Write-Host "##vso[task.setvariable variable=themePackageVersion]$short.$(build.buildId)"
+
+- task: UseDotNet@2
+  displayName: 'Use .NET 10.0 sdk'
+  inputs:
+    packageType: sdk
+    version: 10.x
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- task: NuGetToolInstaller@1
+
+- task: CmdLine@2
+  displayName: 'install Transpose compiler'
+  inputs:
+    script: 'dotnet tool update --global Transpose.Compiler'
+
+- task: CmdLine@2
+  displayName: 'restore project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae\Tesserae.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae/'
+
+- task: CmdLine@2
+  displayName: 'restore theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Curiosity\Tesserae.Themes.Curiosity.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Curiosity/'
+
+- task: CmdLine@2
+  displayName: 'restore Stratus theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Stratus\Tesserae.Themes.Stratus.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Stratus/'
+
+- task: CmdLine@2
+  displayName: 'restore RetroOS theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.RetroOS\Tesserae.Themes.RetroOS.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.RetroOS/'
+
+- task: CmdLine@2
+  displayName: 'restore Rechenwerk theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Rechenwerk\Tesserae.Themes.Rechenwerk.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Rechenwerk/'
+
+- task: CmdLine@2
+  displayName: 'restore Weniger theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Weniger\Tesserae.Themes.Weniger.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Weniger/'
+
+- task: CmdLine@2
+  displayName: 'restore Zeitung theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Zeitung\Tesserae.Themes.Zeitung.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Zeitung/'
+
+- task: CmdLine@2
+  displayName: 'restore Blaupause theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Blaupause\Tesserae.Themes.Blaupause.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Blaupause/'
+
+- task: CmdLine@2
+  displayName: 'restore Phosphor theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Phosphor\Tesserae.Themes.Phosphor.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Phosphor/'
+
+- task: CmdLine@2
+  displayName: 'restore Glas theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Glas\Tesserae.Themes.Glas.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Glas/'
+
+- task: CmdLine@2
+  displayName: 'restore Kontrast theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Kontrast\Tesserae.Themes.Kontrast.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Kontrast/'
+
+- task: CmdLine@2
+  displayName: 'restore Memphis theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Memphis\Tesserae.Themes.Memphis.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Memphis/'
+
+- task: CmdLine@2
+  displayName: 'restore Washi theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Washi\Tesserae.Themes.Washi.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Washi/'
+
+- task: CmdLine@2
+  displayName: 'restore Graustufe theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Graustufe\Tesserae.Themes.Graustufe.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Graustufe/'
+
+- task: CmdLine@2
+  displayName: 'restore Kristall theme project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Themes.Kristall\Tesserae.Themes.Kristall.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Kristall/'
+
+- task: CmdLine@2
+  displayName: 'restore tests project'
+  inputs:
+    script: 'dotnet restore $(Build.SourcesDirectory)\Tesserae.Tests\Tesserae.Tests.csproj'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Tests/'
+
+- task: CmdLine@2
+  displayName: 'git config'
+  inputs:
+    script: |
+      git config --global credential.helper store
+      git config --global user.email "$(EMAIL)"
+      git config --global user.name "$(USER)"
+      git config --global user.password  "$(PAT)"
+
+# The uicons step measures every glyph in headless Chromium, so it needs a browser, installed by the
+# script the Playwright package drops in the build output - hence building the project first. Cheap,
+# and the step below stops early on the common run where the icon set has not changed.
+- task: CmdLine@2
+  displayName: 'install uicons centering prerequisites'
+  inputs:
+    script: |
+      dotnet build $(Build.SourcesDirectory)\Build.UpdateInterfaceIcons\Build.UpdateInterfaceIcons.csproj
+      pwsh $(Build.SourcesDirectory)\Build.UpdateInterfaceIcons\bin\Debug\net10.0\playwright.ps1 install chromium
+
+- task: CmdLine@2
+  displayName: 'update uicons'
+  inputs:
+    # Downloads the icon set, regenerates the stylesheets and the UIcons enum, then bakes the optical
+    # centering into the glyph outlines. Gated on the download having changed: an unchanged set exits
+    # in seconds without touching anything, so committing the result here is what stops it recurring.
+    script: |
+      dotnet run --project $(Build.SourcesDirectory)\Build.UpdateInterfaceIcons
+      if errorlevel 1 exit /b 1
+      git add .
+      git diff --cached --quiet
+      if errorlevel 1 (
+        git commit -m "Updated uicons [skip ci]"
+        git push origin HEAD:master
+      ) else (
+        echo The icon set has not changed, nothing to commit.
+      )
+
+# This has to run after the git commit above, so the injected source-code stays out of the repository
+- task: CmdLine@2
+  displayName: 'update samples'
+  inputs:
+    script: |
+      cd $(Build.SourcesDirectory)/Build.InjectSamplesCode/
+      dotnet run
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae\Tesserae.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae/'
+
+- task: CmdLine@2
+  inputs:
+    script: 'dir $(Build.SourcesDirectory)\Tesserae\bin\ /S'
+
+- task: NuGetCommand@2
+  displayName: 'push  Tesserae to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.$(buildVersion).nupkg' # The package name comes from the PackageID, not project name
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+# The Curiosity theme package references Tesserae by project, so it packs with a dependency on the
+# Tesserae version built above and has to go up after it.
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Curiosity'
+  inputs:
+    # Version is the Tesserae version (it flows into the project reference, so the package depends on the Tesserae
+    # pushed above); ThemeVersion is this package's own, which its csproj takes over Version for itself.
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Curiosity\Tesserae.Themes.Curiosity.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Curiosity/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Curiosity to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Curiosity.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Stratus'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Stratus\Tesserae.Themes.Stratus.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Stratus/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Stratus to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Stratus.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.RetroOS'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.RetroOS\Tesserae.Themes.RetroOS.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.RetroOS/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.RetroOS to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.RetroOS.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Rechenwerk'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Rechenwerk\Tesserae.Themes.Rechenwerk.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Rechenwerk/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Rechenwerk to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Rechenwerk.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Weniger'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Weniger\Tesserae.Themes.Weniger.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Weniger/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Weniger to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Weniger.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Zeitung'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Zeitung\Tesserae.Themes.Zeitung.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Zeitung/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Zeitung to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Zeitung.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Blaupause'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Blaupause\Tesserae.Themes.Blaupause.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Blaupause/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Blaupause to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Blaupause.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Phosphor'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Phosphor\Tesserae.Themes.Phosphor.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Phosphor/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Phosphor to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Phosphor.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Glas'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Glas\Tesserae.Themes.Glas.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Glas/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Glas to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Glas.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Kontrast'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Kontrast\Tesserae.Themes.Kontrast.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Kontrast/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Kontrast to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Kontrast.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Memphis'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Memphis\Tesserae.Themes.Memphis.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Memphis/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Memphis to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Memphis.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Washi'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Washi\Tesserae.Themes.Washi.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Washi/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Washi to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Washi.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Graustufe'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Graustufe\Tesserae.Themes.Graustufe.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Graustufe/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Graustufe to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Graustufe.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae.Themes.Kristall'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Themes.Kristall\Tesserae.Themes.Kristall.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion) /p:ThemeVersion=$(themePackageVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Themes.Kristall/'
+
+- task: NuGetCommand@2
+  displayName: 'push Tesserae.Themes.Kristall to nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/*/Tesserae.Themes.Kristall.$(themePackageVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'
+
+- task: CmdLine@2
+  displayName: 'Build Tesserae Tests'
+  inputs:
+    script: 'dotnet build $(Build.SourcesDirectory)\Tesserae.Tests\Tesserae.Tests.csproj  -c $(buildConfiguration) /p:Version=$(buildVersion)'
+    workingDirectory: '$(Build.SourcesDirectory)/Tesserae.Tests/'
+
+- task: PowerShell@2
+  displayName: 'push tests to gh-pages'
+  inputs:
+    targetType: 'inline'
+    script: |
+      cd "$(Build.SourcesDirectory)/Tesserae.Tests/bin/Release/netstandard2.0/tps/"
+      git init
+      git config core.autocrlf true
+      git config core.safecrlf false
+      git config user.email "$(EMAIL)"
+      git config user.name "$(USER)"
+      git checkout -b gh-pages
+      git add .
+      git commit -m $(msg)
+      git remote add origin $(repo)
+      git push --set-upstream origin gh-pages --force
+    errorActionPreference: 'continue'
+    ignoreLASTEXITCODE: true

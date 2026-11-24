@@ -1,0 +1,134 @@
+---
+name: delta-component
+description: A wrapper that diff-patches its DOM to match new content instead of fully re-rendering, animating only what changed. Use for incremental/streaming UI updates in a Tesserae (C#/Transpose) app.
+---
+
+# DeltaComponent
+
+Holds an initial component and, on each `ReplaceContent`, diffs the new DOM tree
+against the current one and patches only the differences. It detects text
+appends and adds them as new spans (handy for streaming/typing effects),
+avoiding a full re-render. Can optionally render inside a Shadow DOM root.
+
+## Create
+
+`UI.DeltaComponent(IComponent initial, bool useShadowDom = false)` — wraps the initial content.
+Bring factories into scope with `using static Tesserae.UI;`.
+
+## Key configuration
+
+- `.Animated()` — adds a `tss-fade-in` class to newly inserted nodes.
+- `.ReplaceContent(IComponent newContent)` — diff against current content and patch in place.
+
+## What is kept, and what is swapped
+
+A node that stays keeps the event listeners its component attached to it, and no patch can move
+those. So two nodes are reconciled only when they are the same component; a node whose component
+changed between renders is swapped out whole. Without that, a control re-rendered as a different
+component looks right and still answers to the one it used to be - a tool call that became a
+"tools used" group mid-stream opening the chip it was.
+
+Nodes that are not elements carry no listeners and are always reconciled, which is what keeps the
+text-append path (the streaming effect) intact.
+
+Which component a node belongs to is worked out by the toolkit, not declared by the component.
+Nothing has to be added to a component of your own to make this work:
+
+1. **The component recorded on the element.** Every child of a `Stack` or a `Grid` passes through
+   one place that holds it as an `IComponent`, and the component behind it is noted on the element
+   there. So a component of yours is identified by the fact that it was added to a container, which
+   is also what separates two components that borrow the same kind of root: a `SectionTitle` and a
+   `SearchableList` are both a `Stack`'s element, and so is anything composed that way.
+2. **Otherwise the element's first CSS class.** This catches an element built straight into its
+   parent rather than added through a container, and the markup inside a component. The classes
+   the toolkit adds from outside (`tss-fade-in`, `tss-stack-item`) are skipped, so an element with
+   no class of its own, such as the `<p>`, `<strong>`, `<code>` and `<table>` of rendered Markdown,
+   is still patched in place on every chunk of a streamed reply.
+
+Both are checked, so the pair is never weaker than either.
+
+### What this does not cover
+
+**Two instances of the same component keep the first one's handlers.** Identity is the component,
+not the instance, so re-rendering `MyChip(onPicked: a)` as `MyChip(onPicked: b)` reconciles the two
+and the node goes on calling `a`. Nothing about a rendered element says which closure is behind its
+listener, so no reconciler can see this. If a handler closes over something that changes between
+renders, read the current value inside the handler rather than capturing it:
+
+```csharp
+//Wrong: the node keeps the first render's handler, and with it the first render's index.
+_stack.Render().addEventListener("click", _ => Select(index));
+
+//Right: the handler is the same either way, and reads what is current when it runs.
+_stack.Render().addEventListener("click", _ => Select(_currentIndex));
+```
+
+**An element spliced into a parent by hand carries no component.** `Div(Att("list"),
+chip.Render(), group.Render())` never passes a container, so those two are told apart only by their
+first class, which for anything built on a `Stack` is the same. Build the list with
+`VStack().Children(chip, group)` and both are identified.
+
+## Configuring the DeltaComponent itself
+
+`Render()` hands out whatever the content rendered - this component has no element of its own - so
+everything set on the `DeltaComponent` lands on the content's root, and every content change takes
+it off again: a swap with the node, a patch by overwriting its attributes with the incoming node's.
+
+```csharp
+DeltaComponent(content).WS().Grow().Id("reply").Class("my-bubble")
+    .Style(css => css.outline = "1px solid red")
+    .Tooltip("Streaming");
+```
+
+What comes back, and when:
+
+| Set on the `DeltaComponent` | after a patch | after a swap |
+|---|---|---|
+| `.Id()`, `.Class()`, `.Style()` | put back | put back |
+| `.Tooltip()` | still there (the patch keeps the node) | put back |
+| the stack-item class its container added | put back | carried across |
+| sizing: `.W()`, `.WS()`, `.Grow()`, margins, padding, ... | **lost** - the incoming content's own sizing stands | carried across, unless the new content sets that property itself |
+
+`.Id()`, `.Class()`, `.Style()` and `.Tooltip()` are recorded as the calls they were and made again
+against the element that is there now, which is the only way a tooltip can survive a swap at all.
+Sizing is not recorded: it is read back off the old element when it is swapped out, and a size the
+new content declares wins over the old one - `DeltaComponent(a.W(300.px()))` replaced by
+`b.W(100.px())` renders at 100px.
+
+So when the `DeltaComponent` itself needs a size that holds across updates, give each new content
+that size, or put the `DeltaComponent` in a container you size instead. Two cases do not come out
+the way you might expect: a patch drops a size set on the `DeltaComponent`, and a swap from content
+that sized itself to content that did not carries the old content's size over.
+
+Anything else attached from outside is not: a raw `component.Render().addEventListener(...)`, or a
+gesture handler, is bound to the element that went away. Put those on a wrapper of your own, or on
+the content rather than on the `DeltaComponent`.
+
+## Example
+
+```csharp
+using static Tesserae.UI;
+
+var delta = DeltaComponent(TextBlock("Starting...")).Animated();
+
+// later, stream/update — only the changed/appended parts re-render
+delta.ReplaceContent(TextBlock("Starting... done"));
+
+var ui = VStack().WS().Children(delta);
+```
+
+## Keyed elements
+
+An element carrying `DeltaComponent.KeyAttribute` (`data-tss-delta-key`) is one unit the
+reconciler does not look inside: the element on screen and the incoming one with the
+same value are the same thing, and the one on screen is kept exactly as it is; a
+different value (or only one side carrying it) swaps the element. It is for content that
+finishes drawing itself after it reaches the page, which a patch from content that never
+reached the page would otherwise undo. Markdown's Flint charts use it, which is what
+keeps a chart drawn once in a streamed reply (`flint-charts.md`).
+
+## Related
+
+- TextBlock — `text-block.md`
+- Flint charts — `flint-charts.md`
+- Full docs & API: `/tesserae/behaviors/delta-component`

@@ -1,0 +1,185 @@
+﻿using static Tesserae.UI;
+using static Transpose.Core.dom;
+using System;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A single icon glyph from the bundled UIcons set, with configurable size, weight and color.
+    /// </summary>
+    [Transpose.Name("tss.Icon")]
+    public class Icon : IComponent, IHasForegroundColor, ITextFormating
+    {
+        private readonly HTMLElement InnerElement;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Icon()
+        {
+            InnerElement = I(Att("tss-icon "));
+        }
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Icon(UIcons icon, UIconsWeight weight = UIconsWeight.Regular, TextSize size = TextSize.Small)
+        {
+            var iconStr = $"{Transform(icon, weight)} {size}";
+
+            InnerElement                 = I(Att("tss-icon " + iconStr));
+            InnerElement.dataset["icon"] = iconStr;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public Icon(Emoji icon, TextSize size = TextSize.Medium)
+        {
+            var iconStr = $"ec {icon.ToCssClass()} {size}";
+
+            InnerElement                 = I(Att("tss-icon " + iconStr));
+            InnerElement.dataset["icon"] = iconStr;
+        }
+
+        /// <summary>
+        /// Sets the icon of the component.
+        /// </summary>
+        public Icon SetIcon(Emoji icon, TextSize size = TextSize.Medium)
+        {
+            var iconStr = $"ec {icon.ToCssClass()} {size}";
+            var current = InnerElement.dataset["icon"].As<string>();
+
+            if (!string.IsNullOrWhiteSpace(current))
+            {
+                InnerElement.classList.remove(current.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+            }
+
+            InnerElement.classList.add(iconStr.ToString().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+
+            InnerElement.dataset["icon"] = iconStr.ToString();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the icon of the component.
+        /// </summary>
+        public Icon SetIcon(UIcons icon, UIconsWeight weight = UIconsWeight.Regular, TextSize size = TextSize.Small)
+        {
+            var iconStr = $"{Transform(icon, weight)} {size}";
+
+            var current = InnerElement.dataset["icon"].As<string>();
+
+            if (!string.IsNullOrWhiteSpace(current))
+            {
+                InnerElement.classList.remove(current.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+            }
+
+            InnerElement.classList.add(iconStr.ToString().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+
+            InnerElement.dataset["icon"] = iconStr.ToString();
+            return this;
+        }
+
+        /// <summary>
+        /// Configures the component to transform.
+        /// </summary>
+        public static string Transform(UIcons icon, UIconsWeight weight)
+        {
+            string v = icon.ToCssClass();
+            if (weight == UIconsWeight.Regular) return v;
+            return weight + v.Substring(6);
+        }
+
+        /// <summary>
+        /// Gets or sets the CSS color (foreground) of the component.
+        /// </summary>
+        public string Foreground
+        {
+            get => InnerElement.style.color;
+            set => InnerElement.style.color = value;
+        }
+
+        /// <summary>
+        /// Gets or sets the size of the component.
+        /// </summary>
+        public TextSize Size
+        {
+            get => ITextFormatingExtensions.FromClassList(InnerElement, TextSize.Small);
+            set
+            {
+                InnerElement.classList.remove(Size.ToString());
+                InnerElement.classList.add(value.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the font weight of the component.
+        /// </summary>
+        public TextWeight Weight
+        {
+            get => ITextFormatingExtensions.FromClassList(InnerElement, TextWeight.Regular);
+            set
+            {
+                InnerElement.classList.remove(Weight.ToString());
+                InnerElement.classList.add(value.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the text alignment of the component.
+        /// </summary>
+        public TextAlign TextAlign
+        {
+            get => ITextFormatingExtensions.FromClassList(InnerElement, TextAlign.Center);
+            set
+            {
+                InnerElement.classList.remove(TextAlign.ToString());
+                InnerElement.classList.add(value.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the title of the component.
+        /// </summary>
+        public string Title
+        {
+            get => InnerElement.title;
+            set => InnerElement.title = value;
+        }
+
+        /// <summary>
+        /// Fills the glyph with the AI gradient instead of a flat colour - what marks an icon as standing
+        /// for a model's work. Any glyph takes it; <see cref="UIcons.Sparkles"/> is the one to use when the
+        /// icon is there to say "AI" rather than to say what the thing is.
+        /// <para>
+        /// The gradient is painted as a background clipped to the glyph, so setting
+        /// <see cref="Foreground"/> afterwards has no visible effect - the fill is the gradient, not the
+        /// colour.
+        /// </para>
+        /// </summary>
+        /// <param name="strongEffect">Asks for the louder form of the AI styling. A custom theme that tones the AI
+        /// look down (e.g. Tesserae.Themes.Curiosity) brings more of it back for this element; the default theme
+        /// draws both forms the same today. Sets the <c>tss-ai-strong</c> class.</param>
+        public Icon AI(bool value = true, bool strongEffect = false)
+        {
+            InnerElement.UpdateClassIf(value, "tss-ai");
+            InnerElement.UpdateClassIf(value && strongEffect, "tss-ai-strong");
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the title of the component.
+        /// </summary>
+        public Icon SetTitle(string title)
+        {
+            Title = title;
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public HTMLElement Render() => InnerElement;
+    }
+}

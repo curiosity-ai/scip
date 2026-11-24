@@ -1,0 +1,58 @@
+/* ==========================================================================
+   Curiosity theme - Metric
+   --------------------------------------------------------------------------
+   A KPI tile reads like the website's numbers band: the title is the mono
+   uppercase label voice in the secondary tone, the value is Geist Mono at
+   500 with tabular figures and the tighter tracking the brand gives large
+   figures, and the change beside it is mono too. The icon tile in front is a
+   square, not a rounded one.
+   ========================================================================== */
+
+body.tss-theme-curiosity .tss-metric-icon > .tss-icontile {
+    --tss-icontile-radius: 0px;
+}
+
+body.tss-theme-curiosity .tss-metric-title,
+body.tss-theme-curiosity .tss-metric-title .tss-textblock {
+    font-family: var(--tss-monospace-font-family);
+    font-size: var(--tss-font-size-xsmall);
+    font-weight: var(--tss-font-weight-regular);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+body.tss-theme-curiosity .tss-metric-value,
+body.tss-theme-curiosity .tss-metric-value > .tss-textblock {
+    font-family: var(--tss-monospace-font-family);
+    font-weight: var(--tss-font-weight-semibold);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+}
+
+body.tss-theme-curiosity .tss-metric-change,
+body.tss-theme-curiosity .tss-metric-change > .tss-textblock {
+    font-family: var(--tss-monospace-font-family);
+    font-size: var(--tss-font-size-xsmall);
+    font-variant-numeric: tabular-nums;
+}
+
+/* A clickable tile answers the pointer the way a hoverable card does in the theme: square, framed in ink
+   rather than washed, and filled with stone while pressed. */
+body.tss-theme-curiosity .tss-metric-clickable {
+    border-radius: 0;
+}
+
+body.tss-theme-curiosity .tss-metric-clickable:hover {
+    background: transparent;
+    box-shadow: 0 0 0 6px var(--tss-default-background-color), 0 0 0 7px var(--tss-default-foreground-color);
+}
+
+body.tss-theme-curiosity .tss-metric-clickable:active {
+    background: var(--tss-default-background-hover-color);
+    box-shadow: 0 0 0 6px var(--tss-default-background-hover-color), 0 0 0 7px var(--tss-default-foreground-color);
+}
+
+body.tss-theme-curiosity .tss-metric-clickable:focus-visible {
+    outline: 2px solid var(--tss-default-foreground-color);
+    outline-offset: 6px;
+}

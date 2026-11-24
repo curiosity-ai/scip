@@ -1,0 +1,324 @@
+﻿using System;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+using static Tesserae.Tests.Samples.SamplesHelper;
+
+namespace Tesserae.Tests.Samples
+{
+    [SampleDetails(Group = SampleGroup.Charts, Order = 10, Icon = UIcons.ChartMixed, Description = "Lightweight, dependency-free SVG charts")]
+    public class ChartsSample : IComponent, ISample
+    {
+        private readonly IComponent _content;
+
+        public ChartsSample()
+        {
+            var months = new[] { "Jan", "Feb", "Mar", "Apr", "May", "Jun" };
+
+            var revenue = new double[] { 12, 19, 15, 27, 24, 33 };
+            var costs   = new double[] { 8, 11, 13, 14, 18, 20 };
+
+            // An observable series so the chart re-renders when the data changes.
+            var liveData = new SettableObservable<double[]>(new double[] { 5, 8, 6, 12, 9, 15 });
+
+            // Seeded, and outside the click handler: every click still shows different numbers, but
+            // the Nth click of a given session always shows the same ones.
+            var randomizer = new SampleRandom(3_101);
+
+            var lineChart = LineChart()
+               .Series(new ChartSeries("Revenue", revenue), new ChartSeries("Costs", costs))
+               .XAxis(months)
+               .Legend()
+               .Title("Monthly revenue versus costs");
+
+            var barChart = BarChart()
+               .Series(new ChartSeries("Revenue", revenue), new ChartSeries("Costs", costs))
+               .XAxis(months)
+               .Legend()
+               .Rounded(3);
+
+            var stackedChart = BarChart()
+               .Series(new ChartSeries("Chat", new double[] { 120, 180, 150, 260, 240, 310 }),
+                       new ChartSeries("Search", new double[] { 80, 95, 130, 140, 175, 205 }),
+                       new ChartSeries("Indexing", new double[] { 40, 35, 60, 55, 70, 90 }))
+               .XAxis(months)
+               .Stacked()
+               .Legend(ChartLegendPosition.Bottom)
+               .Rounded(1);
+
+            // Page paths and byte counts, as a traffic report would list them; the longest path is cut to show the ellipsis.
+            var barList = BarList()
+               .Add("/downloads/installer.zip",                         104.08 * 1e9)
+               .Add("/docs/getting-started",                              4.16 * 1e9)
+               .Add("/assets/images/hero-banner-high-resolution-2x.png",  1.81 * 1e9)
+               .Add("/pricing",                                           1.62 * 1e9)
+               .Add("/blog/release-notes",                                1.27 * 1e9)
+               .Add("/docs/api-reference",                              388.42 * 1e6)
+               .Add("/about",                                           366.55 * 1e6)
+               .Add("/contact",                                         173.38 * 1e6)
+               .FormatValues(FormatBytes);
+
+            var areaChart = AreaChart()
+               .Series(liveData, "Sessions")
+               .XAxis(months);
+
+            var pieChart = PieChart()
+               .Data(new double[] { 42, 27, 18, 13 })
+               .Labels("Direct", "Search", "Social", "Referral")
+               .Donut()
+               .Legend();
+
+            var gapsChart = LineChart()
+               .Series("With a dropout", new double[] { 14, 17, double.NaN, double.NaN, 21, 19, 24 })
+               .XAxis("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+               .ConnectGaps(false)
+               .Legend();
+
+            _content = SectionStack().Secondary()
+               .SampleTitle(typeof(ChartsSample), UIcons.ChartHistogram, "Lightweight, dependency-free SVG charts")
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        TextBlock("LineChart, BarChart, AreaChart, PieChart and HeatMap (and the BarList of ranked bars) render as responsive, dependency-free SVG that scales to its container, adapts to the light/dark theme, and exposes hover tooltips plus a role=\"img\" accessibility summary. Data can be supplied as plain values, as an observable that re-renders the chart on change, or as (x, y) pairs on a continuous scale that supports zoom, pan and a spikeline readout."))).SetTitle("Overview")))
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        SampleSubTitle("Line chart"),
+                        lineChart.H(280).WS())).SetTitle("LineChart")))
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        SampleSubTitle("Bar chart (grouped series)"),
+                        barChart.H(280).WS())).SetTitle("BarChart")))
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        SampleSubTitle("Stacked bars with the legend below"),
+                        stackedChart.H(300).WS())).SetTitle("BarChart (stacked)")))
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        SampleSubTitle("Long category names in a narrow chart: every bar is named. A name longer than its room is cut with an ellipsis (hover it for the whole text)"),
+                        HStack().Gap(16.px()).Children(
+                            LabelsOption("Horizontal (default)", ChartCategoryLabels.Horizontal),
+                            LabelsOption("Angled",               ChartCategoryLabels.Angled),
+                            LabelsOption("Vertical",             ChartCategoryLabels.Vertical),
+                            LabelsOption("Auto",                 ChartCategoryLabels.Auto)))).SetTitle("BarChart (long names)")))
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        SampleSubTitle("Top pages by data transfer: the longest label is cut with an ellipsis (hover it for the whole text), the values line up"),
+                        barList.WS())).SetTitle("BarList")))
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        SampleSubTitle("Area chart bound to an observable"),
+                        areaChart.H(280).WS(),
+                        HStack().WS().Children(
+                            Button("Randomize data").SetIcon(UIcons.Dice).OnClick(() =>
+                            {
+                                var next = new double[6];
+                                for (var i = 0; i < next.Length; i++) next[i] = randomizer.Next(2, 30);
+                                liveData.Value = next;
+                            })))).SetTitle("AreaChart + observable")))
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        SampleSubTitle("Donut chart"),
+                        pieChart.H(280).WS())).SetTitle("PieChart")))
+               .Section(Stack().Children(
+                    Card(VStack().WS().Children(
+                        SampleSubTitle("Missing samples: NaN breaks the line when gaps are not connected"),
+                        gapsChart.H(260).WS())).SetTitle("Gaps")))
+               .Section(Stack().Children(
+                    Card(BuildTimeSeriesSection()).SetTitle("Time series: continuous X, zoom, spikelines")))
+               .Section(Stack().Children(
+                    Card(BuildHeatMapSection()).SetTitle("HeatMap: custom labels, rotated rows, clickable cells")))
+               .SeeAlso(typeof(SparklineSample), typeof(MetricSample), typeof(ContributionBarSample), typeof(DeltaComponentSample), typeof(TimeHistogramPickerSample));
+        }
+
+        // A heat map labelled twice over: plain strings on the first one, components on the second, which is what
+        // the rotated row gutter is really for - a row label that is an icon plus a caption still fits beside the
+        // matrix, because it is laid out normally and then turned as a whole.
+        private static IComponent BuildHeatMapSection()
+        {
+            var monthsOfYear = new[] { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+            var segments     = new[] { "Enterprise", "Mid-market", "Startups", "Education" };
+
+            var rnd = new SampleRandom(5_517);
+
+            var signups = new double[segments.Length][];
+
+            for (var s = 0; s < segments.Length; s++)
+            {
+                signups[s] = new double[monthsOfYear.Length];
+
+                //A seasonal shape rather than noise, so the matrix reads the way a real one would - and Education
+                //peaks when the others dip, which is what a heat map is for.
+                var isSchool = s == segments.Length - 1;
+
+                for (var m = 0; m < monthsOfYear.Length; m++)
+                {
+                    var season = isSchool
+                        ? Math.Exp(-Math.Pow(m - 8, 2) / 6.0)
+                        : 0.35 + 0.65 * Math.Exp(-Math.Pow(m - 5, 2) / 14.0);
+
+                    signups[s][m] = Math.Round(season * rnd.Next(60, 100) + rnd.Next(0, 10));
+                }
+            }
+
+            var readout = TextBlock("Nothing picked yet — click a cell, a month or a segment.").Medium();
+
+            var heatMap = HeatMap(signups)
+               .XAxis(monthsOfYear)
+               .YAxis(segments)
+               .Rounded(3)
+               .ShowValues()
+               .FormatValues(v => v.ToString("0"))
+               .Legend()
+               .OnCellClick(cell => readout.Text        = $"Cell: {cell.RowLabel} in {cell.ColumnLabel} — {cell.Value.ToString("0")} signups")
+               .OnXLabelClick((i, label) => readout.Text = $"Month {i + 1}: {label}")
+               .OnYLabelClick((i, label) => readout.Text = $"Segment {i + 1}: {label}");
+
+            //The same matrix with components for labels: a link button per month along the bottom, an icon and a
+            //caption per segment down the side. Each one carries its own click handler, so the chart needs no
+            //OnXLabelClick / OnYLabelClick here.
+            var componentReadout = TextBlock("Nothing picked yet — the labels on this one are components.").Medium();
+
+            var monthLabels = new IComponent[monthsOfYear.Length];
+
+            for (var m = 0; m < monthsOfYear.Length; m++)
+            {
+                var month = monthsOfYear[m];
+                monthLabels[m] = Button().SetText(month).Link().Compact().OnClick(() => componentReadout.Text = $"Month label clicked: {month}");
+            }
+
+            var segmentIcons  = new[] { UIcons.Building, UIcons.Shop, UIcons.Rocket, UIcons.GraduationCap };
+            var segmentLabels = new IComponent[segments.Length];
+
+            for (var s = 0; s < segments.Length; s++)
+            {
+                var segment = segments[s];
+
+                segmentLabels[s] = HStack().Children(
+                    Icon(segmentIcons[s], size: TextSize.Small).Foreground(Theme.Colors.Teal600),
+                    TextBlock(segment).Small().SemiBold().PL(4));
+            }
+
+            var componentHeatMap = HeatMap(signups)
+               .XAxis(monthLabels, monthsOfYear)
+               .YAxis(segmentLabels, segments)
+               .Rounded(3)
+               .CellGap(3)
+               .ScaleColor(Theme.Colors.Teal600)
+               .FormatValues(v => v.ToString("0"))
+               .Legend(ChartLegendPosition.Bottom)
+               .OnCellClick(cell => componentReadout.Text = $"Cell: {cell.RowLabel} in {cell.ColumnLabel} — {cell.Value.ToString("0")} signups");
+
+            return VStack().WS().Children(
+                SampleSubTitle("String labels: the rows are drawn rotated 90°, so a segment name costs one line of text rather than its length"),
+                heatMap.H(320).WS(),
+                readout.PT(8),
+                SampleSubTitle("Component labels: the same matrix, with a link per month and an icon + caption per segment — each rotated as a whole").PT(16),
+                componentHeatMap.H(440).WS(),
+                componentReadout.PT(8));
+        }
+
+        // Two charts sharing one timeline: zooming or panning either one pushes its range onto the other,
+        // which is what OnRangeChanged + XRange are for (XRange itself never re-raises the event).
+        private static IComponent BuildTimeSeriesSection()
+        {
+            // Anchored to SampleDate rather than "two hours ago": the axis labels are rendered text,
+            // so a clock-driven start makes this page differ from itself every minute.
+            var start = SampleDate.UnixSeconds(SampleDate.Now);
+
+            var rnd = new SampleRandom(7_720);
+
+            var times = new double[120];
+            var cpu   = new double[120];
+            var ram   = new double[120];
+
+            double cpuValue = 35;
+            double ramValue = 1_400_000_000; // raw bytes, as a real metric reports them
+
+            for (var i = 0; i < times.Length; i++)
+            {
+                times[i] = start + i * 60;
+
+                cpuValue = Math.Max(2, Math.Min(98, cpuValue + rnd.Next(-6, 7)));
+                ramValue = Math.Max(600_000_000, ramValue + rnd.Next(-40, 55) * 1_000_000);
+
+                cpu[i] = cpuValue;
+                ram[i] = ramValue;
+            }
+
+            //Ten seconds to a day: the wheel is unbounded, and without limits it reaches spans with no tick to
+            //print at one end and no calendar at the other. A chart that loads to match its range sets the
+            //maximum to whatever its source can serve.
+            var cpuChart = AreaChart()
+               .Series(new ChartSeries("CPU %", times, cpu) { LineWidth = 1, FillOpacity = 0.2 })
+               .XAxisTime()
+               .FormatValues(v => v.ToString("0") + "%")
+               .Zoomable()
+               .ZoomLimits(minSpan: 10, maxSpan: 86_400)
+               .Spikelines()
+               .ExportButton(fileName: "cpu")
+               .Legend();
+
+            var ramChart = LineChart()
+               .Series(new ChartSeries("Working set", times, ram) { LineWidth = 1 })
+               .XAxisTime()
+               .Points(false)
+               .Zoomable()
+               .ZoomLimits(minSpan: 10, maxSpan: 86_400)
+               .Spikelines()
+               .ExportButton(fileName: "working-set")
+               .Legend();
+
+            cpuChart.OnRangeChanged(range =>
+            {
+                if (range.IsAutoRange) ramChart.AutoRangeX();
+                else ramChart.XRange(range.Min, range.Max);
+            });
+
+            ramChart.OnRangeChanged(range =>
+            {
+                if (range.IsAutoRange) cpuChart.AutoRangeX();
+                else cpuChart.XRange(range.Min, range.Max);
+            });
+
+            //The case a chart that fetches per range runs into: the user scrolls to a period the source has
+            //nothing for. The pinned range still draws its axis and still answers the wheel, so the period is
+            //navigable rather than a dead blank box.
+            var emptyChart = AreaChart()
+               .Series(new ChartSeries[0])
+               .XAxisTime()
+               .XRange(start - 7_200, start - 3_600)
+               .Zoomable()
+               .Spikelines()
+               .Legend();
+
+            return VStack().WS().Children(
+                SampleSubTitle("Ctrl + wheel to zoom, drag to pan, double-click to reset — both charts stay on the same timeline"),
+                cpuChart.H(200).WS(),
+                ramChart.H(200).WS().PT(8),
+                SampleSubTitle("A range the data does not cover still draws its axis, and still zooms and pans").PT(16),
+                emptyChart.H(140).WS());
+        }
+
+        private static string FormatBytes(double bytes)
+        {
+            if (bytes >= 1e9) return (bytes / 1e9).ToString("0.00") + " GB";
+            if (bytes >= 1e6) return (bytes / 1e6).ToString("0.00") + " MB";
+
+            return (bytes / 1e3).ToString("0.00") + " kB";
+        }
+
+        public HTMLElement Render() => _content.Render();
+    
+        // Names wider than their bar, drawn with each CategoryLabels option.
+        private static IComponent LabelsOption(string title, ChartCategoryLabels labels)
+            => VStack().Children(
+                TextBlock(title).Small().SemiBold().PB(4),
+                BarChart()
+                   .Series(new ChartSeries("Median", new double[] { 12, 7, 15, 9, 11 }), new ChartSeries("P80", new double[] { 24, 18, 26, 20, 21 }))
+                   .XAxis("Final assembly line", "Cabin installation", "Systems test bench", "Paint shop", "Delivery centre")
+                   .MaxXTicks(5)
+                   .CategoryLabels(labels)
+                   .Legend()
+                   .Rounded(3)
+                   .W(280.px())
+                   .H(220.px()));
+    }
+}

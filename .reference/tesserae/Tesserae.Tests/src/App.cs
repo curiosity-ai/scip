@@ -1,0 +1,499 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
+using Transpose.Core;
+using Tesserae;
+using Tesserae.Tests.Samples;
+using Tesserae.Tests;
+using Tesserae.Themes.Curiosity;
+using Tesserae.Themes.Stratus;
+using Tesserae.Themes.RetroOS;
+using Tesserae.Themes.Rechenwerk;
+using Tesserae.Themes.Weniger;
+using Tesserae.Themes.Zeitung;
+using Tesserae.Themes.Blaupause;
+using Tesserae.Themes.Phosphor;
+using Tesserae.Themes.Glas;
+using Tesserae.Themes.Kontrast;
+using Tesserae.Themes.Memphis;
+using Tesserae.Themes.Washi;
+using Tesserae.Themes.Graustufe;
+using Tesserae.Themes.Kristall;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae.Tests
+{
+    internal static class App
+    {
+        private const string _sidebarOpenStateKey = "tss-sample-sidebar-open-close";
+        private const string _themeKey            = "tss-sample-theme";
+        private const string _defaultThemeId      = "default";
+        private const string _curiosityThemeId    = "curiosity";
+        private const string _stratusThemeId      = "stratus";
+        private const string _retroOSThemeId      = "retroos";
+        private const string _rechenwerkThemeId   = "rechenwerk";
+        private const string _wenigerThemeId      = "weniger";
+        private const string _zeitungThemeId   = "zeitung";
+        private const string _blaupauseThemeId = "blaupause";
+        private const string _phosphorThemeId  = "phosphor";
+        private const string _glasThemeId      = "glas";
+        private const string _kontrastThemeId  = "kontrast";
+        private const string _memphisThemeId   = "memphis";
+        private const string _washiThemeId     = "washi";
+        private const string _graustufeThemeId = "graustufe";
+        private const string _kristallThemeId = "kristall";
+
+        // The custom theme a Theme nav entry stands for; null is the default look.
+        private static ICustomTheme CustomThemeFor(string themeId)
+        {
+            switch (themeId)
+            {
+                case _curiosityThemeId:  return CuriosityTheme.Instance;
+                case _stratusThemeId:    return StratusTheme.Instance;
+                case _retroOSThemeId:    return RetroOSTheme.Instance;
+                case _rechenwerkThemeId: return RechenwerkTheme.Instance;
+                case _wenigerThemeId:    return WenigerTheme.Instance;
+                case _zeitungThemeId:   return ZeitungTheme.Instance;
+                case _blaupauseThemeId: return BlaupauseTheme.Instance;
+                case _phosphorThemeId:  return PhosphorTheme.Instance;
+                case _glasThemeId:      return GlasTheme.Instance;
+                case _kontrastThemeId:  return KontrastTheme.Instance;
+                case _memphisThemeId:   return MemphisTheme.Instance;
+                case _washiThemeId:     return WashiTheme.Instance;
+                case _graustufeThemeId: return GraustufeTheme.Instance;
+                case _kristallThemeId: return KristallTheme.Instance;
+                default:                 return null;
+            }
+        }
+
+        private static void Main()
+        {
+            document.body.style.overflow = "hidden";
+
+            // Ensure the viewport meta tag is present so that mobile browsers use the device
+            // width instead of rendering at a desktop width and scaling down.
+            if (document.head.querySelector("meta[name='viewport']") is null)
+            {
+                var viewportMeta = document.createElement("meta");
+                viewportMeta["name"]    = "viewport";
+                viewportMeta["content"] = "width=device-width, initial-scale=1.0, maximum-scale=5.0";
+                document.head.appendChild(viewportMeta);
+            }
+
+            // Chrome on Android applies the phone's text size as a page zoom, which shrinks the
+            // viewport under a px-sized layout; this opts out (it scales the root font size instead).
+            if (document.head.querySelector("meta[name='text-scale']") is null)
+            {
+                var textScaleMeta = document.createElement("meta");
+                textScaleMeta["name"]    = "text-scale";
+                textScaleMeta["content"] = "scale";
+                document.head.appendChild(textScaleMeta);
+            }
+
+            // Enable automatic mobile detection — adds/removes the tss-mobile class on body
+            // whenever the viewport is 768px or narrower (or when the device reports a coarse pointer).
+            Theme.EnableMobileDetection(breakpoint: 768);
+
+            // The gallery opens in the Curiosity theme unless the visitor picked the default one before.
+            // The page is kept invisible until the theme's stylesheet has arrived, so the first paint is
+            // already themed instead of flashing the default look for a frame.
+            var savedThemeId   = localStorage.getItem(_themeKey);
+            var initialThemeId = savedThemeId == _defaultThemeId || CustomThemeFor(savedThemeId) is object ? savedThemeId : _curiosityThemeId;
+
+            if (initialThemeId != _defaultThemeId)
+            {
+                document.body.style.visibility = "hidden";
+
+                async Task ActivateInitialTheme()
+                {
+                    try     { await Theme.SetCustomTheme(CustomThemeFor(initialThemeId)); }
+                    finally { document.body.style.visibility = ""; }
+                }
+
+                ActivateInitialTheme().FireAndForget();
+            }
+
+            var allSidebarItems      = new List<ISidebarItem>();
+            var curiosityNavs        = new List<SidebarNav>(); // the Curiosity Components nav, shown only in that theme
+            var sampleToSidebarItems = new Dictionary<Sample, List<ISidebarItem>>();
+
+            var currentPage = new SettableObservable<Sample>(null);
+
+            currentPage.Observe(selected =>
+            {
+                var toSelect = selected is object && sampleToSidebarItems.TryGetValue(selected, out var items) ? items : new List<ISidebarItem>();
+                allSidebarItems.ForEach(i => i.IsSelected = toSelect.Contains(i));
+            });
+
+            // Not sortable: the sidebar's order is the one SampleGroup.InDisplayOrder and each
+            // sample's Order declare, and it is the same order the landing page reads top to bottom.
+            // Dragging an entry out of it made the two disagree, and made a shared link to a sample
+            // land somewhere else in the list than the person who sent it saw.
+            var sidebar = Sidebar();
+
+            sidebar.AddHeader(new SidebarText("header", "Tesserae", "TSS", textSize: TextSize.XLarge, textWeight: TextWeight.Bold));
+
+            var searchTerm = "";
+            var searchBox  = new SidebarSearchBox("search", "Search...");
+
+            searchBox.OnSearch((term) =>
+            {
+                searchTerm = term;
+                sidebar.Search(term);
+                UpdateCuriosityNav(); // the search has just shown the theme-only nav if it matched, re-hide it outside its theme
+            });
+
+            sidebar.AddHeader(searchBox);
+
+            //Important: Reflection will only properly work here if reflection metadata is emitted inline with the javascript, instead of in a separate .meta.js file
+            //           i.e. in the tps.json file, we need:      "reflection": { "disabled": false, "target":  "inline" },
+
+            // Built before the content area, because the landing page it shows when no sample is
+            // selected is the same list, drawn as cards.
+            var samples = typeof(ISample).Assembly.GetTypes().Where(t => typeof(ISample).IsAssignableFrom(t) && !t.IsInterface)
+               .Select(sampleType =>
+               {
+                   var sg = sampleType.GetCustomAttributes(typeof(SampleDetailsAttribute), true).FirstOrDefault() as SampleDetailsAttribute;
+                   var group = sg is object ? sg.Group : "Others";
+                   int order = sg is object ? sg.Order : 0;
+                   UIcons icon = sg is object ? sg.Icon : UIcons.Circle;
+                   string description = sg is object ? sg.Description : null;
+                   return new Sample(sampleType.Name, Sample.FormatSampleName(sampleType), group, order, icon, description, async () => await Activator.CreateInstanceAsync(sampleType) as IComponent);
+               })
+               .ToDictionary(s => s.Name, s => s);
+
+            var contentArea = Defer(currentPage, async page => page is null
+                ? (IComponent)VStack().S().ScrollY().Children(new LandingPage(samples.Values.Where(s => s.Group != SampleGroup.Curiosity)).WS())
+                : VStack().S().ScrollY().Children((await page.ContentGenerator()).WS().MinHeight(100.percent())));
+
+            // On a phone the sidebar is a page (Sidebar.AsPage): it and the content take turns filling the
+            // screen, and this bar is how the content gets back to it. It collapses itself on a desktop.
+            var showCode = Button().SetIcon(UIcons.SquareTerminal).Tooltip("Show sample code").OnClick(() =>
+            {
+                if (currentPage.Value is object) SamplesHelper.ShowSampleCode(currentPage.Value.Type);
+            });
+
+            var pageBar = SidebarPageBar(sidebar)
+               .Brand(TextBlock("TSS").Bold().Foreground(Theme.Primary.Background))
+               .Commands(showCode);
+
+            currentPage.Observe(page =>
+            {
+                pageBar.SetTitle(page is object ? page.Name : "Components");
+
+                if (page is object) showCode.Show();
+                else                showCode.Collapse();
+            });
+
+            // The shell is a row on both layouts - sidebar left, content right - and it is the sidebar
+            // that changes: a rail beside the content on a desktop, a page of its own on a phone, where
+            // it hides the content while it is on screen and hides itself once a sample is picked.
+            //
+            // The sidebar itself is never given an inline width: .tss-sidebar's own 250px is what
+            // sizes it on desktop, and page mode fills the row on a phone.
+            var content     = VStack().Children(pageBar, contentArea.WS().H(1).Grow());
+            var pageContent = HStack().S().Children(sidebar.HS(), content.HS().W(1).Grow());
+
+            MountToBody(pageContent);
+
+            sidebar.AddHeader(new SidebarButton("SOURCE_CODE", Emoji.House, "Source Code", new SidebarCommand(UIcons.ArrowUpRightFromSquare).Tooltip("Open repository on GitHub")
+                   .OnClick(() => window.open("https://github.com/curiosity-ai/tesserae", "_blank")))
+               .CommandsAlwaysVisible()
+               .OnOpenIconClick(() => Toast().Success("You clicked on the icon")));
+
+            // A page is always open, so the command that closes the rail is hidden with the brand's own
+            var openClose = new SidebarCommand(UIcons.AngleLeft).Tooltip("Close Sidebar").Class("tss-sidebar-close-command");
+
+            openClose.OnClick(() =>
+            {
+                sidebar.Toggle();
+
+                if (sidebar.IsClosed)
+                {
+                    openClose.SetIcon(UIcons.AngleRight).Tooltip("Open Sidebar");
+                    localStorage.setItem(_sidebarOpenStateKey, false.ToString());
+                }
+                else
+                {
+                    openClose.SetIcon(UIcons.AngleLeft).Tooltip("Close Sidebar");
+                    localStorage.setItem(_sidebarOpenStateKey, true.ToString());
+                }
+            });
+
+            var lightDark = new SidebarCommand(UIcons.Sun).Tooltip("Light Mode");
+
+            lightDark.OnClick(() =>
+            {
+                if (Theme.IsDark)
+                {
+                    Theme.Light();
+                    lightDark.SetIcon(UIcons.Sun).Tooltip("Light Mode");
+                }
+                else
+                {
+                    Theme.Dark();
+                    lightDark.SetIcon(UIcons.Moon).Tooltip("Dark Mode");
+                }
+            });
+
+            // Theme switcher: the custom themes the gallery ships with, as a nav at the foot of the sidebar.
+            var themeNav              = new SidebarNav("THEME", UIcons.Palette, "Theme", initiallyCollapsed: true).NotSortable().KeepCollapsedOnSelection();
+            var defaultThemeButton    = new SidebarButton("THEME_DEFAULT", UIcons.Square, "Default Theme");
+            var curiosityThemeButton  = new SidebarButton("THEME_CURIOSITY", UIcons.SquareSmall, "Curiosity Theme");
+            var stratusThemeButton    = new SidebarButton("THEME_STRATUS", UIcons.Plane, "Stratus Theme");
+            var retroOSThemeButton    = new SidebarButton("THEME_RETROOS", UIcons.ComputerClassic, "RetroOS Theme");
+            var rechenwerkThemeButton = new SidebarButton("THEME_RECHENWERK", UIcons.Calculator, "Rechenwerk Theme");
+            var wenigerThemeButton    = new SidebarButton("THEME_WENIGER", UIcons.Radio, "Weniger Theme");
+            var zeitungThemeButton   = new SidebarButton("THEME_ZEITUNG", UIcons.Newspaper, "Zeitung Theme");
+            var blaupauseThemeButton = new SidebarButton("THEME_BLAUPAUSE", UIcons.DraftingCompass, "Blaupause Theme");
+            var phosphorThemeButton  = new SidebarButton("THEME_PHOSPHOR", UIcons.TvRetro, "Phosphor Theme");
+            var glasThemeButton      = new SidebarButton("THEME_GLAS", UIcons.Glass, "Glas Theme");
+            var kontrastThemeButton  = new SidebarButton("THEME_KONTRAST", UIcons.Contrast, "Kontrast Theme");
+            var memphisThemeButton   = new SidebarButton("THEME_MEMPHIS", UIcons.Triangle, "Memphis Theme");
+            var washiThemeButton     = new SidebarButton("THEME_WASHI", UIcons.Stamp, "Washi Theme");
+            var graustufeThemeButton = new SidebarButton("THEME_GRAUSTUFE", UIcons.BookAlt, "Graustufe Theme");
+            var kristallThemeButton  = new SidebarButton("THEME_KRISTALL", UIcons.Gem, "Kristall Theme");
+
+            void MarkTheme(string themeId)
+            {
+                defaultThemeButton.IsSelected   = themeId == _defaultThemeId;
+                curiosityThemeButton.IsSelected = themeId == _curiosityThemeId;
+                stratusThemeButton.IsSelected   = themeId == _stratusThemeId;
+                retroOSThemeButton.IsSelected   = themeId == _retroOSThemeId;
+                rechenwerkThemeButton.IsSelected = themeId == _rechenwerkThemeId;
+                wenigerThemeButton.IsSelected    = themeId == _wenigerThemeId;
+                zeitungThemeButton.IsSelected   = themeId == _zeitungThemeId;
+                blaupauseThemeButton.IsSelected = themeId == _blaupauseThemeId;
+                phosphorThemeButton.IsSelected  = themeId == _phosphorThemeId;
+                glasThemeButton.IsSelected      = themeId == _glasThemeId;
+                kontrastThemeButton.IsSelected  = themeId == _kontrastThemeId;
+                memphisThemeButton.IsSelected   = themeId == _memphisThemeId;
+                washiThemeButton.IsSelected     = themeId == _washiThemeId;
+                graustufeThemeButton.IsSelected = themeId == _graustufeThemeId;
+                kristallThemeButton.IsSelected = themeId == _kristallThemeId;
+            }
+
+            void SelectTheme(string themeId)
+            {
+                localStorage.setItem(_themeKey, themeId);
+                MarkTheme(themeId);
+                Theme.SetCustomTheme(CustomThemeFor(themeId)).FireAndForget();
+            }
+
+            defaultThemeButton.OnClick(() => SelectTheme(_defaultThemeId));
+            curiosityThemeButton.OnClick(() => SelectTheme(_curiosityThemeId));
+            stratusThemeButton.OnClick(() => SelectTheme(_stratusThemeId));
+            retroOSThemeButton.OnClick(() => SelectTheme(_retroOSThemeId));
+            rechenwerkThemeButton.OnClick(() => SelectTheme(_rechenwerkThemeId));
+            wenigerThemeButton.OnClick(() => SelectTheme(_wenigerThemeId));
+            zeitungThemeButton.OnClick(() => SelectTheme(_zeitungThemeId));
+            blaupauseThemeButton.OnClick(() => SelectTheme(_blaupauseThemeId));
+            phosphorThemeButton.OnClick(() => SelectTheme(_phosphorThemeId));
+            glasThemeButton.OnClick(() => SelectTheme(_glasThemeId));
+            kontrastThemeButton.OnClick(() => SelectTheme(_kontrastThemeId));
+            memphisThemeButton.OnClick(() => SelectTheme(_memphisThemeId));
+            washiThemeButton.OnClick(() => SelectTheme(_washiThemeId));
+            graustufeThemeButton.OnClick(() => SelectTheme(_graustufeThemeId));
+            kristallThemeButton.OnClick(() => SelectTheme(_kristallThemeId));
+
+            themeNav.OnClick(() => themeNav.Toggle());
+            themeNav.Add(defaultThemeButton);
+            themeNav.Add(curiosityThemeButton);
+            themeNav.Add(stratusThemeButton);
+            themeNav.Add(retroOSThemeButton);
+            themeNav.Add(rechenwerkThemeButton);
+            themeNav.Add(wenigerThemeButton);
+            themeNav.Add(zeitungThemeButton);
+            themeNav.Add(blaupauseThemeButton);
+            themeNav.Add(phosphorThemeButton);
+            themeNav.Add(glasThemeButton);
+            themeNav.Add(kontrastThemeButton);
+            themeNav.Add(memphisThemeButton);
+            themeNav.Add(washiThemeButton);
+            themeNav.Add(graustufeThemeButton);
+            themeNav.Add(kristallThemeButton);
+            MarkTheme(initialThemeId);
+
+            sidebar.AddFooter(themeNav);
+
+            var commandSidebarconfig = new SidebarCommands("CONFIG", lightDark, openClose);
+            sidebar.AddFooter(commandSidebarconfig);
+
+            SidebarButton SampleButton(Sample item, string identifier)
+            {
+                var sidebarItem = new SidebarButton(identifier, item.Icon, item.Name, new SidebarCommand(UIcons.SquareTerminal).Tooltip("Show sample code").OnClick(() => SamplesHelper.ShowSampleCode(item.Type)),
+                    new SidebarCommand(UIcons.ArrowUpRightFromSquare).Tooltip("Open in new tab").OnClick(() => window.open($"#/view/{item.Name}", "_blank")));
+
+                sidebarItem.OnClick(() =>
+                {
+                    // Push asks the OnBeforeNavigate handler registered below and returns false
+                    // when it refuses, so a sample holding unsaved changes isn't swapped out from
+                    // under the dialog. The guard re-issues the navigation once the user decides,
+                    // and the route registered below is what shows the new sample then.
+                    if (!Router.Push($"#/view/{item.Name}")) return;
+
+                    currentPage.Value = item;
+                });
+
+                allSidebarItems.Add(sidebarItem);
+
+                if (!sampleToSidebarItems.TryGetValue(item, out var items))
+                {
+                    items = new List<ISidebarItem>();
+                    sampleToSidebarItems[item] = items;
+                }
+
+                items.Add(sidebarItem);
+                return sidebarItem;
+            }
+
+            // Two sets of rows over the same samples, because the two layouts group them differently: a desktop
+            // lists every sample under a separator per category, and a phone - where the sidebar is a page and a
+            // hundred rows is a long way to scroll with a thumb - shows one row per category, which opens its
+            // samples as a panel over the sidebar.
+            var railContent  = new List<ISidebarItem>();
+            var pageContents = new List<ISidebarItem>();
+            var groupIndex   = 0;
+
+            // Groups are laid out in SampleGroup.InDisplayOrder, not alphabetically: the sidebar
+            // reads top-down from the containers a page is built out of to the helpers that render
+            // nothing on their own, and alphabetical ordering would scatter that.
+            foreach (var group in samples.Values.Where(s => s.Group != SampleGroup.Curiosity).GroupBy(s => s.Group).OrderBy(g => SampleGroup.DisplayIndex(g.Key)).ThenBy(g => g.Key))
+            {
+                var groupKey = group.Key + groupIndex++;
+
+                railContent.Add(new SidebarSeparator(groupKey, group.Key));
+
+                var nav = new SidebarNav("page-" + groupKey, SampleGroup.IconFor(group.Key), group.Key, initiallyCollapsed: true);
+                pageContents.Add(nav);
+
+                var itemIndex = 0;
+
+                foreach (var item in group.OrderBy(s => s.Order).ThenBy(s => s.Name.ToLower()))
+                {
+                    var identifier = item.Name + itemIndex++;
+
+                    railContent.Add(SampleButton(item, identifier));
+                    nav.Add(SampleButton(item, identifier));
+                }
+            }
+
+            // The Curiosity theme package's own components get a nav of their own at the end of the list, shown only
+            // while the Curiosity theme is active: they are that theme's, and look out of place in the default one.
+            var curiositySamples = samples.Values.Where(s => s.Group == SampleGroup.Curiosity).OrderBy(s => s.Order).ThenBy(s => s.Name.ToLower()).ToList();
+
+            if (curiositySamples.Count > 0)
+            {
+                var railNav = new SidebarNav("CURIOSITY_COMPONENTS", SampleGroup.IconFor(SampleGroup.Curiosity), SampleGroup.Curiosity, initiallyCollapsed: false).NotSortable();
+                var pageNav = new SidebarNav("page-curiosity-components", SampleGroup.IconFor(SampleGroup.Curiosity), SampleGroup.Curiosity, initiallyCollapsed: true);
+                railNav.OnClick(() => railNav.Toggle());
+
+                var itemIndex = 0;
+
+                foreach (var item in curiositySamples)
+                {
+                    var identifier = item.Name + itemIndex++;
+                    railNav.Add(SampleButton(item, identifier));
+                    pageNav.Add(SampleButton(item, identifier));
+                }
+
+                railContent.Add(railNav);
+                pageContents.Add(pageNav);
+                curiosityNavs.Add(railNav);
+                curiosityNavs.Add(pageNav);
+            }
+
+            void UpdateCuriosityNav()
+            {
+                // In the Curiosity theme the nav is left to the search, which hides it when nothing in it matches:
+                // a bare Show() here put the header back over children the search had hidden, an empty nav.
+                var visible = Theme.CustomTheme is CuriosityTheme;
+                foreach (var nav in curiosityNavs)
+                {
+                    if (visible) nav.Search(searchTerm);
+                    else         nav.Collapse();
+                }
+            }
+
+            UpdateCuriosityNav();
+            Theme.OnThemeChanged += UpdateCuriosityNav;
+
+            bool? showingPageContents = null;
+
+            // Points the shell at the layout the current mode calls for. Called once below and then
+            // on every OnMobileModeChanged, so narrowing or widening the window switches the whole
+            // shell rather than leaving one layout for the mobile stylesheet to reshape.
+            void ApplyLayoutMode(bool isMobile)
+            {
+                if (showingPageContents != isMobile)
+                {
+                    showingPageContents = isMobile;
+
+                    sidebar.ClearContent();
+                    (isMobile ? pageContents : railContent).ForEach(i => sidebar.AddContent(i));
+                    sidebar.Search(searchTerm);
+                    UpdateCuriosityNav();
+                }
+
+                sidebar.AsPage(isMobile);
+
+                if (!isMobile)
+                {
+                    // Back on desktop, the sidebar is a rail again, so restore the user's own
+                    // open/closed preference.
+                    var sidebarOpenState = bool.TryParse(localStorage.getItem(_sidebarOpenStateKey), out var v) ? v : true;
+                    sidebar.Closed(!sidebarOpenState);
+
+                    openClose.SetIcon(sidebarOpenState ? UIcons.AngleLeft : UIcons.AngleRight)
+                       .Tooltip(sidebarOpenState ? "Close Sidebar" : "Open Sidebar");
+                }
+            }
+
+            ApplyLayoutMode(Theme.IsMobileMode);
+            Theme.OnMobileModeChanged += () => ApplyLayoutMode(Theme.IsMobileMode);
+
+            // One handler covers every way out of a sample: the browser's back/forward buttons,
+            // Router.Navigate, and the sidebar's Router.Push. (Closing or reloading the browser tab
+            // is handled by the guard's own beforeunload listener.) Router keeps a single handler,
+            // so a sample needing its own before-navigate logic has to call CanNavigateAway from it.
+            Router.OnBeforeNavigate((toState, fromState, isBack) => UnsavedChangesGuard.CanNavigateAway(toState, fromState));
+
+            Router.Register("home", "/", _ => currentPage.Value = null);
+
+
+            // We'll render the content in a DeferedComponent that updates itself whenever the "currentPage" observable's value changes - these changes will be triggered by the routing configured below
+            var documentTitleBase = document.title;
+
+            foreach (var kv in samples)
+            {
+                Router.Register($"#/view/{kv.Key.Replace(" ", "%20")}", _ =>
+                {
+                    currentPage.Value = kv.Value;
+                    sidebar.ShowContent(); //a link to a sample opens on the sample, not on the sidebar a phone would otherwise show first
+                });
+            }
+
+            // A sample's route is its display name (#/view/Gantt%20Chart). A link naming it by type (#/view/GanttChartSample)
+            // or by its documentation slug (#/view/gantt-chart) is moved onto that route instead of falling back to the landing page.
+            Router.OnNotMatched(parts =>
+            {
+                if (parts.Length != 2 || !string.Equals(parts[0], "view", StringComparison.OrdinalIgnoreCase)) return;
+
+                var requested = parts[1];
+                var sample    = samples.Values.FirstOrDefault(s => string.Equals(s.Type, requested, StringComparison.OrdinalIgnoreCase)
+                                                                || string.Equals(s.Name.Replace(" ", "-"), requested, StringComparison.OrdinalIgnoreCase));
+
+                if (sample is null || !Router.Replace($"#/view/{sample.Name.Replace(" ", "%20")}")) return;
+
+                currentPage.Value = sample;
+                sidebar.ShowContent();
+            });
+
+            Router.Initialize();
+            Router.Refresh(onDone: Router.ForceMatchCurrent); // We need to forcibly match the route at first loading since we want the just-registered routes to be matched against the current URL without us *changing* that URL
+        }
+    }
+}

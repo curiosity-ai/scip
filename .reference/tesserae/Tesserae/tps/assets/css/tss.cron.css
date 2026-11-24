@@ -1,0 +1,101 @@
+
+.tss-cron-editor {
+    display: inline-flex;
+    align-items: center;
+    color: var(--tss-default-foreground-color);
+    border-radius: var(--tss-border-radius-sm);
+    border: 1px solid var(--tss-default-border-color);
+}
+
+.tss-cron-desc {
+    cursor: pointer;
+    border-bottom: 1px dashed var(--tss-default-foreground-color);
+    transition: border-bottom 0.2s;
+}
+
+    .tss-cron-desc:hover {
+        border-bottom: 1px solid var(--tss-default-foreground-color);
+    }
+
+.tss-cron-open {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background-color: var(--tss-default-background-color);
+    box-shadow: var(--tss-box-shadow);
+}
+
+.tss-cron-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* The chip's surface and its text are one decision, so they are set together and at a weight above a
+   theme's plain `body.tss-theme-x .tss-dropdown-container` (and its :hover): a theme that restyled
+   dropdowns used to replace the dark surface while the label stayed pinned to the light text below,
+   which left it invisible. The label now inherits whatever colour the chip ends up with. */
+.tss-cron-row .tss-cron-inline-dropdown.tss-dropdown-container {
+    background-color: var(--tss-colors-dark-neutral-700);
+    color: var(--tss-colors-neutral-100);
+    border-radius: var(--tss-border-radius-sm);
+    border: none;
+    padding: 2px 8px;
+    min-width: unset;
+    text-align: center;
+    height: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--tss-border-radius-sm);
+}
+
+    .tss-cron-row .tss-cron-inline-dropdown.tss-dropdown-container:hover {
+        background-color: var(--tss-colors-dark-neutral-600);
+        color: var(--tss-colors-neutral-100);
+    }
+
+.tss-cron-inline-dropdown,
+.tss-cron-inline-dropdown .tss-dropdown-item-on-box {
+    height: 18px !important;
+    min-height: unset !important;
+    align-items: center;
+    display: inline-flex
+}
+
+    /* The selected value is drawn by a Button inside the box, which a theme's button rules colour for a
+       page, not for the chip: it takes the chip's colour like the rest of the label. */
+    .tss-cron-inline-dropdown .tss-dropdown-item-on-box,
+    .tss-cron-inline-dropdown .tss-dropdown-item-on-box .tss-btn,
+    .tss-cron-inline-dropdown .tss-dropdown-item-on-box .tss-fontcolor-default {
+        color: inherit !important;
+        font-size: var(--tss-font-size-small);
+        background: transparent !important;
+        border: none !important;
+    }
+
+    .tss-cron-inline-dropdown .tss-dropdown-icon {
+        color: inherit !important;
+    }
+
+.tss-cron-label {
+    white-space: nowrap;
+    font-size: var(--tss-font-size-small);
+}
+
+.tss-cron-days {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.tss-cron-custom-input .tss-textbox {
+    font-family: var(--tss-monospace-font-family);
+}
+
+.tss-cron-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}

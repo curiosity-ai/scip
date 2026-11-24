@@ -1,0 +1,177 @@
+/* UptimeBars Component
+   A day with no data and a day still to come are quiet neutral fills (--tss-subtle-fill-color, the
+   future one fainter) and the month card is the page's own surface - tokens, so dark mode and a theme
+   carry them. They were light-theme hex values (a white card, #dfe4ea cells) that dark mode never
+   changed. The tooltip keeps its own dark surface in both modes (below): it reads on either page, and
+   theme packages restyle it on the understanding that its text is white. */
+.tss-uptime-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tss-uptime-bars {
+  display: grid;
+  grid-template-columns: repeat(90, 1fr);
+  gap: 3px;
+  align-items: center;
+}
+
+.tss-uptime-bars span {
+  height: 26px;
+  border-radius: 6px;
+  background: var(--tss-subtle-fill-color);
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.tss-uptime-bars span:hover,
+.tss-uptime-bars span:focus-visible {
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.tss-uptime-bars-compact {
+  grid-template-columns: repeat(90, 1fr);
+  gap: 2px;
+}
+
+.tss-uptime-bars-compact span {
+  height: 12px;
+  border-radius: 4px;
+}
+
+.tss-uptime-bars span.operational {
+  background: rgba(45, 164, 78, 0.85);
+}
+
+.tss-uptime-bars span.minor {
+  background: rgba(217, 119, 6, 0.85);
+}
+
+.tss-uptime-bars span.major {
+  background: rgba(207, 34, 46, 0.85);
+}
+
+.tss-uptime-bars span.maintenance {
+  background: rgba(31, 111, 235, 0.85);
+}
+
+.tss-uptime-bars span.none {
+  background: var(--tss-subtle-fill-color);
+}
+
+.tss-uptime-bars span.future {
+  background: color-mix(in srgb, var(--tss-subtle-fill-color) 55%, transparent);
+  cursor: default;
+  pointer-events: none;
+}
+
+
+/* UptimeCalendar Component */
+.tss-uptime-month-card {
+  border: 1px solid var(--tss-default-border-color, #dcdde1);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: var(--tss-default-background-color);
+  position: relative;
+  z-index: 0;
+  overflow: visible;
+}
+
+.tss-uptime-month-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.tss-uptime-month-header span {
+  color: var(--tss-secondary-foreground-color);
+  font-size: 0.85rem;
+}
+
+.tss-uptime-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.tss-uptime-month-day,
+.tss-uptime-month-empty {
+  width: 100%;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--tss-subtle-fill-color);
+}
+
+.tss-uptime-month-day {
+  cursor: pointer;
+}
+
+.tss-uptime-month-day.operational {
+  background: rgba(45, 164, 78, 0.8);
+}
+
+.tss-uptime-month-day.minor {
+  background: rgba(217, 119, 6, 0.85);
+}
+
+.tss-uptime-month-day.major {
+  background: rgba(207, 34, 46, 0.85);
+}
+
+.tss-uptime-month-day.maintenance {
+  background: rgba(31, 111, 235, 0.85);
+}
+
+.tss-uptime-month-day.future {
+  background: color-mix(in srgb, var(--tss-subtle-fill-color) 55%, transparent);
+  cursor: default;
+  pointer-events: none;
+}
+
+.tss-uptime-month-empty {
+  background: transparent;
+  pointer-events: none;
+}
+
+/* Tooltip Theme (Tippy) */
+.tippy-box[data-theme~='uptime'] {
+  background: #24292e; /* dark background for better contrast */
+  border: 1px solid #1b1f23;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(149, 157, 165, 0.2);
+  color: #fff;
+  font-size: 0.8rem;
+  padding: 4px; /* We let the component handle inner padding */
+  text-align: left;
+}
+
+/* The text takes the box's colour rather than one of its own: the box is dark with white text here, and a
+   theme that gives tooltips its own surface (often a light one in dark mode) gives the box the matching
+   colour, which a fixed white on the text used to override. The class names below were
+   .tss-text-block / .tss-font-weight-semibold, which nothing renders (they are .tss-textblock and
+   .tss-fontweight-semibold), so this leant on whatever the base tooltip rules happened to give. */
+.tippy-box[data-theme~='uptime'] .tss-textblock {
+  color: inherit !important;
+}
+
+.tippy-box[data-theme~='uptime'] .tss-fontweight-semibold {
+  color: inherit !important;
+  font-weight: 600 !important;
+}
+
+.tippy-box[data-theme~='uptime'][data-placement^='top'] > .tippy-arrow::before {
+  border-top-color: #24292e;
+}
+.tippy-box[data-theme~='uptime'][data-placement^='bottom'] > .tippy-arrow::before {
+  border-bottom-color: #24292e;
+}
+.tippy-box[data-theme~='uptime'][data-placement^='left'] > .tippy-arrow::before {
+  border-left-color: #24292e;
+}
+.tippy-box[data-theme~='uptime'][data-placement^='right'] > .tippy-arrow::before {
+  border-right-color: #24292e;
+}

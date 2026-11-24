@@ -1,0 +1,1098 @@
+﻿using System;
+using System.Collections.Generic;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// The buttons a <see cref="ToolCall"/> / <see cref="ToolsUsed"/> header carries, built the same
+    /// way for both so an action looks identical whether it sits on a single call or on a group.
+    /// </summary>
+    internal static class ToolCallActions
+    {
+        private const string MAX_WIDTH_VARIABLE = "--tss-toolcall-max-width";
+
+        internal static HTMLElement Build(UIcons icon, string tooltip, Action onClick)
+        {
+            var button = UI.Button(Att("tss-toolcall-action", type: "button", ariaLabel: tooltip), I(icon));
+
+            // The header toggles the call, so an action inside it has to keep its click to itself.
+            button.addEventListener("click", ev =>
+            {
+                StopEvent(ev);
+                onClick?.Invoke();
+            });
+
+            // A ToolsUsed summary toggles on a tap gesture rather than on a click (see its
+            // constructor), and a gesture is recognised from the pointer events - which a stopped
+            // click never reaches. Without this the group folds up under the action being pressed.
+            button.addEventListener("pointerdown", ev => StopEvent(ev));
+            button.addEventListener("pointerup",   ev => StopEvent(ev));
+
+            if (!string.IsNullOrEmpty(tooltip)) Raw(button).Tooltip(tooltip);
+
+            return button;
+        }
+
+        // The actions hang outside the chip, so the chip gives up their width: a chip that fills its
+        // container would otherwise push them past the container's edge.
+        internal static void ReserveSpace(HTMLElement root, HTMLElement actions)
+        {
+            var count = actions is null ? 0 : actions.children.length;
+
+            root.UpdateClassIf(count > 0, "tss-toolcall-has-actions");
+            root.style.setProperty("--tss-toolcall-action-count", count.ToString());
+        }
+
+        // One observer for every call, so a call rebuilt on every update costs an observe() and not an
+        // observer of its own.
+        private static readonly MutationObserver MaxWidthChanges = new MutationObserver((records, _) =>
+        {
+            foreach (var record in records) SyncMaxWidth(record.target.As<HTMLElement>());
+        });
+
+        // A call's MaxWidth() is an inline max-width, which no stylesheet rule can combine with the room the
+        // actions need or with the width floor, so it is copied to a variable the stylesheet takes the
+        // smaller from. Kept in step by an observer, since MaxWidth() can come at any time and a diff
+        // rewrites the style. Safe to call more than once for the same call.
+        internal static void FollowMaxWidth(HTMLElement root)
+        {
+            SyncMaxWidth(root);
+            MaxWidthChanges.observe(root, new MutationObserverInit { attributes = true, attributeFilter = new[] { "style" } });
+        }
+
+        // Written only when it changes: the write is a style mutation, which calls this again.
+        private static void SyncMaxWidth(HTMLElement root)
+        {
+            var maxWidth = root.style.maxWidth;
+            var copied   = root.style.getPropertyValue(MAX_WIDTH_VARIABLE);
+
+            if (string.IsNullOrEmpty(maxWidth))
+            {
+                if (copied != "") root.style.removeProperty(MAX_WIDTH_VARIABLE);
+            }
+            else if (copied != maxWidth)
+            {
+                root.style.setProperty(MAX_WIDTH_VARIABLE, maxWidth);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Keeps a chip that shows a live progress line at the widest it has been while the line was showing,
+    /// so a stream of updates can push its chevron and actions to the right but never pulls them back
+    /// under the pointer. Once the line is gone the chip settles to its own width again.
+    /// </summary>
+    internal static class ToolCallWidthFloor
+    {
+        private const string WIDEST_VARIABLE = "--tss-toolcall-widest";
+
+        // A chip that outgrows its floor gets this much room on top, so a line that keeps growing a few
+        // characters at a time moves the actions in a few larger steps rather than on every update.
+        private const double GROWTH_HEADROOM = 48;
+
+        // A chat refreshes its reply by diffing a rebuilt layout onto the one on screen, which keeps the
+        // chip's node but writes the rebuilt node's style attribute over it - the floor goes with it, and
+        // the component that set it is gone. So the widest width is a property of the node, and a
+        // mutation observer puts the floor back: it runs as a microtask straight after the diff, before
+        // anything is laid out or painted. (A ResizeObserver only sees the shrink once it is laid out.)
+        //
+        // One observer for every chip, so a chip rebuilt on every update costs an observe() and not an
+        // observer of its own. Putting a floor back needs no measuring; finding a new widest width does,
+        // and that waits for the next frame, read for every chip at once where the browser lays the page
+        // out anyway - measuring in the observer would force a layout per update.
+        private static readonly MutationObserver Mutations = new MutationObserver((records, _) =>
+        {
+            foreach (var record in records)
+            {
+                var chip = ChipOf(record.target);
+
+                if (chip is object) Restore(chip);
+            }
+        });
+
+        private static readonly List<HTMLElement> ToMeasure = new List<HTMLElement>();
+
+        internal static void Watch(HTMLElement chip, HTMLElement header)
+        {
+            Transpose.Script.Write("{0}._tssFloorChip = true;", chip);
+
+            // The header only, not the content under it: an expanded call can be large and streaming.
+            Mutations.observe(header, new MutationObserverInit { childList = true, characterData = true, subtree = true, attributes = true, attributeFilter = new[] { "class", "style" } });
+
+            if (chip != header) Mutations.observe(chip, new MutationObserverInit { attributes = true, attributeFilter = new[] { "style" } });
+        }
+
+        private static HTMLElement ChipOf(Node node)
+        {
+            while (node is object && !Transpose.Script.Write<bool>("!!{0}._tssFloorChip", node)) node = node.parentNode;
+
+            return node.As<HTMLElement>();
+        }
+
+        private static bool IsLive(HTMLElement chip)
+        {
+            var progress = chip.querySelector(":scope > .tss-toolsused-progress, :scope > .tss-toolcall-header > .tss-toolcall-progress").As<HTMLElement>();
+
+            return progress is object && !progress.classList.contains("tss-liveprogress-empty");
+        }
+
+        private static void Restore(HTMLElement chip)
+        {
+            if (!chip.isConnected) return;
+
+            if (!IsLive(chip))
+            {
+                Transpose.Script.Write("delete {0}._tssWidest;", chip);
+                if (chip.style.getPropertyValue(WIDEST_VARIABLE) != "") chip.style.removeProperty(WIDEST_VARIABLE);
+                return;
+            }
+
+            var widest = Transpose.Script.Write<double>("({0}._tssWidest || 0)", chip);
+
+            if (widest > 0) SetFloor(chip, widest);
+
+            if (Transpose.Script.Write<bool>("!{0}._tssToMeasure", chip))
+            {
+                Transpose.Script.Write("{0}._tssToMeasure = true;", chip);
+                ToMeasure.Add(chip);
+
+                if (ToMeasure.Count == 1) window.requestAnimationFrame(_ => MeasureAll());
+            }
+        }
+
+        private static void MeasureAll()
+        {
+            var chips = ToMeasure.ToArray();
+            ToMeasure.Clear();
+
+            foreach (var chip in chips)
+            {
+                Transpose.Script.Write("{0}._tssToMeasure = false;", chip);
+
+                if (!chip.isConnected || !IsLive(chip)) continue;
+
+                var width  = chip.getBoundingClientRect().As<DOMRect>().width;
+                var widest = Transpose.Script.Write<double>("({0}._tssWidest || 0)", chip);
+
+                // While the line fits the floor the chip is the floor's width, so only a line that has
+                // outgrown it measures wider. The stylesheet clamps the floor to the container.
+                if (width > widest + 0.5)
+                {
+                    var floor = width + GROWTH_HEADROOM;
+
+                    Transpose.Script.Write("{0}._tssWidest = {1};", chip, floor);
+                    SetFloor(chip, floor);
+                }
+            }
+        }
+
+        // Written only when it changes: the write is a style mutation, which comes back to Restore.
+        private static void SetFloor(HTMLElement chip, double width)
+        {
+            var floor = width + "px";
+
+            if (chip.style.getPropertyValue(WIDEST_VARIABLE) != floor) chip.style.setProperty(WIDEST_VARIABLE, floor);
+        }
+    }
+
+    /// <summary>
+    /// Inline tool-call indicator that expands accordion-style to show the
+    /// associated content. The content component is created lazily the first
+    /// time the user expands the tool call.
+    /// </summary>
+    [Transpose.Name("tss.ToolCall")]
+    public sealed class ToolCall : ComponentBase<ToolCall, HTMLElement>
+    {
+        private readonly HTMLElement      _header;
+        private readonly HTMLElement      _iconContainer;
+        private readonly HTMLElement      _textContainer;
+        private readonly HTMLElement      _chevron;
+        private readonly HTMLElement      _content;
+        private          HTMLElement      _actions;
+        private          HTMLElement      _secondaryActions;
+        private          UIcons           _icon;
+        private          string           _text;
+        private          Func<IComponent> _contentFactory;
+        private          IComponent       _renderedContent;
+        private          LiveProgress     _progress;
+        private          bool             _isExpanded;
+        private          bool             _expandable = true;
+        private          Action<ToolCall> _onToggle;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public ToolCall(UIcons icon, string text, Func<IComponent> contentFactory = null)
+        {
+            _icon           = icon;
+            _text           = text ?? string.Empty;
+            _contentFactory = contentFactory;
+
+            _iconContainer = Div(Att("tss-toolcall-icon"), I(icon));
+            _textContainer = Div(Att("tss-toolcall-text", text: _text));
+            _chevron       = I(UIcons.AngleDown, cssClass: "tss-toolcall-chevron");
+
+            _header = Div(Att("tss-toolcall-header", role: "button", ariaLabel: "Toggle tool call"),
+                          _iconContainer, _textContainer, _chevron);
+
+            _content = Div(Att("tss-toolcall-content"));
+            _content.style.display = "none";
+
+            InnerElement = Div(Att("tss-toolcall"), _header, _content);
+
+            _header.addEventListener("click", _ =>
+            {
+                if (CanExpand) Toggle();
+            });
+
+            UpdateExpandableUI();
+        }
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public ToolCall(UIcons icon, string text, IComponent content)
+            : this(icon, text, content != null ? (Func<IComponent>)(() => content) : null)
+        {
+        }
+
+        /// <summary>
+        /// Gets or sets the icon shown by the component.
+        /// </summary>
+        public UIcons  Icon            => _icon;
+        /// <summary>
+        /// Gets or sets the text shown in the component.
+        /// </summary>
+        public string  Text            => _text;
+        /// <summary>
+        /// Gets or sets a value indicating whether the component is expanded.
+        /// </summary>
+        public bool    IsExpanded      => _isExpanded;
+        /// <summary>
+        /// Returns a value indicating whether the component has the given content.
+        /// </summary>
+        public bool    HasContent      => _contentFactory != null;
+
+        // The expand affordance (chevron + clickable header) is only rendered when there is
+        // actually something to show — a tool call without content stays a plain chip.
+        private bool   CanExpand       => _expandable && _contentFactory != null;
+
+        /// <summary>
+        /// Returns a fresh IComponent built from the content factory, or null
+        /// if no factory was provided. Used by <see cref="ToolsUsed"/> to
+        /// render the detail pane independently of this inline view.
+        /// </summary>
+        public IComponent CreateContent()
+        {
+            return _contentFactory?.Invoke();
+        }
+
+        /// <summary>
+        /// Sets the content of the component.
+        /// </summary>
+        public ToolCall SetContent(Func<IComponent> contentFactory)
+        {
+            _contentFactory  = contentFactory;
+            _renderedContent = null;
+            ClearChildren(_content);
+            UpdateExpandableUI();
+            if (_isExpanded)
+            {
+                EnsureContentRendered();
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the content of the component.
+        /// </summary>
+        public ToolCall SetContent(IComponent content)
+        {
+            return SetContent(content != null ? (Func<IComponent>)(() => content) : null);
+        }
+
+        /// <summary>
+        /// Sets the text of the component.
+        /// </summary>
+        public ToolCall SetText(string text)
+        {
+            _text = text ?? string.Empty;
+            _textContainer.innerText = _text;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the icon of the component.
+        /// </summary>
+        public ToolCall SetIcon(UIcons icon)
+        {
+            _icon = icon;
+            ClearChildren(_iconContainer);
+            _iconContainer.appendChild(I(icon));
+            return this;
+        }
+
+        /// <summary>
+        /// Gets the live progress line shown on the header while the call runs, creating it on first
+        /// use. The line lives inside the header row, so expanding the call leaves it untouched.
+        /// </summary>
+        public LiveProgress Progress => EnsureProgress();
+
+        /// <summary>
+        /// Writes the given progress onto the header of this call, next to its name. Meant to be
+        /// called as often as the progress arrives - only the text of the line changes.
+        /// </summary>
+        public ToolCall SetProgress(string progress)
+        {
+            EnsureProgress().SetText(progress);
+            return this;
+        }
+
+        /// <summary>
+        /// Streams the progress shown on the header from the given observable.
+        /// </summary>
+        public ToolCall SetProgress(IObservable<string> progress)
+        {
+            EnsureProgress().Stream(progress);
+            return this;
+        }
+
+        /// <summary>
+        /// Clears the progress shown on the header, leaving the call as a plain chip again.
+        /// </summary>
+        public ToolCall ClearProgress()
+        {
+            _progress?.StopStreaming().Clear();
+            return this;
+        }
+
+        private LiveProgress EnsureProgress()
+        {
+            if (_progress is null)
+            {
+                _progress = new LiveProgress().Class("tss-toolcall-progress");
+                _header.insertBefore(_progress.Render(), _chevron);
+                ToolCallWidthFloor.Watch(InnerElement, _header);
+                ToolCallActions.FollowMaxWidth(InnerElement);
+            }
+
+            return _progress;
+        }
+
+        /// <summary>
+        /// Adds a button to the header of this call, next to the chevron - a way into whatever the call
+        /// stands for that doesn't fit inside its content (opening the run it started, retrying it, ...).
+        /// Clicking it runs the handler only: the call is neither expanded nor collapsed by it.
+        /// </summary>
+        public ToolCall AddAction(UIcons icon, string tooltip, Action<ToolCall> onClick)
+        {
+            EnsureActions().appendChild(ToolCallActions.Build(icon, tooltip, () => onClick?.Invoke(this)));
+            ToolCallActions.ReserveSpace(InnerElement, _actions);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a button to the header of this call, next to the chevron.
+        /// </summary>
+        public ToolCall AddAction(UIcons icon, string tooltip, Action onClick) => AddAction(icon, tooltip, _ => onClick?.Invoke());
+
+        /// <summary>
+        /// Removes every button added with <see cref="AddAction(UIcons, string, Action{ToolCall})"/>.
+        /// </summary>
+        public ToolCall ClearActions()
+        {
+            if (_actions is object) ClearChildren(_actions);
+            ToolCallActions.ReserveSpace(InnerElement, _actions);
+
+            return this;
+        }
+
+        private HTMLElement EnsureActions()
+        {
+            if (_actions is null)
+            {
+                _actions = Div(Att("tss-toolcall-actions"));
+                _header.insertBefore(_actions, _chevron);
+                ToolCallActions.FollowMaxWidth(InnerElement);
+            }
+
+            return _actions;
+        }
+
+        /// <summary>
+        /// Adds a secondary action to the card: a small labelled button on the header line, between the
+        /// text and the chevron, shown whether the call is expanded or not. For the follow-ups
+        /// a call offers beside its result ("Retry", "Open run", "Copy output"). Unlike
+        /// <see cref="AddAction(UIcons, string, Action{ToolCall})"/>, which hangs an icon off the outside
+        /// of the chip, this stays within the card. Clicking it runs the handler only.
+        /// </summary>
+        public ToolCall AddSecondaryAction(string text, Action<ToolCall> onClick, UIcons? icon = null)
+        {
+            var button = UI.Button(Att("tss-toolcall-secondary-action", type: "button"));
+
+            if (icon.HasValue) button.appendChild(I(icon.Value));
+            button.appendChild(Span(Att("tss-toolcall-secondary-action-text", text: text ?? string.Empty)));
+
+            button.addEventListener("click", ev =>
+            {
+                StopEvent(ev);
+                onClick?.Invoke(this);
+            });
+
+            EnsureSecondaryActions().appendChild(button);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a secondary action to the card.
+        /// </summary>
+        public ToolCall AddSecondaryAction(string text, Action onClick, UIcons? icon = null) => AddSecondaryAction(text, _ => onClick?.Invoke(), icon);
+
+        /// <summary>
+        /// Removes every button added with <see cref="AddSecondaryAction(string, Action{ToolCall}, UIcons?)"/>,
+        /// and the container that held them.
+        /// </summary>
+        public ToolCall ClearSecondaryActions()
+        {
+            if (_secondaryActions is object)
+            {
+                ClearChildren(_secondaryActions);
+                _secondaryActions.style.display = "none";
+            }
+
+            return this;
+        }
+
+        private HTMLElement EnsureSecondaryActions()
+        {
+            if (_secondaryActions is null)
+            {
+                _secondaryActions = Div(Att("tss-toolcall-secondary-actions"));
+                _header.insertBefore(_secondaryActions, _chevron);
+            }
+
+            _secondaryActions.style.display = "";
+
+            return _secondaryActions;
+        }
+
+        /// <summary>
+        /// Configures the not expandable on the component.
+        /// </summary>
+        public ToolCall NotExpandable()
+        {
+            _expandable = false;
+            UpdateExpandableUI();
+            return this;
+        }
+
+        /// <summary>
+        /// Expands the component.
+        /// </summary>
+        public ToolCall Expanded(bool value = true)
+        {
+            if (value) Expand();
+            else Collapse();
+            return this;
+        }
+
+        /// <summary>
+        /// Expands the component.
+        /// </summary>
+        public ToolCall Expand()
+        {
+            if (_isExpanded || !CanExpand) return this;
+            _isExpanded = true;
+            EnsureContentRendered();
+            UpdateExpandedState();
+            _onToggle?.Invoke(this);
+            return this;
+        }
+
+        /// <summary>
+        /// Collapses the component.
+        /// </summary>
+        public ToolCall Collapse()
+        {
+            if (!_isExpanded) return this;
+            _isExpanded = false;
+            UpdateExpandedState();
+            _onToggle?.Invoke(this);
+            return this;
+        }
+
+        /// <summary>
+        /// Toggles the component's state.
+        /// </summary>
+        public ToolCall Toggle()
+        {
+            return _isExpanded ? Collapse() : Expand();
+        }
+
+        /// <summary>
+        /// Registers a callback invoked when the toggle event fires.
+        /// </summary>
+        public ToolCall OnToggle(Action<ToolCall> onToggle)
+        {
+            _onToggle += onToggle;
+            return this;
+        }
+
+        private void EnsureContentRendered()
+        {
+            if (_renderedContent != null) return;
+            if (_contentFactory == null) return;
+
+            _renderedContent = _contentFactory();
+            if (_renderedContent != null)
+            {
+                _content.appendChild(_renderedContent.Render());
+            }
+        }
+
+        private void UpdateExpandedState()
+        {
+            InnerElement.UpdateClassIf(_isExpanded, "tss-expanded");
+            _content.style.display = _isExpanded ? "block" : "none";
+            _header.setAttribute("aria-expanded", _isExpanded ? "true" : "false");
+        }
+
+        private void UpdateExpandableUI()
+        {
+            var canExpand = CanExpand;
+            _chevron.style.display = canExpand ? "" : "none";
+            _header.UpdateClassIf(!canExpand, "tss-toolcall-not-expandable");
+            if (!canExpand && _isExpanded) Collapse();
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public override HTMLElement Render()
+        {
+            return InnerElement;
+        }
+    }
+
+    /// <summary>
+    /// Compact summary of multiple tool calls that opens a popup showing the
+    /// list of tools on the left. Clicking a tool slides the list to the left
+    /// and shows that tool's content on the right with a back button to
+    /// return to the list.
+    /// <para>
+    /// <see cref="Inline()"/> swaps the popup for an in-place disclosure: the summary expands
+    /// underneath itself into the list of <see cref="ToolCall"/>s, each one opening its own content
+    /// inline the way a standalone call does.
+    /// </para>
+    /// </summary>
+    [Transpose.Name("tss.ToolsUsed")]
+    public sealed class ToolsUsed : ComponentBase<ToolsUsed, HTMLElement>
+    {
+        private readonly HTMLElement      _header;
+        private readonly HTMLElement      _summaryIcon;
+        private readonly HTMLElement      _summaryText;
+        private readonly HTMLElement      _summaryChevron;
+        private readonly HTMLElement      _inlineList;
+        private readonly List<ToolCall>   _tools;
+        private          HTMLElement      _actions;
+        private          LiveProgress     _progress;
+        private          string           _summaryLabel;
+        private          UIcons           _summaryIconKind = UIcons.Tools;
+        private          string           _modalTitle      = "Tools used";
+        private          bool             _inline;
+        private          bool             _isExpanded;
+        private          Modal            _modal;
+        private          HTMLElement      _slider;
+        private          HTMLElement      _listPanel;
+        private          HTMLElement      _detailPanel;
+        private          HTMLElement      _detailContent;
+        private          HTMLElement      _detailTitle;
+        private          HTMLElement      _detailIconHolder;
+        private          HTMLElement      _backButton;
+        private          HTMLElement      _titleEl;
+
+        private event Action<ToolsUsed> Toggled;
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public ToolsUsed(IEnumerable<ToolCall> tools = null)
+        {
+            _tools = new List<ToolCall>();
+
+            _summaryIcon    = Div(Att("tss-toolsused-icon"), I(_summaryIconKind));
+            _summaryText    = Div(Att("tss-toolsused-text"));
+            _summaryChevron = I(UIcons.AngleRight, cssClass: "tss-toolsused-chevron");
+
+            _header = Div(Att("tss-toolsused-header", role: "button", ariaLabel: "Show tools used"),
+                          _summaryIcon, _summaryText, _summaryChevron);
+
+            // Only ever filled in inline mode, but the element is always there so the list has a place to
+            // land whenever Inline() is called - before or after the summary is on screen.
+            _inlineList = Div(Att("tss-toolsused-inline-list"));
+            _inlineList.style.display = "none";
+
+            InnerElement = Div(Att("tss-toolsused"), _header, _inlineList);
+
+            // Open on a tap gesture rather than a raw "click": in a live-streaming chat the surrounding
+            // content re-renders and auto-scrolls under the pointer, which moves this element between
+            // mousedown and mouseup so the browser never fires a "click" and the summary looked dead.
+            // OnTapped captures the pointer and keys off the (stationary) pointer position, so a press-
+            // release still opens the popup while the page scrolls, and a scroll-drag off the pill does not.
+            // The gesture is on the header rather than the root, so tapping an expanded inline list does
+            // not fold it back up.
+            Raw(_header).OnTapped(() => Toggle());
+
+            _header.tabIndex = 0;
+
+            _header.addEventListener("keydown", ev =>
+            {
+                var ke = ev.As<KeyboardEvent>();
+
+                if (ke.key == "Enter" || ke.key == " ")
+                {
+                    StopEvent(ev);
+                    Toggle();
+                }
+            });
+
+            if (tools != null)
+            {
+                foreach (var t in tools)
+                {
+                    Add(t);
+                }
+            }
+
+            UpdateSummary();
+        }
+
+        /// <summary>
+        /// Adds the given item to the component.
+        /// </summary>
+        public ToolsUsed Add(ToolCall tool)
+        {
+            if (tool == null) return this;
+            _tools.Add(tool);
+            UpdateSummary();
+            // A call arriving while the group is open inline joins the list on screen, the way a live
+            // transcript appends to it as the calls come in.
+            if (_inline && _isExpanded) RebuildInlineList();
+            return this;
+        }
+
+        /// <summary>
+        /// Adds the given range to the component.
+        /// </summary>
+        public ToolsUsed AddRange(IEnumerable<ToolCall> tools)
+        {
+            if (tools == null) return this;
+            foreach (var t in tools) Add(t);
+            return this;
+        }
+
+        /// <summary>
+        /// Adds the given item to the component.
+        /// </summary>
+        public ToolsUsed Add(UIcons icon, string text, Func<IComponent> contentFactory)
+        {
+            return Add(new ToolCall(icon, text, contentFactory));
+        }
+
+        /// <summary>
+        /// Adds the given item to the component.
+        /// </summary>
+        public ToolsUsed Add(UIcons icon, string text, IComponent content)
+        {
+            return Add(new ToolCall(icon, text, content));
+        }
+
+        /// <summary>
+        /// Clears the component's current state.
+        /// </summary>
+        public ToolsUsed Clear()
+        {
+            _tools.Clear();
+            UpdateSummary();
+            ClearChildren(_inlineList);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the summary of the component.
+        /// </summary>
+        public ToolsUsed SetSummary(string label)
+        {
+            _summaryLabel = label;
+            UpdateSummary();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the icon of the component.
+        /// </summary>
+        public ToolsUsed SetIcon(UIcons icon)
+        {
+            _summaryIconKind = icon;
+            ClearChildren(_summaryIcon);
+            _summaryIcon.appendChild(I(icon));
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the title of the component.
+        /// </summary>
+        public ToolsUsed SetTitle(string title)
+        {
+            _modalTitle = title ?? string.Empty;
+            if (_titleEl != null && _backButton != null && _backButton.style.visibility == "hidden")
+            {
+                _titleEl.innerText = _modalTitle;
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the tools in place instead of in a popup: the summary becomes an accordion that
+        /// expands into the list of <see cref="ToolCall"/>s underneath itself, each one opening its own
+        /// content inline the way a standalone call does. For a transcript where sending the reader to a
+        /// modal for a one-line result is too much ceremony.
+        /// </summary>
+        public ToolsUsed Inline(bool value = true)
+        {
+            _inline = value;
+            InnerElement.UpdateClassIf(value, "tss-toolsused-inline");
+
+            // Sideways for "this opens somewhere else", down-and-rotating for a disclosure that happens
+            // right here.
+            _summaryChevron.className = $"{Tesserae.Icon.Transform(value ? UIcons.AngleDown : UIcons.AngleRight, UIconsWeight.Regular)} tss-toolsused-chevron";
+            _header.setAttribute("aria-label", value ? "Toggle tools used" : "Show tools used");
+
+            if (!value)
+            {
+                _isExpanded = false;
+                ClearChildren(_inlineList);
+            }
+
+            UpdateExpandedState();
+
+            return this;
+        }
+
+        /// <summary>
+        /// Returns a value indicating whether the group renders its tools in place rather than in a popup.
+        /// </summary>
+        public bool IsInline   => _inline;
+
+        /// <summary>
+        /// Returns a value indicating whether the inline list is open. Always false while the group opens
+        /// its tools in the popup instead.
+        /// </summary>
+        public bool IsExpanded => _isExpanded;
+
+        /// <summary>
+        /// Expands or collapses the group.
+        /// </summary>
+        public ToolsUsed Expanded(bool value = true) => value ? Expand() : Collapse();
+
+        /// <summary>
+        /// Opens the group: the inline list when <see cref="Inline()"/> is set, the popup otherwise.
+        /// </summary>
+        public ToolsUsed Expand()
+        {
+            if (!_inline) return ShowModal();
+            if (_isExpanded) return this;
+
+            _isExpanded = true;
+            RebuildInlineList();
+            UpdateExpandedState();
+            Toggled?.Invoke(this);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Closes the group: the inline list when <see cref="Inline()"/> is set, the popup otherwise.
+        /// </summary>
+        public ToolsUsed Collapse()
+        {
+            if (!_inline) return HideModal();
+            if (!_isExpanded) return this;
+
+            _isExpanded = false;
+            UpdateExpandedState();
+            Toggled?.Invoke(this);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Toggles the group between open and closed.
+        /// </summary>
+        public ToolsUsed Toggle() => _isExpanded ? Collapse() : Expand();
+
+        /// <summary>
+        /// Registers a callback invoked whenever the inline list is expanded or collapsed.
+        /// </summary>
+        public ToolsUsed OnToggle(Action<ToolsUsed> onToggle)
+        {
+            Toggled += onToggle;
+            return this;
+        }
+
+        /// <summary>
+        /// Gets the live progress line shown on the summary while the group's calls run, creating it
+        /// on first use.
+        /// </summary>
+        public LiveProgress Progress => EnsureProgress();
+
+        /// <summary>
+        /// Writes the given progress onto the summary, next to the count of tools used. Meant to be
+        /// called as often as the progress arrives - only the text of the line changes.
+        /// </summary>
+        public ToolsUsed SetProgress(string progress)
+        {
+            EnsureProgress().SetText(progress);
+            return this;
+        }
+
+        /// <summary>
+        /// Streams the progress shown on the summary from the given observable.
+        /// </summary>
+        public ToolsUsed SetProgress(IObservable<string> progress)
+        {
+            EnsureProgress().Stream(progress);
+            return this;
+        }
+
+        /// <summary>
+        /// Clears the progress shown on the summary.
+        /// </summary>
+        public ToolsUsed ClearProgress()
+        {
+            _progress?.StopStreaming().Clear();
+            return this;
+        }
+
+        private LiveProgress EnsureProgress()
+        {
+            if (_progress is null)
+            {
+                _progress = new LiveProgress().Class("tss-toolsused-progress");
+                _header.insertBefore(_progress.Render(), _summaryChevron);
+                ToolCallWidthFloor.Watch(_header, _header);
+            }
+
+            return _progress;
+        }
+
+        /// <summary>
+        /// Adds a button to the summary of this group, next to the chevron - a way into whatever the
+        /// group stands for (the run whose calls it lists, for instance) that isn't one of the calls
+        /// themselves. Clicking it runs the handler only: the group is neither opened nor folded by it.
+        /// </summary>
+        public ToolsUsed AddAction(UIcons icon, string tooltip, Action<ToolsUsed> onClick)
+        {
+            EnsureActions().appendChild(ToolCallActions.Build(icon, tooltip, () => onClick?.Invoke(this)));
+            ToolCallActions.ReserveSpace(InnerElement, _actions);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a button to the summary of this group, next to the chevron.
+        /// </summary>
+        public ToolsUsed AddAction(UIcons icon, string tooltip, Action onClick) => AddAction(icon, tooltip, _ => onClick?.Invoke());
+
+        /// <summary>
+        /// Removes every button added with <see cref="AddAction(UIcons, string, Action{ToolsUsed})"/>.
+        /// </summary>
+        public ToolsUsed ClearActions()
+        {
+            if (_actions is object) ClearChildren(_actions);
+            ToolCallActions.ReserveSpace(InnerElement, _actions);
+
+            return this;
+        }
+
+        private HTMLElement EnsureActions()
+        {
+            if (_actions is null)
+            {
+                _actions = Div(Att("tss-toolsused-actions"));
+                _header.insertBefore(_actions, _summaryChevron);
+            }
+
+            return _actions;
+        }
+
+        /// <summary>
+        /// Shows the component: the popup, or the inline list when <see cref="Inline()"/> is set.
+        /// </summary>
+        public ToolsUsed Show()
+        {
+            return _inline ? Expand() : ShowModal();
+        }
+
+        /// <summary>
+        /// Hides the component: the popup, or the inline list when <see cref="Inline()"/> is set.
+        /// </summary>
+        public ToolsUsed Hide()
+        {
+            return _inline ? Collapse() : HideModal();
+        }
+
+        private ToolsUsed ShowModal()
+        {
+            BuildModalIfNeeded();
+            RebuildList();
+            ShowList(animate: false);
+            _modal.Show();
+            return this;
+        }
+
+        private ToolsUsed HideModal()
+        {
+            _modal?.Hide();
+            return this;
+        }
+
+        // The inline list holds the calls themselves, so each one carries its own accordion and builds its
+        // content lazily on first open - the same element the caller holds a reference to.
+        private void RebuildInlineList()
+        {
+            ClearChildren(_inlineList);
+
+            foreach (var tool in _tools)
+            {
+                _inlineList.appendChild(tool.Render());
+            }
+        }
+
+        private void UpdateExpandedState()
+        {
+            InnerElement.UpdateClassIf(_isExpanded, "tss-expanded");
+            _header.setAttribute("aria-expanded", _isExpanded ? "true" : "false");
+            _inlineList.style.display = _isExpanded ? "" : "none";
+        }
+
+        private void UpdateSummary()
+        {
+            if (!string.IsNullOrEmpty(_summaryLabel))
+            {
+                _summaryText.innerText = _summaryLabel;
+                return;
+            }
+            _summaryText.innerText = _tools.Count == 1
+                ? "Used 1 tool"
+                : $"Used {_tools.Count} tools";
+        }
+
+        private void BuildModalIfNeeded()
+        {
+            if (_modal != null) return;
+
+            _titleEl          = Div(Att("tss-toolsused-modal-title"));
+            _detailTitle      = Div(Att("tss-toolsused-modal-detail-title"));
+            _detailIconHolder = Div(Att("tss-toolsused-modal-detail-icon"));
+            _detailIconHolder.style.display = "none";
+
+            _backButton = UI.Button(Att("tss-toolsused-back", type: "button", ariaLabel: "Back to list"), I(UIcons.AngleLeft));
+            _backButton.addEventListener("click", _ => ShowList(animate: true));
+            _backButton.style.visibility = "hidden";
+
+            var header = Div(Att("tss-toolsused-modal-header"),
+                             _backButton,
+                             _detailIconHolder,
+                             _titleEl,
+                             _detailTitle);
+
+            _listPanel     = Div(Att("tss-toolsused-modal-panel tss-toolsused-modal-list"));
+            _detailContent = Div(Att("tss-toolsused-modal-detail-content"));
+            _detailPanel   = Div(Att("tss-toolsused-modal-panel tss-toolsused-modal-detail"), _detailContent);
+
+            _slider = Div(Att("tss-toolsused-modal-slider"), _listPanel, _detailPanel);
+
+            _modal = Modal(Raw(header));
+            _modal.Content = Raw(Div(Att("tss-toolsused-modal-body"), _slider));
+            _modal.NoFooter();
+            _modal.CanLightDismiss = true;
+            _modal.InnerElement.classList.add("tss-toolsused-modal");
+
+            //A list of calls to page through is a sheet on a phone, not a dialog with a margin of page around it
+            _modal.DrawerOnMobile();
+        }
+
+        private void RebuildList()
+        {
+            ClearChildren(_listPanel);
+            for (int i = 0; i < _tools.Count; i++)
+            {
+                var tool = _tools[i];
+
+                var iconEl  = Div(Att("tss-toolsused-list-icon"), I(tool.Icon));
+                var labelEl = Div(Att("tss-toolsused-list-text", text: tool.Text));
+                var chevron = I(UIcons.AngleRight, cssClass: "tss-toolsused-list-chevron");
+                var row     = Div(Att("tss-toolsused-list-row", role: "button"), iconEl, labelEl, chevron);
+
+                var capturedTool = tool;
+                row.addEventListener("click", _ => ShowDetail(capturedTool));
+
+                _listPanel.appendChild(row);
+            }
+        }
+
+        private void ShowList(bool animate)
+        {
+            ClearChildren(_detailContent);
+            _slider.classList.remove("tss-toolsused-show-detail");
+            _backButton.style.visibility       = "hidden";
+            _detailIconHolder.style.display    = "none";
+            ClearChildren(_detailIconHolder);
+            _detailTitle.innerText             = string.Empty;
+            _titleEl.innerText                 = _modalTitle;
+
+            if (!animate)
+            {
+                _slider.classList.add("tss-toolsused-no-anim");
+                window.setTimeout(__ => _slider.classList.remove("tss-toolsused-no-anim"), 30);
+            }
+        }
+
+        private void ShowDetail(ToolCall tool)
+        {
+            ClearChildren(_detailContent);
+
+            var content = tool.CreateContent();
+            if (content != null)
+            {
+                _detailContent.appendChild(content.Render());
+            }
+            else
+            {
+                _detailContent.appendChild(Div(Att("tss-toolsused-empty", text: "No content")));
+            }
+
+            _titleEl.innerText      = string.Empty;
+            _detailTitle.innerText  = tool.Text;
+            ClearChildren(_detailIconHolder);
+            _detailIconHolder.style.display = "flex";
+            _detailIconHolder.appendChild(I(tool.Icon));
+
+            _backButton.style.visibility = "visible";
+            _slider.classList.add("tss-toolsused-show-detail");
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public override HTMLElement Render()
+        {
+            return InnerElement;
+        }
+    }
+}

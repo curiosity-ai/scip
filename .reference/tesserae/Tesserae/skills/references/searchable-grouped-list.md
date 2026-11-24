@@ -1,0 +1,62 @@
+---
+name: searchable-grouped-list
+description: A searchable, scrollable list whose items are organised into named groups with per-group headers, filtered live as the user types. Use when displaying a categorised, filterable list in a Tesserae (C#/Transpose) app.
+---
+
+# SearchableGroupedList
+
+A list with a built-in search box; items are grouped by `Group` and each group gets a
+header you generate. Items implement `ISearchableGroupedItem` (`IsMatch(term)`, `Group`,
+`Render()`).
+
+## Create
+
+`SearchableGroupedList<T>(T[] items, Func<string, IComponent> groupHeaderGenerator, params UnitSize[] columns)`
+where `T : ISearchableGroupedItem`. An overload takes an `ObservableList<T>`.
+Bring factories into scope with `using static Tesserae.UI;`.
+
+The header generator receives the group name and returns its header component.
+Multiple `columns` → grid layout for items; otherwise a stack.
+
+## Key configuration
+
+- `.WithNoResultsMessage(Func<IComponent>)` — placeholder when nothing matches.
+- `.WithGroupOrdering(IComparer<string>)` — control group display order (default alphabetical).
+- `.WithPagination(int pageSize)` — paginate filtered results. Adds a `Pagination` footer below
+  the list, which hides itself while everything fits on one page (`pagination.md`).
+- `.Virtualize(UnitSize itemHeight)` — virtualise rows (fixed height) for large groups.
+- `.BeforeSearchBox(...)` / `.AfterSearchBox(...)` — add controls around the search box.
+- `.Progress(percent)` / `.Progress(position, total)` / `.ProgressIndeterminate()` / `.HideProgress()` /
+  `.ShowProgressWhile(Task)` — a progress bar on the built-in search box while items load into the list; the
+  list stays searchable and renders each batch as it lands.
+- `.SearchBox(Action<SearchBox>)` / `.CaptureSearchBox(out SearchBox)` / `.SetKeyboardShortcut(keys)`.
+- `.WithEndPadding(UnitSize)` — empty scrollable space below the last item, so it can be scrolled clear of something floating over the bottom of the list (an action bar, a toast).
+- `.Height(unitSize)` — fixes height for scrolling.
+
+## Example
+
+```csharp
+using static Tesserae.UI;
+
+var items = data.Select(d => new GroupedItem(d.Name, d.Group)).ToArray();
+
+return SearchableGroupedList(items,
+        group => HorizontalSeparator(TextBlock(group).Primary().SemiBold()).Left())
+    .WithGroupOrdering(Comparer<string>.Create((a, b) => priority[a].CompareTo(priority[b])))
+    .WithNoResultsMessage(() => Card(TextBlock("No matching items").Padding(16.px())))
+    .Height(400.px())
+    .Render();
+
+// class GroupedItem : ISearchableGroupedItem {
+//   public string Group { get; }
+//   public bool IsMatch(string t) => Name.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0;
+//   public IComponent Render() => Card(TextBlock(Name));
+// }
+```
+
+## Related
+
+- SearchableList — `searchable-list.md` (ungrouped)
+- ItemsList — `items-list.md`
+- SearchBox — `/tesserae/search/search-box`
+- Full docs & API: `/tesserae/search/searchable-grouped-list`

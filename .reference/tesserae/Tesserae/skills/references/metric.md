@@ -1,0 +1,101 @@
+---
+name: metric
+description: A KPI tile showing a large value with a title, an optional leading icon tile, a trend indicator and an inline chart such as a sparkline or contribution bar. Use when building dashboards or stat cards in a Tesserae (C#/Transpose) app.
+---
+
+# Metric
+
+A numeric KPI tile: a title, a large value, and optional change indicator and
+chart. Usually placed inside a `Card`.
+
+## Create
+
+- `Metric(string title, string value)` — text title and value.
+- `Metric(IComponent title, IComponent value)` — component title/value (e.g. title with an info-tooltip icon).
+
+Bring the factory into scope with `using static Tesserae.UI;`.
+
+## Key configuration
+
+- `.Change(IComponent)` — trend/delta indicator (typically an icon + colored text).
+- `.ChangeInHeader(bool = true)` — pull the change up level with the title, pushed to the far end of its line, so the value, the chart and its legend read straight down the card.
+- `.Chart(IComponent)` — inline chart under the value: a `Sparkline`, a `ContributionBar`, anything renderable. It takes the full width of the tile.
+- `.SetIcon(UIcons, color, weight)` / `.SetIcon(string text, color, TextSize?)` / `.SetIcon(IComponent, color)` — an `IconTile` in front of the title and the value: the same rounded, tinted square an `OmniResult` row leads with. Pass the full-strength colour the glyph should be; the wash behind it is computed from it. A null component takes the tile away.
+- `.IconSize(UnitSize)` — how big that tile is (44px by default).
+- `.OnClick(Action)` / `.OnClick((metric, mouseEvent) => ...)` — make the tile clickable, to drill into what it counts. It shows the pointer and a hover state, and becomes keyboard reachable (`role="button"`, `tabindex="0"`, Enter or Space while the tile has focus). The hover wash is drawn outside the tile with a spread shadow, so making it clickable does not move its contents.
+- `.ValueFirst(bool = true)` — draw the value above the title, so the number reads first and the words under it only say what was counted ("5 / In my scope").
+- `.Compact(bool = true)` — put the title and the value on one line, sharing a baseline ("Requests 1.1k"). Combine with `.ValueFirst()` for the number first ("42 open tickets"). The change stays on the same line; a chart wraps under both; the leading icon tile shrinks to 32px (`.IconSize()` still wins).
+- `.Large(bool = true)` — the headline-tile variation: a bigger value with the `Change` indicator on the same line right after it ("63 ms ↗ 43.2%"), and more room above the `Chart` under them. Pair it with a `Sparkline` (give it a height, e.g. `Sparkline(data, width: 400, height: 56)`, a viewBox about as wide as the tile, since the chart keeps its aspect ratio).
+- `.ValueBackground(string background, string foreground = null)` — put the value on a filled badge that hugs the number. Any CSS colour or theme variable; `foreground` recolours the number, and is left alone when null. A null background removes the fill. The badge takes the theme's `--tss-border-radius-md` (square under Curiosity and RetroOS; RetroOS draws it as reverse video whatever colours are given).
+
+## Example
+
+```csharp
+using static Tesserae.UI;
+
+var dashboard = HStack().Children(
+    Card(Metric("Requests", "1.1k")).W(200.px()),
+    Card(Metric("Web traffic", "1,234,567")
+        .Chart(Sparkline(new double[] { 10, 20, 15, 30, 25, 40 }))
+        .Change(HStack().AlignItemsCenter().Children(
+            Icon(UIcons.ArrowUp).Foreground(Theme.Colors.Green600).S(),
+            TextBlock("+12.3%").Foreground(Theme.Colors.Green600)))
+    ).W(250.px())
+);
+```
+
+## Counter tiles and breakdowns
+
+```csharp
+using static Tesserae.UI;
+
+// A counter: the tile, then the number, then what was counted
+Card(Metric("In my scope", "5").SetIcon(UIcons.Inbox, Theme.Colors.Purple600).ValueFirst()).W(240.px());
+
+// A percentage broken down by a ContributionBar under it
+Card(Metric(TextBlock("Rejection by DOV").Tiny().SemiBold().Foreground(Theme.Secondary.Foreground),
+            TextBlock("11%").XXLarge().Bold())
+    .ChangeInHeader()
+    .Change(TextBlock("-3pt").Small().SemiBold().Foreground(Theme.Colors.Green600))
+    .Chart(ContributionBar()
+        .Max(47).Thickness(8.px()).ShowValues(false)
+        .Add("38 validated", 38, Theme.Colors.Green600)
+        .Add("5 rej.",        5, Theme.Colors.Red500)
+        .Add("4 deleg.",      4, Theme.Colors.Blue500))).W(360.px());
+```
+
+## Large
+
+```csharp
+using static Tesserae.UI;
+
+Card(Metric("Response time (median)", "63 ms").Large()
+    .Change(HStack().AlignItemsCenter().Gap(4.px()).Children(
+        Icon(UIcons.ArrowUpRight, size: TextSize.Small).Foreground(Theme.Colors.Red600),
+        TextBlock("43.2%").Foreground(Theme.Colors.Red600)))
+    .Chart(Sparkline(new double[] { 8, 14, 9, 22, 11, 30, 12 }, width: 400, height: 56))).W(420.px());
+```
+
+## Compact and filled
+
+```csharp
+using static Tesserae.UI;
+
+// One line, title first: "Requests 1.1k"
+Card(Metric("Requests", "1.1k").Compact()).W(280.px());
+
+// One line, number first, on a badge: "[42] open tickets"
+Card(Metric("open tickets", "42").Compact().ValueFirst()
+    .ValueBackground("var(--tss-primary-background-color)", "var(--tss-primary-foreground-color)")).W(280.px());
+
+// A filled value in the regular two-line layout
+Card(Metric("Errors", "12").ValueBackground(Theme.Colors.Red100, Theme.Colors.Red800)).W(240.px());
+```
+
+## Related
+
+- Card — `card.md`
+- IconTile — the tile `SetIcon` puts in front — `icon-tile.md`
+- ContributionBar — a breakdown under the value — `contribution-bar.md`
+- Sparkline — `sparkline.md`
+- Full docs & API: `/tesserae/charts/metric`

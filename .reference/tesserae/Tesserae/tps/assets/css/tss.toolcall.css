@@ -1,0 +1,660 @@
+/* ToolCall — inline accordion-like tool call indicator */
+
+/* The box does not clip: an action hangs off its right edge (see below) and would be cut off by it.
+   What the clipping was for - the header's hover fill and the content's own background painting
+   square corners over the rounded border - is done by giving those two the matching radii instead. */
+.tss-toolcall {
+    display: inline-flex;
+    flex-direction: column;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: 8px;
+    background: var(--tss-default-background-color);
+    max-width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 8px;
+}
+
+.tss-toolcall > .tss-toolcall-header {
+    border-radius: 7px;
+}
+
+.tss-toolcall.tss-expanded > .tss-toolcall-header {
+    border-radius: 7px 7px 0 0;
+}
+
+.tss-toolcall > .tss-toolcall-content {
+    border-radius: 0 0 7px 7px;
+}
+
+.tss-toolcall-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+    color: var(--tss-colors-neutral-700, #374151);
+}
+
+.tss-toolcall-header:hover {
+    background: var(--tss-default-background-hover-color);
+}
+
+.tss-toolcall-header.tss-toolcall-not-expandable {
+    cursor: default;
+}
+
+.tss-toolcall-header.tss-toolcall-not-expandable:hover {
+    background: transparent;
+}
+
+.tss-toolcall-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    background: var(--tss-colors-neutral-100, #f3f4f6);
+    color: var(--tss-colors-neutral-700, #374151);
+    flex-shrink: 0;
+    font-size: 12px;
+}
+
+.tss-toolcall-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--tss-monospace-font-family);
+    font-size: 12px;
+}
+
+/* Live progress rides on the header row, so an expanded call keeps its content full-width below. */
+.tss-toolcall-progress {
+    flex: 0 1 auto;
+    margin-left: 8px;
+}
+
+/* Header actions — a way into what the call stands for. They hang off the right of the header rather
+   than sitting inside it: the header is the call, and an action is about what the call led to, so it
+   reads as something beside the chip instead of another control on it. Out of flow, so a call is the
+   same width with or without them, and quiet until the pointer is anywhere on the call. */
+.tss-toolcall-actions,
+.tss-toolsused-actions {
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    margin-left: 6px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    opacity: 0.35;
+    transition: opacity 0.12s ease-in-out;
+}
+
+.tss-toolcall-header,
+.tss-toolsused-header {
+    position: relative;
+}
+
+/* The chip gives up the width of the actions hanging off it (6px margin, 22px buttons, 2px gaps), so a
+   chip that fills its container - a long live progress line - keeps them inside it instead of pushing
+   them over the container's edge. */
+.tss-toolcall,
+.tss-toolsused {
+    --tss-toolcall-actions-reserve: 0px;
+}
+
+/* The floor and the copied max-width are a chip's own: a call nested in another's content must not
+   inherit them. A chip's inline value still wins over these. */
+.tss-toolcall,
+.tss-toolsused-header {
+    --tss-toolcall-widest: initial;
+}
+
+.tss-toolcall {
+    --tss-toolcall-max-width: initial;
+}
+
+.tss-toolcall.tss-toolcall-has-actions,
+.tss-toolsused.tss-toolcall-has-actions {
+    --tss-toolcall-actions-reserve: calc(4px + var(--tss-toolcall-action-count, 0) * 24px);
+}
+
+.tss-toolcall.tss-toolcall-has-actions,
+.tss-toolsused.tss-toolcall-has-actions > .tss-toolsused-header {
+    max-width: calc(100% - var(--tss-toolcall-actions-reserve));
+}
+
+/* A call's MaxWidth() is an inline max-width, which would replace the rule above and let a call whose
+   text does not fit grow past its container, actions and all: the text ellipsizes, but it still counts
+   at full length when the call sizes itself. ToolCallActions.FollowMaxWidth copies the inline value to
+   --tss-toolcall-max-width, and the call keeps the room for its actions inside the smaller of the two -
+   the same as a group, whose MaxWidth() lands on its root and holds the pill and its actions both. */
+.tss-toolcall.tss-toolcall-has-actions {
+    max-width: calc(min(var(--tss-toolcall-max-width, 100%), 100%) - var(--tss-toolcall-actions-reserve)) !important;
+}
+
+/* While a live progress line is showing, the chip keeps the widest width it has had, plus some headroom
+   (--tss-toolcall-widest, kept up by ToolCallWidthFloor), so an update can push the chevron and the
+   actions to the right but never pulls them back. Clamped to what the chip's max-width allows, which a
+   min-width would otherwise beat - for a call, its MaxWidth() too (--tss-toolcall-max-width). */
+.tss-toolcall:has(> .tss-toolcall-header > .tss-toolcall-progress:not(.tss-liveprogress-empty)) {
+    min-width: min(var(--tss-toolcall-widest, 0px), calc(min(var(--tss-toolcall-max-width, 100%), 100%) - var(--tss-toolcall-actions-reserve, 0px)));
+}
+
+.tss-toolsused-header:has(> .tss-toolsused-progress:not(.tss-liveprogress-empty)) {
+    min-width: min(var(--tss-toolcall-widest, 0px), calc(100% - var(--tss-toolcall-actions-reserve, 0px)));
+}
+
+/* The room the floor leaves goes to the line rather than the label, so the line keeps to the label. */
+.tss-toolcall-header:has(> .tss-toolcall-progress:not(.tss-liveprogress-empty)) > .tss-toolcall-text,
+.tss-toolsused-header:has(> .tss-toolsused-progress:not(.tss-liveprogress-empty)) > .tss-toolsused-text {
+    flex: 0 1 auto;
+}
+
+.tss-toolcall-header > .tss-toolcall-progress:not(.tss-liveprogress-empty),
+.tss-toolsused-header > .tss-toolsused-progress:not(.tss-liveprogress-empty) {
+    flex: 1 1 auto;
+}
+
+.tss-toolcall:hover .tss-toolcall-actions,
+.tss-toolcall:focus-within .tss-toolcall-actions,
+.tss-toolsused:hover .tss-toolsused-actions,
+.tss-toolsused:focus-within .tss-toolsused-actions {
+    opacity: 1;
+}
+
+/* Nothing hovers on a touch screen, so there the actions are simply always at full strength. */
+@media (hover: none) {
+    .tss-toolcall-actions,
+    .tss-toolsused-actions {
+        opacity: 1;
+    }
+}
+
+.tss-toolcall-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    color: var(--tss-colors-neutral-500, #6b7280);
+    font-size: 12px;
+}
+
+.tss-toolcall-action:hover {
+    background: var(--tss-colors-neutral-100, #f3f4f6);
+    color: var(--tss-colors-neutral-800, #1f2937);
+}
+
+.tss-toolcall-action:focus-visible {
+    outline: 2px solid var(--tss-primary-background-color);
+    outline-offset: 1px;
+    opacity: 1;
+}
+
+/* Secondary actions — small labelled buttons on the header line, between the text and the chevron. */
+.tss-toolcall-secondary-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.tss-toolcall-secondary-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+    color: var(--tss-colors-neutral-700, #374151);
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.tss-toolcall-secondary-action:hover {
+    background: var(--tss-default-background-hover-color);
+}
+
+.tss-toolcall-secondary-action:focus-visible {
+    outline: 2px solid var(--tss-primary-background-color);
+    outline-offset: 1px;
+}
+
+.tss-toolcall-secondary-action > i {
+    font-size: 11px;
+    /* The glyph's ink sits ~1px above the label's cap-height centre; a whole pixel, so it survives rounding. */
+    position: relative;
+    top: 1px;
+}
+
+.tss-toolcall-chevron {
+    transition: transform 200ms ease;
+    font-size: 12px;
+    color: var(--tss-colors-neutral-500, #6b7280);
+    flex-shrink: 0;
+}
+
+.tss-toolcall.tss-expanded .tss-toolcall-chevron {
+    transform: rotate(180deg);
+}
+
+.tss-toolcall-content {
+    border-top: 1px solid var(--tss-default-border-color);
+    padding: 8px 10px;
+    background: var(--tss-default-background-color);
+}
+
+/* ToolsUsed — clickable summary that opens a list/detail modal, or expands in place when inline */
+
+/* The root only stacks the summary above the inline list; the pill lives on the header row, so it looks
+   the same whether or not there is a list underneath it. */
+.tss-toolsused {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    max-width: 100%;
+    min-width: 0;
+    margin-bottom: 8px;
+}
+
+.tss-toolsused-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--tss-default-border-color);
+    background: var(--tss-default-background-color);
+    cursor: pointer;
+    user-select: none;
+    color: var(--tss-colors-neutral-800, #1f2937);
+    font-size: 13px;
+}
+
+.tss-toolsused-header:hover {
+    background: var(--tss-default-background-hover-color);
+}
+
+.tss-toolsused-header:focus-visible {
+    outline: 2px solid var(--tss-primary-background-color);
+    outline-offset: 1px;
+}
+
+.tss-toolsused-text > span{
+    white-space: nowrap;
+    flex-shrink:0;
+}
+
+.tss-toolsused-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--tss-colors-neutral-100, #f3f4f6);
+    color: var(--tss-colors-neutral-700, #374151);
+    flex-shrink: 0;
+    font-size: 13px;
+}
+
+.tss-toolsused-text {
+    flex: 1;
+    font-weight: var(--tss-font-weight-medium, 500);
+    text-wrap: nowrap;
+}
+
+.tss-toolsused-progress {
+    flex: 0 1 auto;
+    margin-left: 4px;
+}
+
+.tss-toolsused-chevron {
+    color: var(--tss-colors-neutral-500, #6b7280);
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+/* ToolsUsed inline mode — the tools expand under the summary instead of in a modal */
+
+.tss-toolsused-inline {
+    display: flex;
+    width: 100%;
+}
+
+.tss-toolsused-inline .tss-toolsused-chevron {
+    transition: transform 200ms ease;
+}
+
+.tss-toolsused-inline.tss-expanded .tss-toolsused-chevron {
+    transform: rotate(180deg);
+}
+
+/* Expanded, the calls are rows of one bordered list rather than separate chips - the same shape the
+   ContextCards list uses, so a transcript reads as one family of disclosures. */
+.tss-toolsused-inline-list {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    margin-top: 8px;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-lg, 8px);
+    background: var(--tss-default-background-color);
+    overflow: hidden;
+}
+
+.tss-toolsused-inline-list > .tss-toolcall {
+    display: flex;
+    width: 100%;
+    max-width: 100% !important;
+    margin-bottom: 0;
+    border: none;
+    border-radius: 0;
+}
+
+.tss-toolsused-inline-list > .tss-toolcall + .tss-toolcall {
+    border-top: 1px solid var(--tss-default-border-color);
+}
+
+/* A row of the list is not a box of its own, so it keeps the square corners the list clips for it. */
+.tss-toolsused-inline-list > .tss-toolcall > .tss-toolcall-header {
+    padding: 8px 12px;
+    border-radius: 0;
+}
+
+.tss-toolsused-inline-list > .tss-toolcall > .tss-toolcall-content {
+    padding: 8px 12px 10px 12px;
+    border-radius: 0;
+}
+
+/* ToolsUsed modal layout */
+
+/* The width lives on the frame, not on the body: the detail title is monospace and never wraps,
+   so letting the header size the modal stretched it to the viewport while the body stayed 480px,
+   leaving a band of empty space to the right of the content. */
+.tss-toolsused-modal {
+    width: 720px;
+    max-width: calc(100% - 32px);
+}
+
+.tss-toolsused-modal .tss-modal-content {
+    padding: 0;
+    overflow: hidden;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.tss-toolsused-modal-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.tss-toolsused-back {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    padding: 0;
+    color: var(--tss-colors-neutral-700, #374151);
+}
+
+.tss-toolsused-back:hover {
+    background: var(--tss-default-background-hover-color);
+}
+
+.tss-toolsused-modal-detail-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: var(--tss-colors-neutral-100, #f3f4f6);
+    color: var(--tss-colors-neutral-700, #374151);
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 13px;
+}
+
+.tss-toolsused-modal-title,
+.tss-toolsused-modal-detail-title {
+    font-weight: var(--tss-font-weight-semibold, 600);
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.tss-toolsused-modal-detail-title {
+    font-family: var(--tss-monospace-font-family);
+    font-weight: var(--tss-font-weight-medium, 500);
+}
+
+.tss-toolsused-modal-body {
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    height: 60vh;
+    max-height: 480px;
+}
+
+.tss-toolsused-modal-slider {
+    display: flex;
+    width: 200%;
+    height: 100%;
+    transform: translateX(0);
+    transition: transform 250ms ease;
+}
+
+.tss-toolsused-modal-slider.tss-toolsused-no-anim {
+    transition: none;
+}
+
+.tss-toolsused-modal-slider.tss-toolsused-show-detail {
+    transform: translateX(-50%);
+}
+
+.tss-toolsused-modal-panel {
+    width: 50%;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+.tss-toolsused-modal-list {
+    padding: 8px 0;
+}
+
+.tss-toolsused-list-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--tss-default-border-color);
+}
+
+.tss-toolsused-list-row:last-child {
+    border-bottom: none;
+}
+
+.tss-toolsused-list-row:hover {
+    background: var(--tss-default-background-hover-color);
+}
+
+.tss-toolsused-list-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--tss-colors-neutral-100, #f3f4f6);
+    color: var(--tss-colors-neutral-700, #374151);
+    flex-shrink: 0;
+    font-size: 13px;
+}
+
+.tss-toolsused-list-text {
+    flex: 1;
+    font-family: var(--tss-monospace-font-family);
+    font-size: 13px;
+    color: var(--tss-colors-neutral-800, #1f2937);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tss-toolsused-list-chevron {
+    color: var(--tss-colors-neutral-400, #9ca3af);
+    font-size: 12px;
+}
+
+.tss-toolsused-modal-detail {
+    padding: 16px;
+}
+
+.tss-toolsused-modal-detail-content {
+    height: 100%;
+    overflow: auto;
+}
+
+.tss-toolsused-empty {
+    color: var(--tss-colors-neutral-500, #6b7280);
+    font-style: italic;
+    padding: 12px;
+}
+
+/* ToolCallInspect — arguments above response, each section scrolling on its own */
+
+.tss-toolcallinspect {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    gap: 2px;
+    font-size: 13px;
+    line-height: 1.45;
+    overflow: hidden;
+}
+
+.tss-toolcallinspect > * {
+    flex: 0 0 auto;
+}
+
+.tss-toolcallinspect-label {
+    font-size: 10px;
+    font-weight: var(--tss-font-weight-semibold, 600);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-toolcallinspect-label-error {
+    color: var(--tss-danger-background-color);
+}
+
+.tss-toolcallinspect-label:not(:first-child) {
+    padding-top: 8px;
+}
+
+/* Capped so the arguments never crowd out the response; the modal rules below tighten this to
+   half the pane once the body has a definite height to divide. */
+.tss-toolcallinspect-arguments,
+.tss-toolcallinspect-error,
+.tss-toolcallinspect-response {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: 40vh;
+    overflow: auto;
+}
+
+.tss-toolcallinspect-row {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    min-width: 0;
+}
+
+.tss-toolcallinspect-name {
+    flex-shrink: 0;
+    font-weight: var(--tss-font-weight-semibold, 600);
+}
+
+.tss-toolcallinspect-value {
+    min-width: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.tss-toolcallinspect-error {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--tss-danger-background-color);
+}
+
+.tss-toolcallinspect-response {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 8px 10px;
+    box-sizing: border-box;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: 6px;
+    background: var(--tss-secondary-background-color);
+    font-family: var(--tss-monospace-font-family);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.tss-toolcallinspect-empty {
+    color: var(--tss-colors-neutral-500, #6b7280);
+    font-style: italic;
+}
+
+/* In the ToolsUsed detail pane the body fills the pane it is given: the arguments take at most
+   half of it and the response claims the rest, instead of one scrollbar over both. */
+.tss-toolsused-modal-detail-content .tss-toolcallinspect {
+    height: 100%;
+}
+
+.tss-toolsused-modal-detail-content .tss-toolcallinspect-arguments,
+.tss-toolsused-modal-detail-content .tss-toolcallinspect-error {
+    max-height: 50%;
+}
+
+.tss-toolsused-modal-detail-content .tss-toolcallinspect-response {
+    flex: 1 1 0;
+    max-height: none;
+}

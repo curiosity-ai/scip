@@ -1,0 +1,34 @@
+﻿using System.Collections.Generic;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// Provides a static factory class for creating SettableObservable instances.
+    /// </summary>
+    [Transpose.Name("tss.SettableObservable")]
+    public static class SettableObservable
+    {
+        /// <summary>
+        /// This is a static factory method that lets us leverage type inference (so you can create a SettableObservable from an item without having to repeat the type name of the item when creating the instance)
+        /// </summary>
+        /// <typeparam name="T">The type of the value to observe.</typeparam>
+        /// <param name="value">The initial value.</param>
+        /// <param name="comparer">An optional equality comparer.</param>
+        /// <returns>A new SettableObservable instance.</returns>
+        public static SettableObservable<T> For<T>(T value, IEqualityComparer<T> comparer = null) => new SettableObservable<T>(value, comparer);
+
+        /// <summary>
+        /// Short alias for <see cref="For{T}"/> that reads naturally next to a binding call (e.g. <c>SettableObservable.Of("Ada")</c>).
+        /// </summary>
+        public static SettableObservable<T> Of<T>(T value, IEqualityComparer<T> comparer = null) => new SettableObservable<T>(value, comparer);
+
+        /// <summary>
+        /// Toggles the boolean value of the SettableObservable.
+        /// </summary>
+        /// <param name="observable">The observable boolean.</param>
+        public static void Toggle(this SettableObservable<bool> observable)
+        {
+            observable.Value = !observable.Value;
+        }
+    }
+}

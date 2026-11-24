@@ -1,0 +1,656 @@
+using System;
+using System.Collections.Generic;
+using Transpose;
+using Transpose.Core;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// What a <see cref="SidebarBrand"/> and a <see cref="SidebarProfile"/> have in common: a row twice the
+    /// height of an ordinary one, carrying a picture, a name, an optional second line under it, and the
+    /// commands that belong to whatever the row names.
+    /// <para>
+    /// The two exist as components rather than as a <see cref="SidebarButton"/> dressed up because the shape
+    /// is different - two lines of text against a picture, taller than the rows around it, with the commands
+    /// drawn at rest rather than under the pointer. Composing that out of a button and a stack got every
+    /// application as far as a stylesheet of its own overriding the rail's heights, paddings and icon sizes,
+    /// which is what this replaces.
+    /// </para>
+    /// <para>
+    /// On the collapsed rail both are the picture alone, with the name (and the second line) in the tooltip.
+    /// </para>
+    /// </summary>
+    /// <typeparam name="T">The concrete row type, so the fluent methods return it.</typeparam>
+    public abstract class SidebarIdentityRow<T> : ISidebarItem where T : SidebarIdentityRow<T>
+    {
+        private readonly HTMLSpanElement          _titleSpan;
+        private readonly HTMLSpanElement          _subtitleSpan;
+        private readonly Button                   _openButton;
+        private readonly Button                   _closedButton;
+        private readonly HTMLElement              _openRoot;
+        private readonly HTMLElement              _closedRoot;
+        private readonly HTMLElement              _openOuter;
+        private readonly HTMLElement              _closedOuter;
+        private readonly HTMLElement              _commandsContainer;
+        private readonly HTMLElement              _content;
+        private readonly HTMLElement              _lines;
+        private readonly IComponent               _open;
+        private readonly IComponent               _closed;
+        private readonly SettableObservable<bool> _selected;
+
+        private HTMLElement      _titleLine;
+        private HTMLElement      _titleBadge;
+        private string           _titleBadgeText;
+        private SidebarCommand[] _extraCommands = new SidebarCommand[0];
+        private SidebarCommand   _primaryCommand;
+        private SidebarCommand   _secondaryCommand;
+        private Action<Button>   _tooltipClosed;
+        private string           _title;
+        private string           _subtitle;
+        private bool             _fitsRail;
+        private HTMLElement      _fittedRail;
+        private string           _fittedMinWidth;
+        private bool             _waitingForFonts;
+        private double           _refitTimeout;
+
+        /// <summary>
+        /// The width the open rail needs for the row's text to be drawn whole, written on the rail by
+        /// <see cref="FitRailToText"/> and turned into a <c>min-width</c> by tss.sidebar.css only while the rail
+        /// is open - a variable rather than the property itself, so the closed rail's 54px and the page and
+        /// navbar layouts are the stylesheet's to keep.
+        /// </summary>
+        private const string RAIL_MIN_WIDTH_VARIABLE = "--tss-sidebar-identity-min-width";
+
+        /// <summary>The class that tells the stylesheet the rail carries <see cref="RAIL_MIN_WIDTH_VARIABLE"/>.</summary>
+        private const string RAIL_FITS_CLASS = "tss-sidebar-fits-identity";
+
+        private event Action<HTMLElement> _onRendered;
+
+        /// <param name="identifier">The identifier for the item.</param>
+        /// <param name="rowClass">The class naming the concrete row, e.g. <c>tss-sidebar-profile</c>.</param>
+        /// <param name="openLeading">The picture shown while the sidebar is open.</param>
+        /// <param name="closedLeading">The picture shown on the collapsed rail. A second instance, since one element cannot be in two places.</param>
+        /// <param name="title">The name on the first line.</param>
+        /// <param name="subtitle">The second line, or null for a single-line row.</param>
+        protected SidebarIdentityRow(string identifier, string rowClass, IComponent openLeading, IComponent closedLeading, string title, string subtitle)
+        {
+            Identifier = identifier;
+            _title     = title    ?? string.Empty;
+            _subtitle  = subtitle ?? string.Empty;
+            _selected  = new SettableObservable<bool>(false);
+
+            _titleSpan    = Span(Att("tss-sidebar-identity-title",    text: _title));
+            _subtitleSpan = Span(Att("tss-sidebar-identity-subtitle", text: _subtitle));
+
+            _lines   = Div(Att("tss-sidebar-identity-lines"), _titleSpan, _subtitleSpan);
+            _content = Div(Att("tss-sidebar-identity-content"), openLeading.Render(), _lines);
+
+            _openButton   = Button().ReplaceContent(Raw(_content)).Class("tss-sidebar-btn").Class("tss-sidebar-identity-button").Id(identifier);
+            _closedButton = Button().ReplaceContent(closedLeading).Class("tss-sidebar-btn").Class("tss-sidebar-identity-button-closed").Id(identifier);
+
+            _openRoot          = Div(Att($"tss-sidebar-btn-open tss-sidebar-identity {rowClass}"), _openButton.Render());
+            _commandsContainer = Div(Att("tss-sidebar-commands"));
+            _openRoot.appendChild(_commandsContainer);
+
+            _closedRoot = Div(Att($"tss-sidebar-identity-closed {rowClass}-closed"), _closedButton.Render());
+
+            //The row is wrapped, and everything a caller adds around it - the divider and the margins
+            //.Separated() draws, a class of the caller's own - goes on the wrapper rather than on the row.
+            //The command strip is positioned against the row, so padding on the same element would push
+            //the strip off the button's centre and past its right edge: a divider under the brand moved
+            //the gear down by half the padding and out over the rail's gutter.
+            _openOuter   = Div(Att($"tss-sidebar-identity-row {rowClass}-row"),                                 _openRoot);
+            _closedOuter = Div(Att($"tss-sidebar-identity-row tss-sidebar-identity-row-closed {rowClass}-row"), _closedRoot);
+
+            _open   = Raw(_openOuter);
+            _closed = Raw(_closedOuter);
+
+            //Chrome rather than something the pointer brings in: a command that only appears on hover is one
+            //nobody finds, and the row is tall enough to lay the name out beside the strip.
+            _openRoot.classList.add("tss-sidebar-commands-always-open");
+
+            UpdateSubtitleVisibility();
+            RefreshDefaultTooltip();
+
+            _selected.Observe(isSelected =>
+            {
+                _closedRoot.UpdateClassIf(isSelected, "tss-sidebar-selected");
+                _openRoot.UpdateClassIf(isSelected,   "tss-sidebar-selected");
+            });
+        }
+
+        /// <summary>The concrete row, so that a fluent method defined here returns the type it was called on.</summary>
+        protected abstract T Self { get; }
+
+        /// <summary>The button the open row draws, for a subclass that has to reach it.</summary>
+        protected Button OpenButton => _openButton;
+
+        /// <summary>The button the collapsed rail draws.</summary>
+        protected Button ClosedButton => _closedButton;
+
+        /// <summary>
+        /// The element the collapsed rail draws, for a row that puts something else beside the picture there
+        /// - see <see cref="SidebarBrand.WithSidebarControl"/>, which lays a control over it for the hover.
+        /// </summary>
+        protected HTMLElement ClosedRoot => _closedRoot;
+
+        /// <summary>The name on the first line.</summary>
+        protected string TitleText => _title;
+
+        /// <summary>The second line, or an empty string when there is none.</summary>
+        protected string SubtitleText => _subtitle;
+
+        /// <summary>Gets or sets whether the item is currently selected.</summary>
+        public bool IsSelected
+        {
+            get { return _selected.Value; }
+            set
+            {
+                _selected.Value = value;
+
+                if (value)
+                {
+                    CurrentRendered?.ScrollIntoView();
+                }
+            }
+        }
+
+        /// <summary>Gets an observable for the selected status.</summary>
+        public IObservable<bool> SelectedStatus => _selected;
+
+        /// <summary>Gets the component that is currently rendered.</summary>
+        public IComponent CurrentRendered => _closedButton.IsMounted() ? _closed : _open;
+
+        /// <summary>Gets the full identifier of the item, including group identifiers.</summary>
+        public string Identifier { get; private set; }
+
+        /// <summary>Gets the own identifier of the item, without group identifiers.</summary>
+        public string OwnIdentifier => Sidebar.GetOwnIdentifier(Identifier);
+
+        /// <summary>Adds a group identifier prefix to the item's identifier.</summary>
+        public void AddGroupIdentifier(string groupIdentifier)
+        {
+            Identifier = Sidebar.WithGroupIdentifier(Identifier, groupIdentifier);
+        }
+
+        /// <summary>Shows the item.</summary>
+        public void Show()
+        {
+            _closed.Show();
+            _open.Show();
+        }
+
+        /// <summary>Collapses the item.</summary>
+        public void Collapse()
+        {
+            _closed.Collapse();
+            _open.Collapse();
+        }
+
+        /// <summary>
+        /// Sets the second line - an e-mail address, a company, an environment. Null or empty leaves the row
+        /// a single line rather than an empty one.
+        /// </summary>
+        /// <param name="subtitle">The text for the second line.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T SetSubtitle(string subtitle)
+        {
+            _subtitle               = subtitle ?? string.Empty;
+            _subtitleSpan.innerText = _subtitle;
+
+            UpdateSubtitleVisibility();
+            RefreshDefaultTooltip();
+            UpdateRailFit();
+            return Self;
+        }
+
+        /// <summary>
+        /// The commands drawn before the row's own - a search, a back arrow, the control that collapses the
+        /// rail. Replaces whatever was set before.
+        /// </summary>
+        /// <param name="commands">The commands.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T Commands(params SidebarCommand[] commands)
+        {
+            _extraCommands = commands ?? new SidebarCommand[0];
+            UpdateCommands();
+            return Self;
+        }
+
+        /// <summary>
+        /// Keeps the commands out of sight until the pointer is on the row, the way an ordinary row's
+        /// commands behave. The default is the other way round, because the row's commands are usually the
+        /// only way to what they open.
+        /// </summary>
+        /// <param name="onHover">Whether the commands wait for a hover.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T CommandsOnHover(bool onHover = true)
+        {
+            _openRoot.UpdateClassIf(!onHover, "tss-sidebar-commands-always-open");
+            return Self;
+        }
+
+        /// <summary>
+        /// Draws a divider on the row's outer edge - above a row at the bottom of the rail, below one at the
+        /// top - running the full width of the sidebar rather than stopping at its padding.
+        /// </summary>
+        /// <param name="separated">Whether to draw the divider.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T Separated(bool separated = true)
+        {
+            _openOuter.UpdateClassIf(separated,   "tss-sidebar-identity-separated");
+            _closedOuter.UpdateClassIf(separated, "tss-sidebar-identity-separated");
+            return Self;
+        }
+
+        /// <summary>
+        /// Sets whether the row is selected - what marks the page it opens as the one being shown.
+        /// </summary>
+        /// <param name="isSelected">Whether the row is selected.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T Selected(bool isSelected = true)
+        {
+            _selected.Value = isSelected;
+            return Self;
+        }
+
+        /// <summary>
+        /// Marks the item as not sortable, which is what a row of chrome wants.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public T NotSortable()
+        {
+            _openOuter.classList.add("tss-sortable-disable");
+            _closedOuter.classList.add("tss-sortable-disable");
+            return Self;
+        }
+
+        /// <summary>
+        /// Adds a class to both renderings of the item.
+        /// </summary>
+        /// <param name="className">The class name.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T Class(string className)
+        {
+            _open.Class(className);
+            _closed.Class(className);
+            return Self;
+        }
+
+        /// <summary>
+        /// Sets the tooltip shown on the collapsed rail, where the row is the picture alone. None - the
+        /// default - shows the name and the second line.
+        /// </summary>
+        /// <param name="text">The tooltip text.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T Tooltip(string text)
+        {
+            _tooltipClosed = (b) => b.Tooltip(text, placement: TooltipPlacement.Right);
+            _tooltipClosed(_closedButton);
+            return Self;
+        }
+
+        /// <summary>
+        /// Sets the tooltip component shown on the collapsed rail.
+        /// </summary>
+        /// <param name="tooltip">The tooltip component.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T Tooltip(IComponent tooltip)
+        {
+            _tooltipClosed = (b) => b.Tooltip(tooltip, placement: TooltipPlacement.Right);
+            _tooltipClosed(_closedButton);
+            return Self;
+        }
+
+        /// <summary>
+        /// Adds a click event handler to the row itself. The commands are separate buttons, so pressing one
+        /// is not pressing the row.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T OnClick(Action action)
+        {
+            _openButton.OnClick(action);
+            _closedButton.OnClick(action);
+            return Self;
+        }
+
+        /// <summary>
+        /// Adds a click event handler with button and mouse event arguments.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T OnClick(Action<Button, MouseEvent> action)
+        {
+            _openButton.OnClick((b,   e) => action(b, e));
+            _closedButton.OnClick((b, e) => action(b, e));
+            return Self;
+        }
+
+        /// <summary>
+        /// Adds a context menu event handler.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public T OnContextMenu(Action<Button, MouseEvent> action)
+        {
+            _openButton.OnContextMenu((b,   e) => action(b, e));
+            _closedButton.OnContextMenu((b, e) => action(b, e));
+            return Self;
+        }
+
+        /// <summary>
+        /// Adds a rendered event handler.
+        /// </summary>
+        /// <param name="onRendered">The rendered event handler.</param>
+        /// <returns>The current instance of the type.</returns>
+        public ISidebarItem OnRendered(Action<HTMLElement> onRendered)
+        {
+            _onRendered += onRendered;
+            return this;
+        }
+
+        /// <summary>Renders the item for the closed state of the sidebar.</summary>
+        public IComponent RenderClosed()
+        {
+            _onRendered?.Invoke(_closed.Render());
+            _closedButton.RemoveTooltip();
+
+            DomObserver.WhenMounted(_closedButton.Render(), () =>
+            {
+                window.setTimeout(_ => { ApplyClosedTooltip(); }, Sidebar.SIDEBAR_TRANSITION_TIME);
+            });
+            return _closed;
+        }
+
+        /// <summary>Renders the item for the open state of the sidebar.</summary>
+        public IComponent RenderOpen()
+        {
+            foreach (var command in RenderedCommands()) command.RefreshTooltip();
+
+            _onRendered?.Invoke(_open.Render());
+
+            if (_fitsRail)
+            {
+                DomObserver.WhenMounted(_openOuter, () =>
+                {
+                    UpdateRailFit();
+                    DomObserver.WhenRemoved(_openOuter, OnOpenRowRemoved);
+                });
+            }
+
+            return _open;
+        }
+
+        /// <summary>
+        /// Replaces the name on the first line. Kept protected so each row can name it for what it holds -
+        /// the account's name, the product's name - and keep whatever else follows from it in step.
+        /// </summary>
+        /// <param name="title">The name.</param>
+        protected void SetTitleText(string title)
+        {
+            _title               = title ?? string.Empty;
+            _titleSpan.innerText = _title;
+
+            RefreshDefaultTooltip();
+            UpdateRailFit();
+        }
+
+        /// <summary>
+        /// Puts an element on the name's line, after the name - a label that qualifies the name itself rather
+        /// than adding a second line under it, like the environment a brand's application runs in. The name
+        /// gives way before it does: a name too long for the row is ellipsized and the label stays whole.
+        /// <para>
+        /// The name and the label share a line of their own only while there is a label, so a row without
+        /// one keeps exactly the markup it always had.
+        /// </para>
+        /// </summary>
+        /// <param name="badge">The element to put after the name, or null to remove the one there.</param>
+        /// <param name="text">What the label says, for the collapsed rail's tooltip, which has no room for the element.</param>
+        protected void SetTitleBadge(HTMLElement badge, string text)
+        {
+            if (_titleBadge is object) _titleBadge.remove();
+
+            _titleBadge     = badge;
+            _titleBadgeText = badge is object ? text : null;
+
+            if (badge is object)
+            {
+                if (_titleLine is null)
+                {
+                    _titleLine = Div(Att("tss-sidebar-identity-title-line"));
+                    _lines.insertBefore(_titleLine, _titleSpan);
+                    _titleLine.appendChild(_titleSpan);
+                }
+
+                badge.classList.add("tss-sidebar-identity-title-badge");
+                _titleLine.appendChild(badge);
+            }
+            else if (_titleLine is object)
+            {
+                _lines.insertBefore(_titleSpan, _titleLine);
+                _titleLine.remove();
+                _titleLine = null;
+            }
+
+            RefreshDefaultTooltip();
+            UpdateRailFit();
+        }
+
+        /// <summary>
+        /// Has the open rail the row sits on grow to the width its name and second line need, so neither is
+        /// ellipsized - for the row whose text is what the rail is <em>for</em>, the application's name. The
+        /// rail never shrinks below the width it was given; this only raises its floor.
+        /// <para>
+        /// The row measures itself rather than asking for a number, because what the text has to share the
+        /// row with - the rail's padding, the logo, the gap, the strip of commands - is the stylesheet's and a
+        /// skin's to change. The room the text has now is subtracted from the rail's width, and what the text
+        /// wants is added back: whatever else is on the row cancels out, and so does the rail's own width.
+        /// </para>
+        /// <para>
+        /// So the answer only moves with what is on the row, and that is when it is measured: each time the
+        /// open row is mounted, when the text or the commands change, and once the fonts arrive. Never on a
+        /// resize - a rail being dragged wider would otherwise force a layout read and restyle the whole
+        /// sidebar on every frame, to write the number it already had.
+        /// </para>
+        /// </summary>
+        protected void FitRailToText()
+        {
+            _fitsRail = true;
+        }
+
+        private void UpdateRailFit()
+        {
+            if (!_fitsRail || !_content.isConnected) return;
+
+            var rail = RailToFit();
+
+            if (!ReferenceEquals(rail, _fittedRail)) ReleaseRail();
+
+            if (rail is null) return;
+
+            var contentRect = _content.getBoundingClientRect().As<DOMRect>();
+            var linesRect   = _lines.getBoundingClientRect().As<DOMRect>();
+            var available   = contentRect.right - linesRect.left;
+
+            //Hidden (a shifted-away panel) or squeezed past the text by the opening animation: the subtraction
+            //only holds while the text has some room, so keep what was written and measure once the rail has opened
+            if (contentRect.width <= 0 || available <= 0)
+            {
+                window.clearTimeout(_refitTimeout);
+                _refitTimeout = window.setTimeout(_ => UpdateRailFit(), Sidebar.SIDEBAR_TRANSITION_TIME + 50);
+                return;
+            }
+
+            //Measured before the fonts are in, the text is the fallback's width: measure again once they are
+            if (!_waitingForFonts && Script.Write<bool>("!!(document.fonts && document.fonts.status === 'loading')"))
+            {
+                _waitingForFonts = true;
+
+                Action onFontsLoaded = () =>
+                {
+                    _waitingForFonts = false;
+                    UpdateRailFit();
+                };
+
+                Script.Write("document.fonts.ready.then(function () { {0}(); })", onFontsLoaded);
+            }
+
+            var wanted    = Math.Max(TitleLineWidth(), _subtitleSpan.scrollWidth);
+            var railWidth = rail.getBoundingClientRect().As<DOMRect>().width;
+
+            //scrollWidth is rounded, so a pixel on top keeps a name that measured x.4 from ellipsizing by its last letter
+            var minWidth = (Math.Ceiling(railWidth - available + wanted) + 1) + "px";
+
+            _fittedRail = rail;
+
+            //The variable is inherited by everything in the sidebar, so writing it restyles all of it: only when it moves
+            if (minWidth == _fittedMinWidth) return;
+
+            _fittedMinWidth = minWidth;
+            rail.style.setProperty(RAIL_MIN_WIDTH_VARIABLE, minWidth);
+            rail.classList.add(RAIL_FITS_CLASS);
+        }
+
+        /// <summary>
+        /// The width the name's line wants: the name, and with a label after it the distance from the end of
+        /// the name as drawn to the end of the label - the gap and the label, whatever a skin makes them, and
+        /// the same whether or not the name is ellipsized at the moment, since the label follows it.
+        /// </summary>
+        private double TitleLineWidth()
+        {
+            if (_titleBadge is null) return _titleSpan.scrollWidth;
+
+            var titleRect = _titleSpan.getBoundingClientRect().As<DOMRect>();
+            var badgeRect = _titleBadge.getBoundingClientRect().As<DOMRect>();
+
+            return _titleSpan.scrollWidth + Math.Max(0, badgeRect.right - titleRect.right);
+        }
+
+        /// <summary>
+        /// The open row comes off the rail every time the rail closes, and the collapsed picture goes on in the
+        /// same pass. The floor stays then - the stylesheet ignores it on a closed rail, and the rail opens
+        /// straight to it - and goes only when the row has left the rail altogether.
+        /// </summary>
+        private void OnOpenRowRemoved()
+        {
+            if (_closedOuter.isConnected && ReferenceEquals(_closedOuter.closest(".tss-sidebar"), _fittedRail)) return;
+
+            window.clearTimeout(_refitTimeout);
+            ReleaseRail();
+        }
+
+        private void ReleaseRail()
+        {
+            if (_fittedRail is null) return;
+
+            _fittedRail.style.removeProperty(RAIL_MIN_WIDTH_VARIABLE);
+            _fittedRail.classList.remove(RAIL_FITS_CLASS);
+            _fittedRail     = null;
+            _fittedMinWidth = null;
+        }
+
+        /// <summary>
+        /// The sidebar the row is on, unless that is a child sidebar shifted into another (<see cref="Sidebar.ShiftTo"/>):
+        /// a child fills its host's panel and the host owns the width, so a child's row is left to ellipsize
+        /// rather than widen a rail that is not its own.
+        /// </summary>
+        private HTMLElement RailToFit()
+        {
+            var rail = _content.closest(".tss-sidebar").As<HTMLElement>();
+
+            if (rail is null || rail.parentElement?.closest(".tss-sidebar-shift-panel-child") is object) return null;
+
+            return rail;
+        }
+
+        /// <summary>The row's own command, drawn last - settings on a profile, configuration on a brand.</summary>
+        /// <param name="command">The command, or null to remove it.</param>
+        protected void SetPrimaryCommand(SidebarCommand command)
+        {
+            _primaryCommand = command;
+            UpdateCommands();
+        }
+
+        /// <summary>The row's second command, drawn after the first - logging out, on a profile.</summary>
+        /// <param name="command">The command, or null to remove it.</param>
+        protected void SetSecondaryCommand(SidebarCommand command)
+        {
+            _secondaryCommand = command;
+            UpdateCommands();
+        }
+
+        private IEnumerable<SidebarCommand> RenderedCommands()
+        {
+            foreach (var command in _extraCommands)
+            {
+                if (command is object) yield return command;
+            }
+
+            if (_primaryCommand is object) yield return _primaryCommand;
+            if (_secondaryCommand is object) yield return _secondaryCommand;
+        }
+
+        private void UpdateCommands()
+        {
+            ClearChildren(_commandsContainer);
+
+            var count = 0;
+
+            foreach (var command in RenderedCommands())
+            {
+                _commandsContainer.appendChild(command.Render());
+                count++;
+            }
+
+            //How wide the strip is decides how much room the name gives up for it, and here a command is a
+            //square of the row's own height rather than the 22px chip an ordinary row's is - so the count
+            //is written and the stylesheet computes the width from it and from the height it is drawing
+            //(see --tss-sidebar-commands-width on .tss-sidebar-identity in tss.sidebar.css). Writing the
+            //pixels here instead would hard-code a height a skin is free to change.
+            _openRoot.UpdateClassIf(count > 0, "tss-sidebar-has-commands");
+            _openRoot.style.setProperty("--tss-sidebar-identity-command-count", count.ToString());
+
+            UpdateRailFit();
+        }
+
+        private void UpdateSubtitleVisibility()
+        {
+            var hasSubtitle = !string.IsNullOrWhiteSpace(_subtitle);
+
+            _subtitleSpan.style.display = hasSubtitle ? "block" : "none";
+            _openRoot.UpdateClassIf(hasSubtitle, "tss-sidebar-identity-two-lines");
+        }
+
+        private void ApplyClosedTooltip()
+        {
+            if (_tooltipClosed is object)
+            {
+                _tooltipClosed(_closedButton);
+                return;
+            }
+
+            _closedButton.Tooltip(DefaultClosedTooltip(), placement: TooltipPlacement.Right);
+        }
+
+        /// <summary>
+        /// The tooltip the collapsed rail gets when the caller has not set one: the name, and the second line
+        /// after it where there is one. Re-applied whenever either changes, and left alone once a tooltip has
+        /// been set by hand.
+        /// </summary>
+        private void RefreshDefaultTooltip()
+        {
+            if (_tooltipClosed is object) return;
+
+            _closedButton.Tooltip(DefaultClosedTooltip(), placement: TooltipPlacement.Right);
+        }
+
+        private string DefaultClosedTooltip()
+        {
+            var title = string.IsNullOrWhiteSpace(_titleBadgeText) ? _title : _title + " (" + _titleBadgeText + ")";
+            return string.IsNullOrWhiteSpace(_subtitle) ? title : title + " - " + _subtitle;
+        }
+    }
+}

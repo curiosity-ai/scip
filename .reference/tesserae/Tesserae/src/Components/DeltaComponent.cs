@@ -1,0 +1,566 @@
+using System;
+using System.Collections.Generic;
+using Transpose;
+using Transpose.Core;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A small inline metric showing the change between two values (with up/down arrow and tone for positive /
+    /// negative / neutral deltas).
+    /// </summary>
+    [Transpose.Name("tss.DeltaComponent")]
+    public class DeltaComponent : IComponent
+    {
+        private HTMLElement _root;
+        private IComponent _currentContent;
+        private IComponent _rootComponent; // the content that drew _root, which the reconciler compares against
+        private bool _isAnimated;
+        private ShadowRoot _shadowRoot;
+
+        //Anything applied to this component from outside - a .Class(), an .Id(), a .Style() or a
+        //.Tooltip() - lands on the element the content rendered, because that is the element this
+        //component hands out, and every content change takes it off again: a swap with the old node,
+        //a patch through SyncAttributes. So the calls are recorded and made again afterwards.
+        //
+        //What is recorded is the call, not its result - a closure that applies the same thing again.
+        //Replaying in order gives the right end state for free: a class added and later removed
+        //replays as an add and a remove, and two .Id() calls replay as the second one. It is also what
+        //makes .Style() and .Tooltip() work, where copying the result is either lossy or impossible -
+        //a tooltip is a listener and a tippy instance, not an attribute.
+        //
+        //This is deliberately not ISpecialCaseStyling: that one redirects a write to a different
+        //element, and here there is no other element to write to. The write still goes to the element
+        //on screen, and is only remembered in case that element is replaced.
+        private List<(Action Apply, bool AfterPatch)> _reapply;
+        private bool                                  _replaying;
+
+        // Node.TEXT_NODE is 3 in DOM
+        private const int TEXT_NODE = 3;
+
+        /// <summary>
+        /// Marks an element as one unit the reconciler does not look inside. An element on screen and the incoming
+        /// one that carry the same value are the same thing, and the one on screen is kept exactly as it is; a
+        /// different value (or only one side carrying it) swaps the element. For content that finishes drawing
+        /// itself after it is on the page - the charts of a <see cref="MarkdownBlock"/> - which a patch from content
+        /// that never reached the page would otherwise undo.
+        /// </summary>
+        public const string KeyAttribute = "data-tss-delta-key";
+
+        /// <summary>
+        /// Initializes a new instance of this class.
+        /// </summary>
+        public DeltaComponent(IComponent initial, bool useShadowDom = false)
+        {
+            _currentContent = initial;
+            if (useShadowDom)
+            {
+                _root = document.createElement("div");
+                _shadowRoot = _root.attachShadow(new ShadowRootInit { mode = Transpose.Core.dom.Literals.Options.mode.open });
+                _shadowRoot.appendChild(_currentContent.Render());
+            }
+            else
+            {
+                _root = _currentContent.Render();
+            }
+
+            //The content handed to this component is usually also a child of some container, which
+            //marks it on the way in. When it is not - it is the root of what this component holds,
+            //and may have been built straight into it - the mark has to come from here, or the first
+            //reconcile would see one marked side and one unmarked side.
+            _rootComponent = _currentContent;
+
+            UI.MarkComponent(_root, _rootComponent);
+
+            MarkAsReapplying();
+        }
+
+        /// <summary>
+        /// Configures the component to animated.
+        /// </summary>
+        public DeltaComponent Animated()
+        {
+            _isAnimated = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Reconciles what is on screen with <paramref name="newContent"/>, in place: the nodes that
+        /// match are kept and patched, and only what genuinely differs is swapped. That is the point
+        /// of this component - a streamed reply re-rendered per frame keeps its scroll position, its
+        /// selection and its text nodes instead of flickering - but it also means a node that stays
+        /// keeps the event listeners its component gave it, so nodes are only ever reconciled with
+        /// nodes of the same component (see <see cref="CanReconcile"/>).
+        /// </summary>
+        public void ReplaceContent(IComponent newContent)
+        {
+            var newRoot = newContent.Render();
+
+            UI.MarkComponent(newRoot, newContent);
+
+            if (_shadowRoot != null)
+            {
+                //The constructor marked the host, not the content inside the shadow root, so the
+                //content on screen has to be marked with what drew it here - or the first reconcile
+                //sees an unmarked side and a marked one and swaps the whole content once.
+                if (_shadowRoot.firstChild is HTMLElement shadowContent) UI.MarkComponent(shadowContent, _rootComponent);
+
+                _rootComponent = newContent;
+
+                // We are diffing against the content inside shadow root.
+                // Assuming there is one child which is the root of the component.
+                if (_shadowRoot.firstChild != null)
+                {
+                    DiffAndPatch(_shadowRoot.firstChild, newRoot);
+                }
+                else
+                {
+                    _shadowRoot.appendChild(newRoot);
+                }
+            }
+            else
+            {
+                //A container that took this component in, and every sizing helper applied to it, marks
+                //the root with this component rather than with the content that drew it - so the mark
+                //is put back here, where it is read, instead of guarding every place that writes it.
+                //Otherwise the next content of the same kind would read as a change of component and
+                //the node would be rebuilt for nothing.
+                UI.MarkComponent(_root, _rootComponent);
+
+                //The root can be swapped rather than patched, and the swap detaches the node this
+                //component was holding - so it has to keep hold of whichever node is now on screen.
+                var previousRoot = _root;
+                var wasStackItem = previousRoot.classList.contains("tss-stack-item");
+
+                _root          = DiffAndPatch(_root, newRoot).As<HTMLElement>();
+                _rootComponent = newContent;
+
+                if (_root != previousRoot)
+                {
+                    //What a container and the sizing helpers wrote sits on the root, because this
+                    //component has no element of its own. The stack-item class and any size are carried
+                    //across - a size only where the new content declares none of its own.
+                    Stack.TransferItemStyles(previousRoot, _root);
+                    Grid.TransferItemStyles(previousRoot, _root);
+
+                    //A tooltip that was shown at least once left a tippy instance on the old node.
+                    //Nothing will remove the node's popper now that the node itself is gone, so it
+                    //is torn down here rather than left to the WhenRemoved further up the tree.
+                    if (previousRoot.HasOwnProperty("_tippy"))
+                    {
+                        Transpose.Script.Write("{0}._tippy.destroy();", previousRoot);
+                    }
+
+                    MarkAsReapplying();
+                }
+                else if (wasStackItem)
+                {
+                    //The node stayed, but SyncAttributes has written the incoming node's attributes
+                    //over it and the class the container added was never on that node.
+                    _root.classList.add("tss-stack-item");
+                }
+
+                //Both paths lose the .Class(), .Id() and .Style() calls made on this component - the
+                //swap with the node, the patch through SyncAttributes - so both replay them. After a
+                //patch a tooltip is not replayed: its listener and tippy instance are still on the node
+                //the patch kept, and asking for another one per frame would stack them up.
+                ReapplyStyling(afterPatch: _root == previousRoot);
+            }
+        }
+
+        /// <summary>
+        /// Patches <paramref name="current"/> into <paramref name="next"/>, or swaps it out when the
+        /// two cannot be reconciled. Returns the node that is on screen afterwards, which is
+        /// <paramref name="current"/> for a patch and <paramref name="next"/> for a swap.
+        /// </summary>
+        private Node DiffAndPatch(Node current, Node next)
+        {
+            if (!CanReconcile(current, next))
+            {
+                if (current.parentNode != null)
+                {
+                    // Use the live `next` node instead of cloneNode(true) so
+                    // event listeners attached by component initialization
+                    // survive a ReplaceContent (cloneNode never copies
+                    // listeners added via addEventListener). The replaced node
+                    // is detached from its previous parent automatically.
+                    if (_isAnimated && next is HTMLElement)
+                    {
+                        next.As<HTMLElement>().classList.add("tss-fade-in");
+                    }
+                    current.parentNode.replaceChild(next, current);
+                }
+
+                //Nothing on screen to replace - this component was rendered but never added to a
+                //parent. Adopting the new node is the only way the content is not simply lost: the
+                //caller's next Render() then hands out the node that matches what it asked for.
+                return next;
+            }
+
+            if (current.nodeType == TEXT_NODE)
+            {
+                var currentText = current.textContent;
+                var nextText = next.textContent;
+
+                if (currentText != nextText)
+                {
+                    if (nextText.StartsWith(currentText))
+                    {
+                        var delta = nextText.Substring(currentText.Length);
+                        var deltaSpan = document.createElement("span");
+                        deltaSpan.textContent = delta;
+
+                        if (_isAnimated)
+                        {
+                            deltaSpan.classList.add("tss-fade-in");
+                        }
+
+                        if (current.parentNode != null)
+                        {
+                            if (current.nextSibling != null)
+                            {
+                                current.parentNode.insertBefore(deltaSpan, current.nextSibling);
+                            }
+                            else
+                            {
+                                current.parentNode.appendChild(deltaSpan);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        current.textContent = nextText;
+                    }
+                }
+
+                return current;
+            }
+
+            if (current is HTMLElement currentElement && next is HTMLElement nextElement)
+            {
+                //CanReconcile only lets a keyed element through with the same key: it is the same unit.
+                if (currentElement.hasAttribute(KeyAttribute)) return current;
+
+                SyncAttributes(currentElement, nextElement);
+
+                //A text area's children are its default value, not content to stream into: the span
+                //DiffChildren inserts for text that does not extend what is there is ignored by the text
+                //area, which then shows nothing. The text is copied across whole instead, and the value on
+                //screen follows it unless the user has typed into the text area.
+                if (currentElement.nodeName == "TEXTAREA")
+                {
+                    if (currentElement.textContent != nextElement.textContent) currentElement.textContent = nextElement.textContent;
+                }
+                else
+                {
+                    DiffChildren(currentElement, nextElement);
+                }
+            }
+
+            return current;
+        }
+
+        /// <summary>
+        /// Whether two nodes may be reconciled with each other rather than swapped: the same kind of
+        /// node, and the same component. A node carries the event listeners its component attached to
+        /// it and no patch can move those, so re-purposing a node from one component to another leaves
+        /// it answering to a component nobody can reach any more: the symptom is a control that looks
+        /// right and does what its predecessor did - a tool call that became a "tools used" group
+        /// mid-stream opening the chip it used to be instead of the group it is now.
+        /// </summary>
+        private static bool CanReconcile(Node current, Node next)
+        {
+            if (current.nodeType != next.nodeType || current.nodeName != next.nodeName) return false;
+
+            //Nodes that are not elements carry no listeners of their own, so the text-append path that
+            //makes streaming look like typing is never interrupted by this.
+            if (!(current is HTMLElement currentElement) || !(next is HTMLElement nextElement)) return true;
+
+            if (currentElement.hasAttribute(KeyAttribute) || nextElement.hasAttribute(KeyAttribute))
+            {
+                return currentElement.getAttribute(KeyAttribute) == nextElement.getAttribute(KeyAttribute);
+            }
+
+            //The component that rendered the element, recorded by the container that took it in. This
+            //is the signal that works for a component Tesserae cannot see the source of, and the only
+            //one that separates two components which borrow the same kind of root: a SectionTitle and
+            //a SearchableList are both a Stack's element, and so is anything an application composes
+            //that way.
+            var currentComponent = UI.ComponentOf(currentElement);
+            var nextComponent    = UI.ComponentOf(nextElement);
+
+            //An element that carries a component and one that does not were built differently enough
+            //that patching one into the other is not worth the risk.
+            if (currentComponent != nextComponent) return false;
+
+            //An element built straight into its parent rather than added through a container carries
+            //no component, and neither does anything inside a component's own markup. Its first CSS
+            //class is what is left: the class a component puts on the root element it builds before
+            //anything else is added to it. Checked either way, since a passthrough like Raw records
+            //itself and says nothing about what it wraps.
+            return RootClassOf(currentElement) == RootClassOf(nextElement);
+        }
+
+        /// <summary>
+        /// The first class on <paramref name="element"/> that its component put there, skipping the
+        /// ones the toolkit adds from outside.
+        /// </summary>
+        /// <remarks>
+        /// <c>tss-fade-in</c> is added by this component to every node it inserts, and
+        /// <c>tss-stack-item</c> by the container that took the element in. Both go on the node that
+        /// is on screen and never on the freshly rendered one it is compared with, and on an element
+        /// with no class of its own they <i>are</i> the first class. Counting them made the two sides
+        /// of every classless element disagree: each <c>&lt;strong&gt;</c>, <c>&lt;code&gt;</c>,
+        /// <c>&lt;p&gt;</c> and <c>&lt;table&gt;</c> of a streamed Markdown reply was swapped - and
+        /// faded in again - on every chunk after the one that inserted it.
+        /// </remarks>
+        private static string RootClassOf(HTMLElement element)
+        {
+            var classes = element.classList;
+
+            for (uint i = 0; i < classes.length; i++)
+            {
+                var name = classes[i];
+
+                if (name != "tss-fade-in" && name != "tss-stack-item") return name;
+            }
+
+            return string.Empty;
+        }
+
+        private void SyncAttributes(HTMLElement current, HTMLElement next)
+        {
+            var currentAttributes = current.attributes;
+            if(currentAttributes.length  > 0)
+            {
+                for (int i = (int)(currentAttributes.length) - 1; i >= 0; i--)
+                {
+                    var attr = currentAttributes[(uint)i];
+                    if (!next.hasAttribute(attr.name))
+                    {
+                        current.removeAttribute(attr.name);
+                    }
+                }
+            }
+
+            var nextAttributes = next.attributes;
+            for (uint i = 0; i < nextAttributes.length; i++)
+            {
+                var attr = nextAttributes[i];
+                var curAttr = current.getAttribute(attr.name);
+                if (curAttr != attr.value)
+                {
+                    bool addFadeIn = attr.name == "class" && curAttr.Contains("tss-fade-in");
+                    current.setAttribute(attr.name, attr.value);
+                    if (addFadeIn) current.classList.add("tss-fade-in");
+                }
+            }
+        }
+
+        private void DiffChildren(HTMLElement currentParent, HTMLElement nextParent)
+        {
+            var currentChildren = currentParent.childNodes;
+            var nextChildrenLive = nextParent.childNodes;
+
+            // Snapshot — moving a live node into currentParent via
+            // appendChild / replaceChild detaches it from nextParent, which
+            // shrinks nextChildrenLive while we iterate it. Capturing the
+            // children up-front keeps indices stable.
+            int nextLen = (int)nextChildrenLive.length;
+            var nextChildrenSnapshot = new Node[nextLen];
+            for (int i = 0; i < nextLen; i++) nextChildrenSnapshot[i] = (Node)nextChildrenLive[(uint)i];
+
+            int currentIndex = 0;
+            int nextIndex = 0;
+
+            // Console.WriteLine($"Diffing Children: CurrentLen={currentChildren.length}, NextLen={nextLen}");
+
+            while (nextIndex < nextLen)
+            {
+                var nextChild = nextChildrenSnapshot[nextIndex];
+
+                if (nextChild.nodeType == TEXT_NODE)
+                {
+                    string targetText = nextChild.textContent;
+                    // Console.WriteLine($"Processing Text Node: '{targetText}'");
+
+                    while (targetText.Length > 0 && currentIndex < currentChildren.length)
+                    {
+                        var currentChild = (Node)currentChildren[currentIndex];
+
+                        string currentContent = null;
+                        if (currentChild.nodeType == TEXT_NODE)
+                        {
+                            currentContent = currentChild.textContent;
+                        }
+                        else if (currentChild.nodeName == "SPAN" && currentChild.childNodes.length == 1 && ((Node)currentChild.firstChild).nodeType == TEXT_NODE)
+                        {
+                            currentContent = currentChild.textContent;
+                        }
+
+                        if (currentContent != null && targetText.StartsWith(currentContent))
+                        {
+                            // Console.WriteLine($"Match Prefix: '{currentContent}'");
+                            targetText = targetText.Substring(currentContent.Length);
+                            currentIndex++;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    if (targetText.Length > 0)
+                    {
+                        if (string.IsNullOrWhiteSpace(targetText) && targetText.Contains("\n"))
+                        {
+                            // Only newlines between block elements (the formatting a Markdown or HTML
+                            // renderer puts between <p>, <ul>, <table>...) is dropped. A space is
+                            // content: it is the one between "a" and <strong>bold</strong>, and
+                            // dropping it glued the words together.
+                        }
+                        else
+                        {
+                            var deltaSpan = document.createElement("span");
+                            deltaSpan.textContent = targetText;
+
+                            if (_isAnimated)
+                            {
+                                deltaSpan.classList.add("tss-fade-in");
+                            }
+
+                            if (currentIndex < currentChildren.length)
+                            {
+                                currentParent.insertBefore(deltaSpan, currentChildren[currentIndex]);
+                            }
+                            else
+                            {
+                                currentParent.appendChild(deltaSpan);
+                            }
+                            currentIndex++;
+                        }
+                    }
+                    nextIndex++;
+                }
+                else
+                {
+                    // Element. We move the live next-tree node instead of
+                    // cloneNode(true)-ing it so component event listeners
+                    // (e.g. ToolCall expand-on-click) survive a ReplaceContent.
+                    if (currentIndex < currentChildren.length)
+                    {
+                        var currentChild = (Node)currentChildren[currentIndex];
+
+                        if (CanReconcile(currentChild, nextChild))
+                        {
+                            DiffAndPatch(currentChild, nextChild);
+                            currentIndex++;
+                        }
+                        else
+                        {
+                            if (_isAnimated && nextChild is HTMLElement newElement)
+                            {
+                                newElement.classList.add("tss-fade-in");
+                            }
+                            currentParent.replaceChild(nextChild, currentChild);
+                            currentIndex++;
+                            // replaceChild shifts the live NodeList — don't
+                            // advance nextIndex against the old children, the
+                            // next iteration's reread of childNodes handles it.
+                        }
+                    }
+                    else
+                    {
+                        if (_isAnimated && nextChild is HTMLElement newElement)
+                        {
+                            newElement.classList.add("tss-fade-in");
+                        }
+                        currentParent.appendChild(nextChild);
+                        currentIndex++;
+                    }
+                    nextIndex++;
+                }
+            }
+
+            // Remove extra children
+            while (currentIndex < currentChildren.length)
+            {
+                currentParent.removeChild(currentChildren[currentIndex]);
+            }
+        }
+
+        /// <summary>
+        /// Puts this component on the element it currently renders, so that the fluent helpers can
+        /// tell in one property read whether what they are applying needs remembering.
+        /// </summary>
+        /// <remarks>
+        /// The alternative, testing the component's type in each helper, was measured at a fifth of
+        /// the cost of <c>.Class()</c> itself - which a page calls thousands of times, virtually
+        /// never on a DeltaComponent. A missing property on an element is a plain read.
+        /// </remarks>
+        private void MarkAsReapplying()
+        {
+            if (_root is object) _root[UI.ReappliesMarker] = this;
+        }
+
+        /// <summary>
+        /// Records something just applied to this component, so it can be applied again to the
+        /// element the component renders next. Ignored while a replay is in progress, so a replayed
+        /// call does not record itself a second time.
+        /// </summary>
+        /// <param name="reapply">Applies the same thing again to whatever the component renders.</param>
+        /// <param name="replayAfterPatch">
+        /// Whether replaying it after a patch - which happens on every content change, not only on the
+        /// rarer swap - is free of side effects. True for a call that writes an attribute and nothing
+        /// else, which is exactly what a patch overwrites. False for anything that also attaches
+        /// something the patch leaves alone: a tooltip's listener and tippy instance survive a patch,
+        /// and calling for another one per frame would stack them up.
+        /// </param>
+        internal void RememberStyling(Action reapply, bool replayAfterPatch)
+        {
+            //A replayed call must not record itself, or every replay would double the list.
+            if (_replaying || reapply is null) return;
+
+            if (_reapply is null) _reapply = new List<(Action, bool)>();
+
+            _reapply.Add((reapply, replayAfterPatch));
+        }
+
+        /// <summary>
+        /// Applies everything recorded through <see cref="RememberStyling"/> to the element this
+        /// component renders now, in the order it was originally applied.
+        /// </summary>
+        private void ReapplyStyling(bool afterPatch)
+        {
+            if (_reapply is null) return;
+
+            _replaying = true;
+
+            try
+            {
+                for (int i = 0; i < _reapply.Count; i++)
+                {
+                    var recorded = _reapply[i];
+
+                    if (afterPatch && !recorded.AfterPatch) continue;
+
+                    recorded.Apply();
+                }
+            }
+            finally
+            {
+                _replaying = false;
+            }
+        }
+
+        /// <summary>
+        /// Renders the component's root HTML element.
+        /// </summary>
+        public HTMLElement Render()
+        {
+            return _root;
+        }
+    }
+}

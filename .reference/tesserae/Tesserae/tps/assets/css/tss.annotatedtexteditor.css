@@ -1,0 +1,202 @@
+.tss-annotated-text-container {
+    position: relative;
+    display: inline-flex;
+    width: 100%;
+    min-height: 120px;
+    box-shadow: var(--tss-shadow-sm);
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-md);
+    background: var(--tss-default-background-color);
+    color: var(--tss-default-foreground-color);
+    transition: all 0.15s ease-in-out;
+    overflow: hidden;
+}
+
+.tss-annotated-text-container:hover {
+    border-color: var(--tss-default-foreground-color);
+    box-shadow: var(--tss-shadow-sm-hover);
+}
+
+/* Focus is the TextBox's: a 2px primary edge inside the box (the border and a 1px inset line). The textarea
+   and the highlights layer over it are transparent, so the line shows through them. */
+.tss-annotated-text-container:focus-within {
+    border-color: var(--tss-primary-border-color);
+    box-shadow: inset 0 0 0 1px var(--tss-primary-border-color);
+}
+
+.tss-annotated-text-container.tss-disabled {
+    border-color: var(--tss-disabled-background-color);
+    background-color: var(--tss-disabled-background-color);
+    color: var(--tss-disabled-foreground-color);
+}
+
+.tss-annotated-text-container.tss-annotated-text-readonly {
+    background-color: var(--tss-secondary-background-color);
+}
+
+.tss-annotated-text-container.tss-annotated-text-readonly .tss-annotated-text-input {
+    cursor: default;
+    resize: none;
+}
+
+/* The highlights div and the textarea must wrap text identically so their
+   glyph positions line up. Both reserve a scrollbar gutter via `overflow-y:
+   scroll` (always present), fix `scrollbar-width` to `thin`, and pin the
+   webkit pseudo-element to a constant width so the reserved gutter is
+   exactly the same on a <div> and on a <textarea>. `overflow-y: auto`
+   plus `scrollbar-gutter: stable` is not reliable here — Chromium/WebKit
+   reserve a slightly different gutter on textarea vs div, which shifted
+   the textarea's wrap column a few pixels left of the overlay's. */
+.tss-annotated-text-highlights,
+.tss-annotated-text-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    min-height: inherit;
+    padding: 8px 10px;
+    margin: 0;
+    border: 0;
+    font-size: 14px;
+    font-family: inherit;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    tab-size: 4;
+}
+
+/* Fix the scrollbar's visible width to a constant on WebKit too, so both
+   the textarea and the highlights reserve the same number of pixels for
+   their gutter. The highlights' track / thumb are kept transparent below. */
+.tss-annotated-text-highlights::-webkit-scrollbar,
+.tss-annotated-text-input::-webkit-scrollbar {
+    width: 10px;
+}
+
+.tss-annotated-text-highlights {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    color: transparent !important;
+    background: transparent;
+    z-index: 1;
+}
+
+/* The highlights' own scrollbar must reserve the same width as the textarea's
+   so wrap columns match, but the scrollbar itself should be invisible — its
+   scroll position is JS-synced from the textarea and the textarea (z-index: 2)
+   paints its own scrollbar on top. */
+.tss-annotated-text-highlights {
+    scrollbar-color: transparent transparent;
+}
+
+.tss-annotated-text-highlights::-webkit-scrollbar,
+.tss-annotated-text-highlights::-webkit-scrollbar-thumb,
+.tss-annotated-text-highlights::-webkit-scrollbar-track,
+.tss-annotated-text-highlights::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* Inner wrapper around the entity/text nodes. We translate this element to
+   match the textarea's scroll position instead of setting scrollTop on the
+   outer highlights div — transform is paint-only and never clamped, so the
+   overlay always tracks the textarea exactly during fast / inertial scrolling
+   (macOS touchpad). */
+.tss-annotated-text-highlights-content {
+    will-change: transform;
+}
+
+.tss-annotated-text-input {
+    position: relative;
+    background: transparent;
+    color: var(--tss-default-foreground-color);
+    caret-color: var(--tss-default-foreground-color);
+    outline: none;
+    resize: vertical;
+    z-index: 2;
+    /* Disable macOS touchpad rubber-band past the boundary — when scrollTop
+       is already at max, no `scroll` event fires during inertial overscroll,
+       which would otherwise let the visible text drift past the (synced)
+       highlights overlay. */
+    overscroll-behavior: none;
+}
+
+.tss-annotated-text-input::placeholder {
+    color: var(--tss-default-foreground-color) !important;
+    opacity: 0.5;
+    transition: opacity 0.3s ease;
+}
+
+/* Entity span paints a background + outline only. Its text inherits
+   transparent color from the highlights container so it never paints text
+   on top of the textarea — only the textarea renders visible glyphs. */
+.tss-annotated-text-entity {
+    color: transparent !important;
+    border-radius: 4px;
+    outline: 1px solid var(--tss-colors-blue-500);
+    outline-offset: 0;
+    background-color: var(--tss-colors-blue-100);
+    padding: 2px 0;
+}
+
+.tss-dark-mode .tss-annotated-text-entity {
+    background-color: rgba(var(--tss-colors-blue-900-root), 0.4);
+    outline-color: rgba(var(--tss-colors-blue-500-root), 0.6);
+}
+
+/* A fill the application passes (set inline, tss-annotated-text-entity-colored) is one colour for both
+   modes, and the usual one is a pale tint chosen for light mode: in dark mode the textarea's light type
+   sat on it at 1.5:1. The page colour is laid over the fill, so its hue still tells the types apart and
+   the text stays readable whatever colour was passed. */
+.tss-dark-mode .tss-annotated-text-entity.tss-annotated-text-entity-colored {
+    background-image: linear-gradient(rgba(var(--tss-default-background-color-root), 0.75), rgba(var(--tss-default-background-color-root), 0.75));
+}
+
+/* Floating hover tag, appended to <body> and positioned with position: fixed
+   so it can escape the container's overflow: hidden clipping. The tag itself
+   sets container chrome (padding, border, bg, shadow, max-width) and a base
+   color so that descendants without their own color rule (e.g. the default
+   string-label below) inherit something theme-appropriate. Rich IComponents
+   placed via Entity.LabelContent override typography on their own elements. */
+.tss-annotated-text-hover-tag {
+    position: fixed;
+    pointer-events: none;
+    z-index: 10000;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--tss-colors-blue-500);
+    background: var(--tss-colors-blue-100);
+    color: var(--tss-colors-blue-900);
+    box-shadow: var(--tss-shadow-sm);
+    max-width: 420px;
+}
+
+.tss-dark-mode .tss-annotated-text-hover-tag {
+    background: rgba(var(--tss-colors-blue-900-root), 0.9);
+    color: var(--tss-colors-blue-100);
+    border-color: rgba(var(--tss-colors-blue-500-root), 0.6);
+}
+
+/* Default tooltip text styling, applied by the string-label convenience constructor.
+   Preserves the exact pre-IComponent look — 11px / weight 500 / pre-line for
+   embedded '\n' / subtle letter-spacing. color is left to inherit from the hover
+   tag (the entity-specific color set inline on the hover tag still flows through). */
+.tss-annotated-text-default-label {
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    color: inherit;
+    white-space: pre-line;
+    letter-spacing: 0.02em;
+}
+
+/* The container carries the focus (its 2px edge above), so the textarea inside it draws none of its own: a
+   theme's or an application's global `:focus-visible` outline would frame it a second time, inside the box. */
+.tss-annotated-text-container > .tss-annotated-text-input:focus-visible {
+    outline: none;
+}

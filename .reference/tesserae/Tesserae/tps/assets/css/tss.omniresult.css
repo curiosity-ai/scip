@@ -1,0 +1,1030 @@
+﻿/* OmniResult — a search-result row: icon tile, title + badge, excerpt, footer, pages rail, commands. */
+
+/* A row is something you click, not something you read a sentence out of: dragging across a list of
+   results should never leave half an excerpt highlighted. The modal is where a result is read, so its
+   title opts back in below - its content is the modal's own and is untouched by this. */
+.tss-omniresult {
+    -webkit-user-select: none;
+    user-select: none;
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 12px 12px 12px 14px;
+    border-radius: var(--tss-border-radius-lg);
+    border-bottom: 1px solid var(--tss-default-border-color);
+    background: transparent;
+    color: var(--tss-default-foreground-color);
+    cursor: pointer;
+    outline: none;
+    transition: background-color 120ms ease-in-out;
+}
+
+.tss-omniresult:hover,
+.tss-omniresult.tss-omniresult-active,
+.tss-omniresult.tss-omniresult-menu-open {
+    background: var(--tss-default-background-hover-color);
+}
+
+.tss-omniresult:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--tss-primary-background-color);
+}
+
+.tss-omniresult.tss-omniresult-selected {
+    background: color-mix(in srgb, var(--tss-primary-background-color) 10%, transparent);
+}
+
+/* TextSelectable(): a row that is read rather than glanced at - a message in a thread, a comment - opts its
+   text back into selecting and copying, and stops reading as a click target. What is a control rather than
+   text stays unselectable, so dragging from the tile or the checkbox still does nothing. The click that ends
+   such a drag is dropped by the row itself, so copying a line never opens the result it came from. */
+.tss-omniresult.tss-omniresult-text-selectable {
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: auto;
+}
+
+.tss-omniresult-text-selectable .tss-omniresult-select,
+.tss-omniresult-text-selectable .tss-omniresult-icon-holder,
+.tss-omniresult-text-selectable .tss-omniresult-commands,
+.tss-omniresult-text-selectable .tss-omniresult-rail {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* Selection ------------------------------------------------------------------------------------- */
+
+.tss-omniresult-select {
+    display: none;
+    flex-grow: 0;
+    flex-shrink: 0;
+    align-items: center;
+    height: 34px;
+}
+
+/* The checkbox's own 20px box: what a corner badge drawn on the checkbox hangs off, so it tucks into the
+   checkbox's corner rather than the column's, which is as tall as the row's first line. */
+.tss-omniresult-select-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+}
+
+.tss-omniresult-select .tss-checkbox-container {
+    margin: 0;
+    width: 20px;
+    height: 20px;
+}
+
+/* Beside the icon: the column is there either way, so revealing the checkbox never shifts the row. */
+.tss-omniresult-select-hover-before .tss-omniresult-select,
+.tss-omniresult-select-always-before .tss-omniresult-select,
+.tss-omniresult-select-replacing .tss-omniresult-select {
+    display: flex;
+}
+
+.tss-omniresult-select-hover-before .tss-omniresult-select {
+    opacity: 0;
+    transition: opacity 120ms ease-in-out;
+}
+
+.tss-omniresult-select-hover-before:hover .tss-omniresult-select,
+.tss-omniresult-select-hover-before.tss-omniresult-active .tss-omniresult-select,
+.tss-omniresult-select-hover-before:focus-within .tss-omniresult-select,
+.tss-omniresult-select-hover-before.tss-omniresult-selected .tss-omniresult-select {
+    opacity: 1;
+}
+
+/* Over the icon: the checkbox sits on the tile, which fades out under it rather than being covered by a
+   backplate - so it blends whatever background the row happens to have (hovered, selected, plain). */
+.tss-omniresult-select-hover-over .tss-omniresult-select {
+    display: flex;
+    position: absolute;
+    left: 14px;
+    top: 12px;
+    z-index: 2;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    opacity: 0;
+    transition: opacity 120ms ease-in-out;
+}
+
+.tss-omniresult-select-hover-over .tss-omniresult-icon {
+    transition: opacity 120ms ease-in-out;
+}
+
+.tss-omniresult-select-hover-over:hover .tss-omniresult-select,
+.tss-omniresult-select-hover-over.tss-omniresult-active .tss-omniresult-select,
+.tss-omniresult-select-hover-over:focus-within .tss-omniresult-select,
+.tss-omniresult-select-hover-over.tss-omniresult-selected .tss-omniresult-select {
+    opacity: 1;
+}
+
+.tss-omniresult-select-hover-over:hover .tss-omniresult-icon,
+.tss-omniresult-select-hover-over.tss-omniresult-active .tss-omniresult-icon,
+.tss-omniresult-select-hover-over:focus-within .tss-omniresult-icon,
+.tss-omniresult-select-hover-over.tss-omniresult-selected .tss-omniresult-icon {
+    opacity: 0;
+}
+
+/* A corner badge stays on while the tile fades - it says something about the result, not about the tile -
+   so it moves onto the checkbox that took the tile's place. The checkbox is 20px centred in the 34px tile,
+   which is 7px in from each edge, and a badge sits 4px out from the corner it is pinned to: 7 - 4 = 3. */
+.tss-omniresult-select-hover-over:hover .tss-omniresult-icon-badge-tl,
+.tss-omniresult-select-hover-over.tss-omniresult-active .tss-omniresult-icon-badge-tl,
+.tss-omniresult-select-hover-over:focus-within .tss-omniresult-icon-badge-tl,
+.tss-omniresult-select-hover-over.tss-omniresult-selected .tss-omniresult-icon-badge-tl {
+    left: 3px;
+    top: 3px;
+}
+
+.tss-omniresult-select-hover-over:hover .tss-omniresult-icon-badge-tr,
+.tss-omniresult-select-hover-over.tss-omniresult-active .tss-omniresult-icon-badge-tr,
+.tss-omniresult-select-hover-over:focus-within .tss-omniresult-icon-badge-tr,
+.tss-omniresult-select-hover-over.tss-omniresult-selected .tss-omniresult-icon-badge-tr {
+    right: 3px;
+    top: 3px;
+}
+
+.tss-omniresult-select-hover-over:hover .tss-omniresult-icon-badge-bl,
+.tss-omniresult-select-hover-over.tss-omniresult-active .tss-omniresult-icon-badge-bl,
+.tss-omniresult-select-hover-over:focus-within .tss-omniresult-icon-badge-bl,
+.tss-omniresult-select-hover-over.tss-omniresult-selected .tss-omniresult-icon-badge-bl {
+    left: 3px;
+    bottom: 3px;
+}
+
+.tss-omniresult-select-hover-over:hover .tss-omniresult-icon-badge-br,
+.tss-omniresult-select-hover-over.tss-omniresult-active .tss-omniresult-icon-badge-br,
+.tss-omniresult-select-hover-over:focus-within .tss-omniresult-icon-badge-br,
+.tss-omniresult-select-hover-over.tss-omniresult-selected .tss-omniresult-icon-badge-br {
+    right: 3px;
+    bottom: 3px;
+}
+
+/* Replacing the icon: no tile at all, so the badges are drawn on the checkbox itself (the row moves them
+   there - see OmniResult.PlaceIconBadges) and hang off its corners the way they hang off the tile's. */
+.tss-omniresult-select-replacing .tss-omniresult-icon-holder {
+    display: none;
+}
+
+/* Icon tile ------------------------------------------------------------------------------------- */
+
+/* The tile clips its own content, so corner badges hang off this holder instead - which doesn't. */
+.tss-omniresult-icon-holder {
+    position: relative;
+    flex-grow: 0;
+    flex-shrink: 0;
+    line-height: 0;
+}
+
+/* A badge marks the result rather than the tile, so it is drawn above the checkbox (z-index 2) that
+   covers the tile, and moves with it - see the corner offsets under "Selection" above. */
+.tss-omniresult-icon-badge {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+    line-height: 0;
+    pointer-events: none;
+    transition: top 120ms ease-in-out, right 120ms ease-in-out, bottom 120ms ease-in-out, left 120ms ease-in-out;
+}
+
+.tss-omniresult-icon-badge img,
+.tss-omniresult-icon-badge svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+}
+
+.tss-omniresult-icon-badge-tl { left: -4px;  top: -4px; }
+.tss-omniresult-icon-badge-tr { right: -4px; top: -4px; }
+.tss-omniresult-icon-badge-bl { left: -4px;  bottom: -4px; }
+.tss-omniresult-icon-badge-br { right: -4px; bottom: -4px; }
+
+/* The tile itself is an IconTile (see tss.icontile.css): the row only adds this class so the rules above -
+   and the peek overrides below - have something of its own to hang off. */
+
+/* The tile drawn inline ------------------------------------------------------------------------- */
+
+/* AlwaysBeforeHeaderIcon / HiddenBeforeHeaderIcon draw the tile on the header line instead of standing it
+   in a column of its own beside the whole row, and ModalKeepsIconInTitle does the same on the modal's
+   title line. The excerpt, the footer and the contribution bar then start at the row's own left edge
+   rather than indented past a 34px tile, which is what a dense list - or one whose rows are mostly title -
+   reads better as. The tile is drawn at the title's line box (22px) so it sits on the line rather than
+   setting the line's height itself.
+
+   All of this hangs off the holder rather than off the row, so the copy the modal takes of the tile is
+   drawn the same way there - see OmniResult.CopyOfIcon. */
+.tss-omniresult-icon-inline {
+    align-self: center;
+}
+
+.tss-omniresult-icon-inline .tss-omniresult-icon {
+    --tss-icontile-size: 22px;
+    --tss-icontile-radius: 6px;
+}
+
+/* A tile that spells the file type out is a label here, not a square: on this line it sits beside words,
+   so it grows sideways with its text instead of squeezing "PARQUET" into the width of "PDF" - and nothing
+   has to reach for a smaller TextSize to make a long type name fit. The height stays the title's line box,
+   and the square tile is the floor, so a three- or four-letter type - the common case - still comes out
+   about as square as the glyph tiles it is listed among. */
+.tss-omniresult-icon-inline .tss-omniresult-icon:has(> .tss-icontile-text) {
+    width: auto;
+    min-width: var(--tss-icontile-size);
+    padding: 0 4px;
+}
+
+/* Its text is the one thing in the tile that must not be clipped, and it no longer has to be: the tile
+   grew to hold it. Which is also why the measured fit is put back to the standard size here - there is
+   nothing to shrink into once the tile widens with the word. */
+.tss-omniresult-icon-inline .tss-omniresult-icon > .tss-icontile-text {
+    white-space: nowrap;
+    --tss-icontile-text-fit: 1;
+}
+
+/* A corner badge is scaled with the tile it is pinned to, and tucked closer in: 4px out from a 34px tile
+   is a hint, 4px out from a 22px one is half the badge hanging in the air. */
+.tss-omniresult-icon-inline .tss-omniresult-icon-badge {
+    font-size: 9px;
+}
+
+.tss-omniresult-icon-inline .tss-omniresult-icon-badge img,
+.tss-omniresult-icon-inline .tss-omniresult-icon-badge svg {
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+}
+
+.tss-omniresult-icon-inline .tss-omniresult-icon-badge-tl { left: -3px;  top: -3px; }
+.tss-omniresult-icon-inline .tss-omniresult-icon-badge-tr { right: -3px; top: -3px; }
+.tss-omniresult-icon-inline .tss-omniresult-icon-badge-bl { left: -3px;  bottom: -3px; }
+.tss-omniresult-icon-inline .tss-omniresult-icon-badge-br { right: -3px; bottom: -3px; }
+
+/* The one thing that is the row's rather than the tile's: with no 34px tile in the row, the checkbox
+   column is level with the header line instead. */
+.tss-omniresult-icon-in-header .tss-omniresult-select {
+    height: 22px;
+}
+
+/* Title, badge, excerpt --------------------------------------------------------------------------- */
+
+.tss-omniresult-main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.tss-omniresult-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tss-omniresult-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--tss-font-size-smallplus);
+    font-weight: 600;
+    line-height: 22px;
+    color: var(--tss-default-foreground-color);
+}
+
+/* MarkAsViewed(): the result you just opened, so coming back to a long list says which row you came
+   back from. The title takes the purple a visited link has always been, which is the one thing about a
+   row that is read before anything else. The identifier and its chevron are part of that title, so they
+   take it too - otherwise a row with an issue number reads as half visited. */
+.tss-omniresult-viewed .tss-omniresult-title,
+.tss-omniresult-viewed .tss-omniresult-id-value,
+.tss-omniresult-viewed .tss-omniresult-id-chevron {
+    color: var(--tss-colors-purple-700);
+}
+
+.tss-dark-mode .tss-omniresult-viewed .tss-omniresult-title,
+.tss-dark-mode .tss-omniresult-viewed .tss-omniresult-id-value,
+.tss-dark-mode .tss-omniresult-viewed .tss-omniresult-id-chevron {
+    color: var(--tss-colors-purple-400);
+}
+
+/* The pulse that plays when the flag goes on. It is an overlay's opacity and the row's own transform -
+   both composited, so a row flashing in a list of a hundred measures none of them again. The overlay is
+   a pseudo-element rather than the row's background so it does not fight the hover and selected
+   backgrounds the row is already wearing. */
+.tss-omniresult-viewed-flash {
+    animation: tss-omniresult-viewed-lift 620ms ease-out;
+}
+
+.tss-omniresult-viewed-flash::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--tss-colors-purple-500) 24%, transparent);
+    opacity: 0;
+    animation: tss-omniresult-viewed-pulse 620ms ease-out;
+}
+
+@keyframes tss-omniresult-viewed-pulse {
+    0%   { opacity: 0; }
+    18%  { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+@keyframes tss-omniresult-viewed-lift {
+    0%   { transform: scale(1); }
+    22%  { transform: scale(1.012); }
+    100% { transform: scale(1); }
+}
+
+/* A title built from a component of the host's own lays itself out, so the one-line ellipsis the plain
+   title gets would only fight it. */
+.tss-omniresult-title.tss-omniresult-title-custom {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex-grow: 1;
+    overflow: visible;
+    white-space: normal;
+}
+
+/* The identifier before the title - an issue number, a ticket key - and the chevron pointing at it. It
+   never shrinks, so a long title ellipsizes before the identifier does. */
+.tss-omniresult-id {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-grow: 0;
+    flex-shrink: 0;
+    min-width: 0;
+}
+
+.tss-omniresult-id-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 22px;
+    font-variant-numeric: tabular-nums;
+    flex-grow: 0;
+    flex-shrink: 0;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-omniresult-id-chevron {
+    font-size: var(--tss-font-size-xsmall);
+    line-height: 1;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-omniresult-badge {
+    display: flex;
+    flex-grow: 0;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.tss-omniresult-badge .tss-token {
+    margin: 0;
+}
+
+.tss-omniresult-badge-pill {
+    padding: 2px 8px;
+    font-weight: 600;
+}
+
+.tss-omniresult-body {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: 14px;
+    line-height: 20px;
+    /* The secondary text colour: dark-neutral-600 was 3.9:1 on white, under the 4.5:1 body text needs. */
+    color: var(--tss-secondary-foreground-color);
+}
+
+/* What matched reads the same wherever it is said: the badge naming the match and the marks on the
+   terms inside the excerpt share one pair of colors. */
+.tss-omniresult-badge-pill,
+.tss-omniresult-highlight {
+    background: color-mix(in srgb, var(--tss-highlight-color) 12%, transparent);
+    color: var(--tss-highlight-color);
+}
+
+.tss-dark-mode .tss-omniresult-badge-pill,
+.tss-dark-mode .tss-omniresult-highlight {
+    background: color-mix(in srgb, var(--tss-highlight-color) 26%, transparent);
+}
+
+.tss-omniresult-highlight {
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+/* The rich preview under the excerpt, capped by ContentMaxHeight - which fades the overflow out rather
+   than cutting it off, so a clipped preview reads as "there is more" instead of as a rendering fault. */
+.tss-omniresult-content {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.tss-omniresult-content-masked {
+    -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 28px), transparent 100%);
+    mask-image: linear-gradient(to bottom, black calc(100% - 28px), transparent 100%);
+}
+
+/* Footer ----------------------------------------------------------------------------------------- */
+
+/* One line, whatever is put on it: the entries give way by ellipsizing, and what still doesn't fit goes
+   behind a [...] button at the end of the line. How far each entry may shrink, and which ones go behind
+   the button, is decided by OmniResultFooterFit - it writes each entry's floor as an inline min-width and
+   marks the rest as overflowed; flexbox shares the room out between the entries left on the line. */
+.tss-omniresult-footer {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 2px 8px;
+    min-width: 0;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-omniresult-footer > * {
+    flex: 0 1 auto;
+}
+
+/* Behind the [...] button. They are still the footer's children - the popover borrows them while it is
+   open - so a host replacing its entries finds them where it put them. */
+.tss-omniresult-footer > .tss-omniresult-footer-overflowed {
+    display: none;
+}
+
+/* For the length of one synchronous measurement: every entry at its natural width, the overflowed ones
+   included, and the button where it would go. Never painted. These come before the :empty and :has rules
+   below on purpose, so an entry with nothing in it stays hidden - and unmeasured - even here. */
+.tss-omniresult-footer.tss-omniresult-footer-measuring > * {
+    flex-shrink: 0;
+    max-width: none;
+}
+
+.tss-omniresult-footer.tss-omniresult-footer-measuring > .tss-omniresult-footer-overflowed {
+    display: flex;
+}
+
+.tss-omniresult-footer.tss-omniresult-footer-measuring > .tss-omniresult-footer-more {
+    display: inline-flex;
+}
+
+/* The [...] button: the last thing on the line, separated by the same dot as an entry. Only the glyph
+   answers the pointer, so the dot stays punctuation rather than part of a button. */
+.tss-omniresult-footer-more {
+    display: none;
+    align-items: center;
+    flex: 0 0 auto;
+    cursor: pointer;
+    outline: none;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-omniresult-footer > .tss-omniresult-footer-more-visible {
+    display: inline-flex;
+}
+
+.tss-omniresult-footer > .tss-omniresult-footer-more::before {
+    content: "·";
+    margin-right: 8px;
+}
+
+.tss-omniresult-footer-more-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: var(--tss-border-radius-sm);
+    font-size: 11px;
+    line-height: 1;
+    transition: background 120ms ease-out;
+}
+
+.tss-omniresult-footer-more:hover .tss-omniresult-footer-more-glyph,
+.tss-omniresult-footer-more:focus-visible .tss-omniresult-footer-more-glyph,
+.tss-omniresult-footer-more[aria-expanded="true"] .tss-omniresult-footer-more-glyph {
+    background: var(--tss-colors-neutral-400);
+    color: var(--tss-default-foreground-hover-color);
+}
+
+.tss-omniresult-footer-more:focus-visible .tss-omniresult-footer-more-glyph {
+    outline: 2px solid var(--tss-primary-background-color);
+    outline-offset: 1px;
+}
+
+/* The popover the button opens: the overflowed entries themselves, one per line and at their full width.
+   It carries the footer's class so every label in it keeps the footer's look - the dot between entries is
+   what a line needs, and a list doesn't. */
+.tss-omniresult-footer.tss-omniresult-footer-popup {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    box-sizing: border-box;
+    max-width: 360px;
+    padding: 8px 10px;
+}
+
+/* The surface is scoped under the tippy content because tss.tooltip.css clears the background and radius
+   of whatever div a tooltip holds (.tippy-box > .tippy-content > div), and that selector outranks the
+   popup's own two classes - which left the list see-through over whatever it opened above. */
+.tippy-box > .tippy-content > .tss-omniresult-footer.tss-omniresult-footer-popup {
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-md);
+    background: var(--tss-default-background-color);
+    box-shadow: var(--tss-box-shadow, 0 4px 16px 0 rgba(0,0,0,0.12));
+}
+
+.tss-omniresult-footer.tss-omniresult-footer-popup > * {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.tss-omniresult-footer.tss-omniresult-footer-popup > .tss-omniresult-footer-entry::before {
+    content: none;
+    margin: 0;
+}
+
+/* One dot between entries, drawn by CSS so no host has to interleave separators. The gap either side of
+   it is the footer's, so an entry that is only a mark still sits the same distance from its neighbours. */
+.tss-omniresult-footer > .tss-omniresult-footer-entry::before {
+    content: "·";
+    margin-right: 8px;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-omniresult-footer > .tss-omniresult-footer-entry:first-child::before {
+    content: none;
+    margin: 0;
+}
+
+/* An entry that emptied itself - a label that looked something up and found nothing to say, and took
+   itself out of the document - must take its separator with it, or the line keeps a dot with nothing on
+   one side of it. The dot belongs to the entry, so hiding the entry is all it takes. */
+.tss-omniresult-footer > .tss-omniresult-footer-entry:empty {
+    display: none;
+}
+
+/* Same for one holding nothing but a label with neither text nor mark in it - a label says so about
+   itself (see InlineLabel), so the footer does not have to look inside it. */
+.tss-omniresult-footer > .tss-omniresult-footer-entry:has(> .tss-inlinelabel-empty:only-child) {
+    display: none;
+}
+
+/* And for one holding nothing but a component that collapsed itself, which is how anything that is not
+   an InlineLabel says it has nothing to show - AddFooterEntry takes any component, and one that looks
+   something up (a list of neighbours, say) only finds out there is nothing after the entry already
+   exists. So this has to be a rule the collapsing satisfies later, not a check when the entry is added. */
+.tss-omniresult-footer > .tss-omniresult-footer-entry:has(> .tss-collapse:only-child) {
+    display: none;
+}
+
+/* An entry is a box around one InlineLabel, and the label does its own ellipsizing - so the entry must
+   NOT clip: a hovered label's background reaches 4px past its text on each side, and hiding the
+   overflow cut the right end of it (the left survived by eating into the separator's gap). */
+.tss-omniresult-footer-entry {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+    white-space: nowrap;
+}
+
+/* Whatever is in the entry is sized by the entry: the fit floors and shrinks the entry's box, and nothing
+   else, so the one thing inside it has to be able to follow it down. A flex item's automatic minimum is
+   its content's width, which for a line of nowrap text is all of it - a TextBlock kept its full width in
+   an entry squeezed to 64px and was drawn over the entries after it. */
+.tss-omniresult-footer-entry > * {
+    min-width: 0;
+}
+
+/* A label clips and ellipsizes its own text (and must not be clipped from outside - see above). Anything
+   else a host passes to AddFooterEntry - a TextBlock, a badge - is clipped to the entry here, with an
+   ellipsis where it is a line of text, so it gives way like a label rather than overlapping its
+   neighbours. */
+.tss-omniresult-footer-entry > :not(.tss-inlinelabel) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tss-omniresult-footer-entry .tss-textblock {
+    margin: 0;
+    color: var(--tss-secondary-foreground-color);
+    font-size: inherit;
+    line-height: inherit;
+    white-space: nowrap;
+}
+
+/* The source leads the footer line: it is an InlineLabel like every other entry, so it already draws at
+   the footer's size and answers the pointer the same way, and it gives way like any other entry when the
+   line is short of room - it just never goes behind the [...] button, since the first entry on a line never
+   does. Only its square of colour is its own: smaller than a glyph would be. */
+.tss-omniresult-source {
+    flex-grow: 0;
+}
+
+/* A flat square of colour reads bigger than a glyph filling the same box, so it is drawn smaller. */
+.tss-omniresult-source .tss-inlinelabel-mark-color {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+}
+
+/* Contribution bar ------------------------------------------------------------------------------- */
+
+/* Sits under the footer, spanning the text column rather than the whole row, so it lines up with the
+   title and the excerpt instead of running under the icon and the pages rail. */
+.tss-omniresult-contribution {
+    padding-top: 4px;
+    min-width: 0;
+}
+
+.tss-omniresult-contribution .tss-contribution {
+    margin: 0;
+}
+
+/* Pages rail and commands ------------------------------------------------------------------------ */
+
+.tss-omniresult-rail {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+/* The commands are the last thing on the header line, pushed to its far end - so they are level with the
+   title by construction rather than by a height matching its line box, and the excerpt, the footer and the
+   contribution bar below keep the card's whole width. Only the title gives up room for them, and it is the
+   one thing on the line that ellipsizes. */
+.tss-omniresult-commands {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    flex-grow: 0;
+    flex-shrink: 0;
+    /* The title's own line box, which the 26px buttons overflow rather than stretch - so a row with commands
+       is exactly as tall as one without, and the buttons still sit level with the title. */
+    height: 22px;
+    align-self: center;
+    /* Last on the line whatever a host appends to the header after it - the flags a result picks up go
+       beside the title, not past the buttons. */
+    order: 1;
+    z-index: 3;
+}
+
+.tss-omniresult-inline-commands {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Both command rows space themselves with `gap`, so a command must not also bring the standard 4px
+   component margin - two buttons beside each other were sitting 12px apart (4 of gap plus 4 of margin
+   each) and read as separate controls rather than as one group. */
+.tss-omniresult-commands > .tss-default-component-margin,
+.tss-omniresult-inline-commands > .tss-default-component-margin {
+    --tss-default-margin: 0px;
+}
+
+/* Hidden rather than absent, so the row keeps its width whether the commands show or not. */
+.tss-omniresult-commands > .tss-omniresult-menu-button,
+.tss-omniresult-inline-commands {
+    opacity: 0;
+    transition: opacity 120ms ease-in-out;
+}
+
+.tss-omniresult:hover .tss-omniresult-menu-button,
+.tss-omniresult.tss-omniresult-active .tss-omniresult-menu-button,
+.tss-omniresult:focus-within .tss-omniresult-menu-button,
+.tss-omniresult.tss-omniresult-menu-open .tss-omniresult-menu-button,
+.tss-omniresult-commands.tss-omniresult-commands-visible > .tss-omniresult-menu-button,
+.tss-omniresult:hover .tss-omniresult-inline-commands,
+.tss-omniresult.tss-omniresult-active .tss-omniresult-inline-commands,
+.tss-omniresult:focus-within .tss-omniresult-inline-commands,
+.tss-omniresult-inline-commands.tss-omniresult-commands-visible {
+    opacity: 1;
+}
+
+.tss-omniresult-menu-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: var(--tss-border-radius-sm);
+    background: transparent;
+    color: var(--tss-secondary-foreground-color);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.tss-omniresult-menu-button:hover {
+    background: var(--tss-default-background-active-color);
+    color: var(--tss-default-foreground-color);
+}
+
+/* As a modal ------------------------------------------------------------------------------------- */
+
+/* The modal header repeats the row's identifier, chevron and title, so opening a result reads as the
+   same thing enlarged rather than as a different surface. ModalKeepsIcon and ModalKeepsFooter add the
+   tile and the source line back to it, laid out the way the row lays them out. */
+/* The modal's header is chrome like the row's is - only the title is worth copying out of it, and the
+   modal's content below is the caller's own and stays selectable. */
+.tss-omniresult-modal-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.tss-omniresult-modal-title-text {
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: text;
+}
+
+.tss-omniresult-modal-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex-grow: 1;
+}
+
+.tss-omniresult-modal-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+/* The copy of the tile is the row's, so it needs the row's positioning context back for its corner
+   badges - the row it was cloned from provided that. */
+.tss-omniresult-modal-icon {
+    position: relative;
+    flex-grow: 0;
+    flex-shrink: 0;
+    line-height: 0;
+}
+
+/* The footer is the header's second line here, so it never wraps into the title's. */
+.tss-omniresult-modal-main > .tss-omniresult-footer {
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+.tss-omniresult-modal-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--tss-font-size-smallplus);
+    font-weight: 600;
+    color: var(--tss-default-foreground-color);
+}
+
+/* Modal chrome ------------------------------------------------------------------------------------ */
+
+/* A result opened is a sheet, not a dialog box: rounder than a modal usually is, and with a header and a
+   footer that are visibly its edges rather than bands of the same color as its content. */
+.tss-modal.tss-omniresult-modal {
+    border-radius: 16px;
+}
+
+.tss-modal.tss-omniresult-modal > .tss-modal-header {
+    gap: 8px;
+    padding: 8px 10px 8px 16px;
+    border-bottom: 1px solid var(--tss-default-border-color);
+}
+
+/* Only when the shortcuts are actually in it - a modal built without them keeps a footer that takes no
+   room, and drawing its edge would be drawing an edge around nothing. */
+.tss-modal.tss-omniresult-modal > .tss-modal-footer:has(.tss-omniresult-modal-shortcuts) {
+    padding: 0 16px;
+    border-top: 1px solid var(--tss-default-border-color);
+    background: var(--tss-secondary-background-color);
+}
+
+/* Full screen with nowhere else to go: the sheet grows to the window instead of opening a page. */
+.tss-modal.tss-omniresult-modal.tss-omniresult-modal-full {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0;
+}
+
+.tss-omniresult-modal-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 32px;
+    height: 32px;
+    margin: 0;
+    padding: 0 4px;
+    border: none;
+    border-radius: var(--tss-border-radius-sm);
+    background: transparent;
+    color: var(--tss-secondary-foreground-color);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.tss-omniresult-modal-button:hover:not(:disabled) {
+    background: var(--tss-default-background-hover-color);
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-omniresult-modal-button:disabled {
+    opacity: .35;
+    cursor: default;
+}
+
+/* Previous / next, with where in the list this result is between them - an InlinePagination, which
+   draws its own pill; the header only says where it sits. */
+.tss-omniresult-modal-nav {
+    margin: 0 6px;
+}
+
+/* "Open in Dropbox", with the other ways to open it behind the arrow beside it. */
+.tss-omniresult-modal-open {
+    display: inline-flex;
+    align-items: stretch;
+    flex-grow: 0;
+    flex-shrink: 1;
+    min-width: 0;
+    margin-right: 8px;
+    border-radius: var(--tss-border-radius-md);
+    background: var(--tss-primary-background-color);
+    color: var(--tss-primary-foreground-color);
+    overflow: hidden;
+}
+
+.tss-omniresult-modal-open-primary,
+.tss-omniresult-modal-open-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    height: 32px;
+    margin: 0;
+    padding: 0 12px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: var(--tss-font-size-small);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.tss-omniresult-modal-open-more {
+    padding: 0 8px;
+    border-left: 1px solid color-mix(in srgb, var(--tss-primary-foreground-color) 28%, transparent);
+}
+
+.tss-omniresult-modal-open-primary:hover,
+.tss-omniresult-modal-open-more:hover {
+    background: color-mix(in srgb, #000 12%, transparent);
+}
+
+/* Whatever marks the action - a glyph, or the source's own logo - drawn at one size either way. */
+.tss-omniresult-modal-open-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 0;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    line-height: 0;
+    font-size: var(--tss-font-size-small);
+}
+
+.tss-omniresult-modal-open-icon img,
+.tss-omniresult-modal-open-icon svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.tss-omniresult-modal-open-icon .tss-icon {
+    margin: 0;
+}
+
+.tss-omniresult-modal-open-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Behind the sheet in front, only the strip of the header shows - so it is the tile and the title
+   alone, on one line, sized to fit it. The source line under them, and the corner badges on the tile,
+   are dropped rather than clipped in half. */
+.tss-modalstack-peek .tss-omniresult-modal-main > .tss-omniresult-footer,
+.tss-modalstack-peek .tss-omniresult-modal-icon .tss-omniresult-icon-badge {
+    display: none;
+}
+
+.tss-modalstack-peek .tss-omniresult-modal-header {
+    gap: 8px;
+}
+
+/* Through the tile's own variables rather than its width and height, so a tile that grows with its text
+   (ModalKeepsIconInTitle) shrinks here as well without having its type name cropped to a square. */
+.tss-modalstack-peek .tss-omniresult-modal-icon .tss-omniresult-icon {
+    --tss-icontile-size: 24px;
+    --tss-icontile-radius: 6px;
+    --tss-icontile-glyph-size: 11px;
+}
+
+/* A tile that spells its file type out has to shrink with the tile, or "DOCX" is cropped rather than
+   scaled. The measured fit scales whatever size is pinned here, so a long type name still lands inside the
+   tile without this row having to know about it. */
+.tss-modalstack-peek .tss-omniresult-modal-icon .tss-icontile-text {
+    font-size: 6.5px;
+    letter-spacing: 0;
+}
+
+.tss-modalstack-peek .tss-omniresult-modal-title-text,
+.tss-modalstack-peek .tss-omniresult-id-value {
+    font-size: var(--tss-font-size-small);
+    line-height: 18px;
+}
+
+/* The commands beside the group are outlined buttons of their own - the arrows inside it are not,
+   since the group already draws their edge. */
+.tss-modal.tss-omniresult-modal .tss-modal-header-commands > .tss-omniresult-modal-button {
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-md);
+}
+
+/* What the modal answers, along its bottom edge. */
+.tss-omniresult-modal-shortcuts {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    padding: 6px 0;
+    font-size: var(--tss-font-size-xsmall);
+    line-height: 18px;
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-omniresult-modal-shortcut {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.tss-omniresult-modal-shortcut-label {
+    white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tss-omniresult,
+    .tss-omniresult-select,
+    .tss-omniresult-inline-commands,
+    .tss-omniresult-menu-button {
+        transition: none;
+    }
+
+    /* The purple title still says which row was viewed - only the pulse announcing it goes away. */
+    .tss-omniresult-viewed-flash,
+    .tss-omniresult-viewed-flash::after {
+        animation: none;
+    }
+}

@@ -1,0 +1,140 @@
+﻿/* File Selector and File Drop Area*/
+
+.tss-file-input {
+    width: 0px;
+    height: 0px;
+    overflow: hidden;
+    border: 0px;
+}
+
+    .tss-file-input .tss-btn {
+        padding: 0px;
+        margin: 0px;
+        margin-right: -16px;
+    }
+
+.tss-fileselector {
+    position: relative;
+    margin-right: 16px;
+}
+
+    .tss-fileselector .tss-textbox-container {
+        margin-bottom: 0 !important;
+        margin-right: 0 !important;
+    }
+
+.tss-filedroparea {
+    border: 2px dashed var(--tss-dark-border-color);
+    border-radius: 8px;
+    background: var(--tss-default-background-color);
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 150px;
+    margin: 0;
+    padding: 48px;
+    list-style: none;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    pointer-events: all;
+}
+
+    .tss-filedroparea.tss-dropping {
+        background: var(--tss-default-background-hover-color);
+    }
+
+.tss-filedroparea-message {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--tss-dark-border-color);
+}
+
+
+.tss-filedroparea-icon {
+    color: var(--tss-dark-border-color);
+    transition: transform 0.3s ease-in-out;
+    transform: translateY(0);
+    padding-bottom: 20px;
+    -webkit-text-stroke: 1px var(--tss-default-background-color);
+    font-size: 48px;
+}
+
+
+@-webkit-keyframes slideInUp {
+    0% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-16px);
+    }
+
+    100% {
+        transform: translateY(0);
+    }
+}
+
+@keyframes bounceIcon {
+        0% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-16px);
+    }
+
+    100% {
+        transform: translateY(0);
+    }
+}
+
+.tss-filedroparea.tss-dropping .tss-filedroparea-icon {
+    animation-name: bounceIcon;
+    -webkit-animation-name: bounceIcon;
+    animation-duration: 0.5s;
+    animation-iteration-count: 1;
+    -webkit-text-stroke: 1px var(--tss-default-background-hover-color);
+}
+
+
+.tss-filedroparea-wrapper {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    cursor: pointer;
+}
+
+    .tss-filedroparea-wrapper a,
+    .tss-filedroparea-wrapper button,
+    .tss-filedroparea-wrapper input,
+    .tss-filedroparea-wrapper select,
+    .tss-filedroparea-wrapper textarea,
+    .tss-filedroparea-wrapper [role="button"],
+    .tss-filedroparea-wrapper [role="link"] {
+        cursor: revert;
+    }
+
+.tss-filedroparea-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(var(--tss-default-background-color-root), 0.8);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 100;
+    border: 2px dashed var(--tss-dark-border-color);
+    border-radius: 8px;
+}
+
+.tss-filedroparea-wrapper.tss-dropping .tss-filedroparea-overlay {
+    display: flex;
+}

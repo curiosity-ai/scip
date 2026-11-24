@@ -1,0 +1,77 @@
+/* Questionnaire — inline question with selectable answer options */
+
+.tss-questionnaire {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: 8px;
+    background: var(--tss-default-background-color);
+    padding: 12px 14px;
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+.tss-questionnaire-question {
+    font-weight: var(--tss-font-weight-semibold, 600);
+    font-size: 14px;
+    color: var(--tss-colors-neutral-800, #1f2937);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.tss-questionnaire-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.tss-questionnaire-option {
+    background: var(--tss-default-background-color);
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--tss-colors-neutral-800, #1f2937);
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+    font-family: inherit;
+    line-height: 1.2;
+}
+
+.tss-questionnaire-option:hover:not(:disabled) {
+    background: var(--tss-default-background-hover-color);
+    border-color: var(--tss-primary-background-color);
+}
+
+.tss-questionnaire-option:disabled {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.tss-questionnaire-answered .tss-questionnaire-option {
+    opacity: 0.55;
+}
+
+.tss-questionnaire-answered .tss-questionnaire-option.tss-questionnaire-option-selected {
+    background: var(--tss-primary-background-color);
+    border-color: var(--tss-primary-border-color);
+    color: var(--tss-primary-foreground-color);
+    opacity: 1;
+    font-weight: var(--tss-font-weight-semibold, 600);
+}
+
+.tss-questionnaire-answered-badge {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    /* A tint of the primary under the page's own text colour: a darker shade of the primary as the
+       text would be a light shade in dark mode, and the primary itself is under 4.5:1 on its own tint. */
+    background: color-mix(in srgb, var(--tss-primary-background-color) 12%, var(--tss-default-background-color));
+    color: var(--tss-default-foreground-color);
+    font-size: 13px;
+    font-weight: var(--tss-font-weight-semibold, 600);
+    white-space: pre-wrap;
+    word-break: break-word;
+}

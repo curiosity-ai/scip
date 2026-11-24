@@ -1,0 +1,68 @@
+---
+name: modal
+description: A centered overlay surface that dims the page and hosts arbitrary content, with optional header, footer, command rows, blocking/non-blocking and light-dismiss modes. Use for dialogs, forms and detail overlays in a Tesserae (C#/Transpose) app.
+---
+
+# Modal
+
+A centered overlay window over a dimmed page. Supports a header, footer, command
+rows, dragging, dark mode, and blocking or non-blocking interaction. It backs
+higher-level surfaces like `Dialog`, `ProgressModal` and `TutorialModal`.
+
+## Create
+
+`Modal(IComponent header = null)` or `Modal(string header)`. Bring factories
+into scope with `using static Tesserae.UI;`.
+
+## Key configuration
+
+- `.Content` (property) / `.SetHeader(IComponent)` / `.SetFooter(IComponent)` — content regions.
+- `.SetHeaderCommands(...)` / `.SetFooterCommands(...)` / `.SetLeftHeaderCommands(...)` / `.SetLeftFooterCommands(...)` — command buttons.
+- `.Width(UnitSize)` / `.Height(UnitSize)` / `.ContentHeight(UnitSize)` — sizing.
+- `.LightDismiss()` / `.NoLightDismiss()` — click-outside (and Esc) to close.
+- `.Blocking()` / `.NonBlocking()` — block or allow interaction with the page beneath.
+- `.CenterContent()`, `.NoPadding()`, `.NoContentPadding()`, `.NoHeader()`, `.NoFooter()`, `.NoAnimation()` — layout tweaks.
+- Padding: a modal has no padding on its own box; the header, content and footer pad themselves (12px sideways, 6px above and below the header's and footer's parts). A theme can inset everything from the border by adding to those parts, not to the box: the Curiosity theme tops the header and footer up to 12px and gives the content 12px only where it is the part against the border (no header above, no footer below). `.NoContentPadding()` sets the content's padding inline, so content runs to the border (a side panel, an image, an editor) and the header and footer keep theirs; `.NoPadding()` also drops the header and footer padding. `Dialog`, `ModalStack` sheets and a modal shown with `.DrawerOnMobile()` in a drawer get no extra inset. Padding set on a part or on the modal itself (`.P(16)`) is inline and wins over a theme's.
+- `.Draggable()` / `.Dark()` / `.ShowCloseButton()` / `.HideCloseButton()`.
+- `.Show()`, `.ShowAt(fromTop, fromLeft, fromRight, fromBottom)`, `.ShowAsync()` (Task), `.ShowEmbedded()` (return as an embeddable `IComponent`).
+- `.Hide(Action onHidden = null)`, `.OnShow(...)`, `.OnHide(...)`.
+- `.DrawerOnMobile(bool = true)` — while `Theme.IsMobileMode` is on, show this same modal
+  (header, commands, footer, close button) in a `Drawer` sliding up from the bottom
+  instead of centred on the page. Decided at every `Show()`; `OnShow` / `OnHide` and
+  the bound value fire as usual, `.IsShowingInDrawer` says which one is up (`IsVisible`
+  is only ever the dialog). See `drawer.md`.
+- `.WithPixelAvatar(avatar | key + design, anchor)` — perch an animated pixel cat on one of the modal's own edges and get the modal back to go on configuring. See `pixel-avatar.md`.
+
+## Keyboard and focus
+
+- The close button is named "Close". The modal box takes the focus when it opens (`tabindex=-1`:
+  focusable from code, not a Tab stop), and Tab / Shift+Tab cycle through its controls only.
+- Escape is left to a menu, popover or layer open above the modal: it closes that, not the modal.
+- On close (Escape, the close button, light dismiss, `Hide()`) the focus returns to the element
+  that had it when the modal opened - usually the button that opened it - unless an `OnHide`
+  handler moved it elsewhere. `Dialog` and `ModalStack` behave the same (the stack restores once
+  its last sheet closes).
+
+## Example
+
+```csharp
+using static Tesserae.UI;
+
+Modal modal = Modal(TextBlock("Sample Modal"))
+    .LightDismiss()
+    .Width(50.vw())
+    .Height(50.vh())
+    .SetFooter(TextBlock("Footer"))
+    .CenterContent();
+modal.Show();
+```
+
+## Related
+
+- ModalStack — `modal-stack.md` (a deck of modals, when one opens another)
+- Dialog — `dialog.md` (prebuilt confirmation buttons)
+- Panel — `panel.md` (side drawer)
+- ShortcutGuide — `shortcut-guide.md` (a modal listing the app's keyboard shortcuts)
+- Float — `float.md`
+- PixelAvatar — `pixel-avatar.md` (a cat perched on the modal's top edge)
+- Full docs & API: `/tesserae/overlays/modal`

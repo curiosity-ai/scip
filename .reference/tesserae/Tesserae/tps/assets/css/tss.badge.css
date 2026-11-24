@@ -1,0 +1,148 @@
+.tss-token {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: var(--tss-font-size-xsmall);
+    background: var(--tss-secondary-background-color);
+    color: var(--tss-default-foreground-color);
+    border: 1px solid transparent;
+    white-space: nowrap;
+    /* A badge, tag or chip is a label: dragging across it should not select its text */
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.tss-badge {
+    font-weight: var(--tss-font-weight-semibold);
+}
+
+.tss-tag {
+    background: var(--tss-default-background-color);
+    border: 1px solid var(--tss-default-border-color);
+}
+
+.tss-chip {
+    border-radius: 16px;
+}
+
+.tss-token-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tss-token-pill {
+    border-radius: 999px;
+}
+
+.tss-token-outline {
+    background: transparent;
+    border-color: var(--tss-default-border-color);
+}
+
+.tss-token-filled {
+    background: var(--tss-secondary-background-color);
+}
+
+.tss-token-primary {
+    background: var(--tss-primary-background-color);
+    color: var(--tss-primary-foreground-color);
+}
+
+.tss-token-success {
+    background: var(--tss-success-background-color);
+    color: var(--tss-success-foreground-color);
+}
+
+.tss-token-warning {
+    background: var(--tss-warning-background-color);
+    color: var(--tss-warning-foreground-color);
+}
+
+.tss-token-danger {
+    background: var(--tss-danger-background-color);
+    color: var(--tss-danger-foreground-color);
+}
+
+.tss-token-info {
+    background: var(--tss-link-color);
+    color: var(--tss-primary-foreground-color);
+}
+
+.tss-token-outline.tss-token-primary {
+    color: var(--tss-primary-background-color);
+    border-color: var(--tss-primary-background-color);
+    background: transparent;
+}
+
+.tss-token-outline.tss-token-success {
+    color: var(--tss-success-background-color);
+    border-color: var(--tss-success-background-color);
+    background: transparent;
+}
+
+.tss-token-outline.tss-token-warning {
+    color: var(--tss-warning-background-color);
+    border-color: var(--tss-warning-background-color);
+    background: transparent;
+}
+
+.tss-token-outline.tss-token-danger {
+    color: var(--tss-danger-background-color);
+    border-color: var(--tss-danger-background-color);
+    background: transparent;
+}
+
+.tss-token-outline.tss-token-info {
+    color: var(--tss-link-color);
+    border-color: var(--tss-link-color);
+    background: transparent;
+}
+
+/* A glyph sits on a line box of its own size. Left to inherit the page's 1.4 line-height, a 12px icon made
+   a 16.8px box, taller than the 11px label's line, so a badge with an icon - or with a remove button,
+   whose <button> brings the browser's own font and line-height - came out taller than the same badge
+   without one, and a row of mixed badges did not line up. */
+.tss-token-icon {
+    font-size: 12px;
+    line-height: 1;
+}
+
+.tss-token-remove {
+    border: none;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    line-height: 1;
+    margin-left: 4px;
+    cursor: pointer;
+    color: inherit;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tss-token-remove i {
+    font-size: 12px;
+    line-height: 1;
+}
+
+/* Tint(color): any colour, as an issue tracker's user-picked label. The text is mixed from the tint and the page's
+   foreground, so it darkens on a light page and lightens on a dark one and stays readable either way. */
+.tss-token-tinted {
+    background: color-mix(in srgb, var(--tss-token-tint) 18%, transparent);
+    border-color: color-mix(in srgb, var(--tss-token-tint) 45%, transparent);
+    color: color-mix(in srgb, var(--tss-token-tint) 62%, var(--tss-default-foreground-color));
+    font-weight: var(--tss-font-weight-semibold);
+}
+
+/* The status dot of a badge: a swatch in the color it is given, or in the text's own color. */
+.tss-token-dot {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}

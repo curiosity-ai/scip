@@ -1,0 +1,270 @@
+---
+name: tesserae
+description: Build web UIs in C# with the Tesserae toolkit (compiled to JavaScript by the Transpose compiler) — components, fluent configuration, layout with Stack/Grid, and sizing/spacing helpers. Use when writing or editing a Tesserae app, picking a component, laying out a UI, or looking up a component's API. Per-component references live in references/.
+---
+
+# Tesserae
+
+Tesserae is a C# UI toolkit for building web applications. You write strongly-typed
+C#; the **Transpose** compiler translates it to JavaScript that runs in the browser. The
+API is fluent and component-based, loosely inspired by Microsoft's Fluent UI.
+
+Bring the factories and DOM helpers into scope at the top of a file:
+
+```csharp
+using static Tesserae.UI;     // component factories: Button(), Stack(), TextBlock()…
+using static Transpose.Core.dom;     // browser globals: document, window, console…
+```
+
+## Using components
+
+Every component implements `IComponent` (one method, `HTMLElement Render()`).
+You create components with `UI.` factory methods, configure them with fluent
+`this`-returning helpers, compose them inside containers, and mount a root
+component to the page.
+
+```csharp
+private static void Main()
+{
+    var ui = Stack().Children(
+        TextBlock("Hello").Large().SemiBold(),
+        Button("Click me").Primary().OnClick((_, __) => alert("clicked"))
+    );
+
+    document.body.style.overflow = "hidden";
+    MountCenteredToBody(ui);          // or MountToBody(ui)
+}
+```
+
+- **Create**: `Button("Save")`, `TextBox()`, `Stack()`, … (some components are also
+  `new`-ed, e.g. `new Modal(...)`).
+- **Configure**: chain fluent methods — `.Primary()`, `.Disabled()`, `.OnClick(...)`.
+- **Compose**: `.Add(child)` appends one child; `.Children(...)` **replaces** the
+  container's children with the ones passed. Pass the whole list in a single call —
+  `.Children(a).Children(b)` leaves only `b`, silently.
+- **Mount**: `MountToBody` / `MountCenteredToBody` attach the root to the DOM.
+
+> **Reaching a nested type.** `using static Tesserae.UI;` imports a factory *method* for
+> almost every component, and a method hides a same-named type. So inside your own
+> namespace `Float.Position.TopLeft`, `Dialog.Response.Yes`, `OmniBox.Config`,
+> `SaveButton.State`, `Teaching.StepType` and friends do not compile
+> (`CS0119: … is a method, which is not valid in the given context`) — qualify them:
+> `Tesserae.Float.Position.TopLeft`. The same applies to statics such as
+> `Tesserae.KeyboardShortcut.Matches(...)` and `Tesserae.Icon.Transform(...)`.
+
+## Layout: Stack and Grid
+
+`Stack` and `Grid` are the two workhorse containers. Most layouts are nested
+stacks.
+
+**Stack** — a flexbox container, vertical by default. Use `HStack()`/`VStack()`
+for explicit orientation.
+
+```csharp
+HStack()                          // horizontal
+    .AlignItemsCenter()           // center children on the cross axis
+    .Gap(8.px())                  // space between children
+    .Children(
+        Icon(UIcons.User),
+        TextBlock("Profile").Grow(),   // claims leftover main-axis space
+        Button("Edit")
+    );
+```
+
+Key `Stack` methods: `Horizontal()` / `Vertical()` (and `…Reverse()`),
+`Wrap()` / `NoWrap()`, `Gap(size)`, `AlignItems(ItemAlign)` /
+`AlignItemsCenter()`, `JustifyContent(ItemJustify)`, `AlignContent(...)`.
+
+**Grid** — a CSS-Grid container with explicit tracks. Place children with the
+`.GridColumn(...)` / `.GridRow(...)` extensions (call them before `.Add`).
+
+```csharp
+Grid()
+    .Columns(200.px(), 1.fr())    // two columns: fixed sidebar + flexible body
+    .Rows(new[] { UnitSize.Auto(), 1.fr() })
+    .Gap(12.px())
+    .AlignItemsCenter();
+```
+
+Key `Grid` methods: `Columns(...)`, `Rows(...)`, `Gap`/`RowGap`/`ColumnGap`,
+`AutoRows`/`AutoColumn`, `FlowColumn()`, `AlignItems(...)`, `Relative()`.
+
+See `references/stack.md`, `references/grid.md`, and `references/layout-alignment.md`
+for the full story, and `references/split-view.md` / `references/masonry.md` /
+`references/float.md` for the other layout containers.
+
+## Sizing, spacing, and alignment (extension methods on any component)
+
+These fluent helpers work on **any** `IComponent` (they are generic extensions,
+not per-component members). Call them before adding the component to a container.
+
+| Concern | Methods |
+| --- | --- |
+| Width | `.Width(size)` / `.W(size)`, `.MinWidth`, `.MaxWidth`, `.WidthStretch()` / `.WS()` (100%) |
+| Height | `.Height(size)` / `.H(size)`, `.MinHeight`, `.MaxHeight`, `.HeightStretch()` / `.HS()` (100%) |
+| Both | `.Stretch()` / `.S()` (width + height 100%) |
+| Flex grow/shrink | `.Grow(int = 1)`, `.Shrink()`, `.NoShrink()` |
+| Margin | `.Margin(size)` / `.M(size)`, `.ML` `.MR` `.MT` `.MB` (left/right/top/bottom) |
+| Padding | `.Padding(size)` / `.P(size)`, `.PL` `.PR` `.PT` `.PB` |
+| Self-alignment | `.AlignStart()`, `.AlignCenter()`, `.AlignEnd()`, `.AlignStretch()`, `.JustifyStart/Center/End()` |
+
+Sizes are `UnitSize` values from numeric helpers: `100.px()`, `50.percent()`,
+`1.fr()`, `100.vw()`, `100.vh()` — plus `UnitSize.Auto()`, `UnitSize.FitContent()`
+and raw `new UnitSize("calc(100% - 32px)")` for anything else.
+
+> **Space between components is margin, not padding.** A child's own element is the
+> flex item (there is no wrapper div), so `.P()` / `.PT()` / `.PB()` land *inside* the
+> component's box: on a `Button` they inflate the control and push its label around,
+> and on a fixed-height control like `SearchBox` (`height: 36px`, `box-sizing:
+> border-box`) the padding is swallowed — measured in Chromium, `.PB(8)` leaves the
+> box 36px tall, shrinks its content box to 27px so the 36px input overflows it, and
+> moves nothing below it. `.MB(8)` on the same box gives the 8px gap. Reach for
+> padding only when you mean the component's own inner padding.
+
+> **Container-level vs. item-level alignment.** `AlignItemsCenter()` is a method on
+> `Stack`/`Grid` that centers *all* children. `.AlignCenter()` is an extension on a
+> single child (align-self). `.Grow()` only matters inside a `Stack`.
+
+> **Where sizing lands:** `.WS()`/`.W()`/`.Grow()` write to the child's own element,
+> which is the flex/grid item the container measures (it is tagged `tss-stack-item`).
+> An explicit `.Width()`/`.Height()` also clears the component's own intrinsic
+> `min-width`/`min-height`, so the size you asked for wins; ask for `.MinWidth()`/
+> `.MinHeight()` if you want a floor as well. Full catalog in
+> `references/icomponent.md`.
+
+> **What stretches by default.** A stack stretches its children across the cross
+> axis, so a `TextBox`, `Card` or nested `Stack` fills the width of a vertical
+> stack without being asked. Components that are inline by nature — `Button`,
+> `Toggle`, `Avatar`, `Icon`, `Rating` and friends — hug their content instead;
+> call `.WS()` on one to make it fill the row.
+
+## Picking a layout
+
+- One-axis flow (toolbar, sidebar, form) → `Stack` (`references/stack.md`).
+- Two-axis grid with named tracks → `Grid` (`references/grid.md`).
+- Two resizable panes → `SplitView` / `HorizontalSplitView`.
+- A workspace of tool panes around a document (dock, tab, auto-hide, save the layout) → `DockPanel` (`references/dock-panel.md`).
+- Pinned overlay on a parent → `Float`.
+- Variable-height tile feed → `Masonry`.
+- Modal / popover that must escape clipping → `Layer` (usually via `Dialog`,
+  `Modal`, `ContextMenu`).
+
+## Reference library — `references/`
+
+Detailed, per-topic docs live in `references/`, one file per component or topic,
+named by its kebab-case slug: **`references/<slug>.md`** (e.g.
+`references/dropdown.md`, `references/details-list.md`). Each reference has the
+factory signature, the key fluent methods, an example, and links to related
+references. Open the reference for whatever you are working with. The full set:
+
+**Concepts & extending** (read these to understand the model)
+- `references/core-concepts.md` — IComponent, fluent API, layout, reactive state.
+- `references/icomponent.md` — the `IComponent` interface and **every** sizing/
+  spacing/styling/event extension method.
+- `references/styling.md`, `references/layout-alignment.md`,
+  `references/custom-styles.md`, `references/colors.md`,
+  `references/theme-colors.md`, `references/custom-themes.md` (switchable theme
+  packages via `ICustomTheme`, e.g. Tesserae.Themes.Curiosity), `references/iconography.md`,
+  `references/accessibility.md`, `references/project-setup.md`,
+  `references/routing.md`.
+- `references/observables.md` — the reactive state containers `Defer` and the
+  collection components read from.
+  Text that changes is bound, not deferred: `TextBlock(obs, v => $"…{v}")` updates
+  the one element in place; `DeferSync(obs, v => TextBlock(...))` rebuilds it and
+  flickers (`references/text-block.md`).
+- `references/creating-a-component.md` — build your own `IComponent`.
+- `references/markdown-block.md` ("Content sources") — `MarkdownContentSources`: which
+  hosts rendered Markdown may load images, diagram pictures and chart data from
+  (`Any`, `SameOrigin`, `SameOriginAnd(hosts)`), for Markdown a model wrote.
+- `references/flint-charts.md` — `flint` fences in Markdown drawn as charts
+  (`MarkdownBlock.Flint()`), themed through `IFlintTheme` / `FlintThemes`.
+  The same specs as a component, with click events and Vega-Lite legend / scale binding:
+  `references/flint-chart.md` (`UI.FlintChart(...)`).
+- `references/yjs.md` — real-time collaborative editing: `Yjs.LoadAsync()`, the typed `Y` declarations
+  (`Y.Doc`, `Y.Text`, `Y.UndoManager`, …), `Awareness`, `YjsSyncProvider` over your own transport,
+  `YjsUserColors`, `TextArea.BindYjs(text)`, and `SquireEditor.BindYjs(text, awareness)` for rich text over
+  shared Markdown.
+- `references/javascript-interop.md` — call JS/browser APIs from C# via Transpose.
+- `references/wrap-a-javascript-library.md` — wrap a third-party JS library.
+
+**Layout** — containers you build a page out of
+accordion · background-area · card · dock-panel · expander · grid · horizontal-separator ·
+horizontal-split-view · hub · masonry · section-stack · split-view · stack · vertical-separator
+
+**Text & Content** — text, labels and rich content blocks
+badge · code-diff · icon-tile · inline-label · keyboard-shortcut · label ·
+list-item-text · markdown-block · section-title · text-block
+
+**Buttons & Commands** — things the user clicks to do something
+action-button · button · command-bar · command-palette · context-menu ·
+icon-toggle · menu · overflow-set · toggle-button
+
+**Inputs** — form controls that capture a value
+annotated-text-editor · auto-complete-box · check-box · choice-group · color-picker · dictation-targets · dropdown ·
+editable-area · editable-label · file-selector-and-drop-area · grid-picker ·
+number-picker · option · picker · rating · slider · squire-editor · steps-slider · tags-input
+· text-area · text-box · toggle
+
+**Date & Time** — calendar, clock and schedule pickers
+cron-editor · date-picker · date-range-picker · date-time-picker ·
+month-picker · scheduler · time-histogram-picker · time-picker · week-picker
+
+**Forms & Validation** — binding a form to data, validating and saving it
+property-grid · questionnaire · save-button · saving-toast ·
+unsaved-changes-guard · validator
+
+**Navigation** — moving between pages, sections and tabs
+breadcrumb · card-pivot · inline-pagination · navbar · pagination · pivot ·
+pivot-selector · segmented-pivot · sidebar · sidebar-brand · sidebar-divider ·
+sidebar-page-bar · sidebar-profile · sidebar-section-header · sidebar-separator ·
+sidebar-status-card · sidenav · stepper · text-breadcrumbs
+
+**Lists & Data** — rendering a collection of items
+conversation · details-grid · details-list · infinite-scrolling-list · items-list ·
+json-viewer · keyed-observable-stack · metadata-panel · observable-stack · sortable-stack ·
+stateful-item-row · task-board · timeline · tree · virtualized-list
+
+**Search** — search inputs and their result surfaces
+mark-highlighter · omni-box · omni-result · search-box ·
+searchable-grouped-list · searchable-list
+
+**Charts & Visualization** — numbers and relationships, drawn
+activity-calendar · bar-list · charts · contribution-bar · data-table · diagram · flint-chart · gantt-chart · mermaid · metric ·
+node-view · sparkline · target-bar · tree-map · trend-badge · uptime
+
+**Feedback & Status** — progress, notifications and empty states
+banner · live-progress · message · notification-center · progress-indicator ·
+progress-modal · progress-ring · skeleton · spinner · tippy · toast
+
+**Overlays & Dialogs** — surfaces that float above the page
+dialog · drawer · float · layer · modal · modal-stack · panel · popover · shortcut-guide
+· tabbed-modal · teaching · tutorial-modal
+
+**AI & Chat** — conversation, tool calls and their context
+ai-variants · chat · chat-time-divider · context-card · context-cards · conversation-list · worker-card · inline-diff · plan · action-card ·
+resource-card · tool-agent-selector · tool-call
+
+**Media & Graphics** — images, avatars and embedded content
+audio-player · avatar · carousel · image · pages-stack · pixel-avatar · sandbox · video-player
+
+**Theming & Icons** — colours, gradients, icons and emoji
+color-palette · custom-themes · emoji · gradients · icon · theme-builder · uicons
+
+**Utilities & Behaviors** — helpers that render little or nothing on their own
+defer · defer-with-progress · delta-component · gestures · visibility-sensor · yjs
+
+To find the reference for a component, lowercase-kebab its name and open
+`references/<that>.md` (e.g. `DetailsList` → `references/details-list.md`). If you
+are unsure which component fits, find the category above that matches what you are
+trying to do, then open the candidate's reference. The categories are the same ones
+the sample gallery and the online documentation use, so a component sits in the same
+place in all three.
+
+The reverse also holds, and is the cheap way to avoid guessing an API that does not
+exist: the factory is the slug in PascalCase, spelled exactly as the reference spells
+it — `check-box` is `CheckBox()`, not `Checkbox()`; `text-box` is `TextBox()`. C# is
+case-sensitive, so a wrong hump is a `CS0103` at build time and not a runtime
+surprise. When a helper you expect is missing from a component's reference, look for
+it in `references/icomponent.md` (the extension methods every component has) before
+concluding it is absent; `Raw(HTMLElement)` wraps a DOM element you manage yourself as
+an `IComponent` when there is genuinely no component for the job.

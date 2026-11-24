@@ -1,0 +1,848 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using Transpose.Core;
+using TNT;
+using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A Button component for use within a Sidebar, supporting both open and closed states.
+    /// </summary>
+    public class SidebarButton : ISearchableSidebarItem
+    {
+        private readonly Button                   _closedButton;
+        private readonly Button                   _openButton;
+        private readonly IComponent               _closed;
+        private readonly IComponent               _open;
+        private readonly SidebarCommand[]         _commands;
+        private readonly SidebarBadge             _badge;
+        private          Action<IComponent>       _tooltipClosed;
+        private readonly ISidebarIcon             _image;
+        private          Action<IComponent>       _tooltipOpen;
+        private readonly SettableObservable<bool> _selected;
+        private readonly string                   _text;
+        private          HTMLElement              _shortcutChip;
+        private          ResizeObserver           _badgeObserver;
+        private          string[]                 _shortcutKeys;
+        private          Action<Event>            _globalShortcutHandler;
+
+        private event Action<HTMLElement> _onRendered;
+
+        /// <summary>Gets or sets whether the button is currently selected.</summary>
+        public bool IsSelected
+        {
+            get { return _selected.Value; }
+            set
+            {
+                _selected.Value = value;
+
+                if (value)
+                {
+                    CurrentRendered?.ScrollIntoView();
+                }
+            }
+        }
+
+        /// <summary>Gets an observable for the selected status.</summary>
+        public IObservable<bool> SelectedStatus => _selected;
+
+        /// <summary>Gets the component that is currently rendered.</summary>
+        public IComponent CurrentRendered => _closedButton.IsMounted() ? _closed : _open;
+
+        /// <summary>Gets the full identifier of the button.</summary>
+        public string Identifier { get; private set; }
+
+        /// <summary>Gets the own identifier of the button.</summary>
+        public string OwnIdentifier => Sidebar.GetOwnIdentifier(Identifier);
+
+        /// <summary>Adds a group identifier prefix to the button's identifier.</summary>
+        public void AddGroupIdentifier(string groupIdentifier)
+        {
+            Identifier = Sidebar.WithGroupIdentifier(Identifier, groupIdentifier);
+        }
+
+        public SidebarButton(string identifier, Emoji        icon,  string       text,   params SidebarCommand[] commands) : this(identifier, null, text, null, Button().SetIcon(icon), Button().SetIcon(icon), commands) { }
+        public SidebarButton(string identifier, Emoji        icon,  string       text,   SidebarBadge            badge, params SidebarCommand[] commands) : this(identifier, null, text, badge, Button().SetIcon(icon), Button().SetIcon(icon), commands) { }
+        public SidebarButton(string identifier, ISidebarIcon image, string       text,   params SidebarCommand[] commands) : this(identifier, null, image, text, null, commands) { }
+        public SidebarButton(string identifier, UIcons       icon,  string       text,   SidebarBadge            badge, params SidebarCommand[] commands) : this(identifier, null, icon, UIconsWeight.Regular, text, badge, commands) { }
+        public SidebarButton(string identifier, UIcons       icon,  string       text,   params SidebarCommand[] commands) : this(identifier, null, icon, text, null, commands) { }
+        public SidebarButton(string identifier, UIcons       icon,  UIconsWeight weight, string                  text, params SidebarCommand[] commands) : this(identifier, null, icon, weight, text, null, commands) { }
+
+        public SidebarButton(string identifier, UIcons icon, UIconsWeight weight, string text, SidebarBadge badge, params SidebarCommand[] commands) : this(identifier, null, text, badge, Button().SetIcon(icon, weight: weight), Button().SetIcon(icon, weight: weight), commands) { }
+
+        public SidebarButton(string identifier, string href, Emoji        icon,  string       text,   params SidebarCommand[] commands) : this(identifier, href, text, null, Button().SetIcon(icon), Button().SetIcon(icon), commands) { }
+        public SidebarButton(string identifier, string href, Emoji        icon,  string       text,   SidebarBadge            badge, params SidebarCommand[] commands) : this(identifier, href, text, badge, Button().SetIcon(icon), Button().SetIcon(icon), commands) { }
+        public SidebarButton(string identifier, string href, ISidebarIcon image, string       text,   params SidebarCommand[] commands) : this(identifier, href, image, text, null, commands) { }
+        public SidebarButton(string identifier, string href, UIcons       icon,  string       text,   SidebarBadge            badge, params SidebarCommand[] commands) : this(identifier, href, icon, UIconsWeight.Regular, text, badge, commands) { }
+        public SidebarButton(string identifier, string href, UIcons       icon,  string       text,   params SidebarCommand[] commands) : this(identifier, href, icon, text, null, commands) { }
+        public SidebarButton(string identifier, string href, UIcons       icon,  UIconsWeight weight, string                  text, params SidebarCommand[] commands) : this(identifier, href, icon, weight, text, null, commands) { }
+
+        public SidebarButton(string identifier, string href, UIcons icon, UIconsWeight weight, string text, SidebarBadge badge, params SidebarCommand[] commands) : this(identifier, href, text, badge, Button().SetIcon(icon, weight: weight), Button().SetIcon(icon, weight: weight), commands) { }
+
+        private SidebarButton(string identifier, string href, string text, SidebarBadge badge, Button buttonWithIconClosed, Button buttonWithIconOpen, params SidebarCommand[] commands)
+        {
+            Identifier     = identifier;
+            _text          = text;
+            _selected      = new SettableObservable<bool>(false);
+            _tooltipClosed = (b) => b.Tooltip(text, placement: TooltipPlacement.Right);
+
+            _closedButton = buttonWithIconClosed.Class("tss-sidebar-btn").Id(identifier);
+            _openButton   = buttonWithIconOpen.SetText(text).Class("tss-sidebar-btn").Id(identifier);
+
+            _closed = string.IsNullOrWhiteSpace(href) ? (IComponent)_closedButton : Raw(A(Att("tss-link-no-underline", href: href), _closedButton.Render()));
+
+            _commands = commands;
+            _badge    = badge;
+
+            _open = Wrap(_openButton);
+
+            var hookContextMenu = _commands.FirstOrDefault(c => c.ShouldHookToContextMenu);
+
+            if (hookContextMenu is object)
+            {
+                OnContextMenu((b, e) => hookContextMenu.RaiseOnClick(e));
+            }
+
+            _selected.Observe(isSelected =>
+            {
+                if (isSelected)
+                {
+                    _closedButton.Class("tss-sidebar-selected");
+                    _open.Class("tss-sidebar-selected");
+                }
+                else
+                {
+                    _closedButton.RemoveClass("tss-sidebar-selected");
+                    _open.RemoveClass("tss-sidebar-selected");
+                }
+            });
+
+            IComponent Wrap(Button button)
+            {
+                var div = Div(Att("tss-sidebar-btn-open"));
+
+                if (!string.IsNullOrWhiteSpace(href))
+                {
+                    var link = A(Att("tss-link-no-underline", href: href), button.Render());
+                    link.style.display        = "block";
+                    link.style.textDecoration = "none";
+                    div.appendChild(link);
+                }
+                else
+                {
+                    div.appendChild(button.Render());
+                }
+
+                if (_badge is object)
+                {
+                    var divBadge = Div(Att("tss-sidebar-badges"));
+                    div.appendChild(divBadge);
+                    divBadge.appendChild(_badge.Render());
+                    TrackBadgeWidth(div, divBadge);
+                }
+
+                if (_commands is object && _commands.Length > 0)
+                {
+                    var divCmd = Div(Att("tss-sidebar-commands"));
+                    div.appendChild(divCmd);
+                    ReserveRoomForCommands(div, _commands.Length);
+
+                    foreach (var c in _commands)
+                    {
+                        divCmd.appendChild(c.Render());
+                    }
+                }
+                return Raw(div);
+            }
+        }
+
+        /// <summary>
+        /// Marks the row as one that has commands, and says how wide its strip of them is - each is a
+        /// 22px button with a 4px gap between them. Only the row knows how many it has, so it writes
+        /// both here and the stylesheet reads them back to lay the label out beside the strip wherever
+        /// the strip is permanent - always-visible, or selected. On hover the label keeps the full width
+        /// of the rail and fades out into the row where the commands begin instead (see
+        /// <c>tss-sidebar-has-commands</c> and the scrim on it in tss.sidebar.css).
+        /// </summary>
+        private static void ReserveRoomForCommands(HTMLElement wrapper, int commandCount)
+        {
+            wrapper.classList.add("tss-sidebar-has-commands");
+            wrapper.style.setProperty("--tss-sidebar-commands-width", (commandCount * 26 - 4) + "px");
+        }
+
+        /// <summary>
+        /// Marks the row as one that carries a badge, and keeps how wide the badge is up to date. A badge is
+        /// drawn over the row's right edge the way the commands are, so the name has to give way to it or a
+        /// long one runs underneath the glyph - which is what a shared-space icon sitting on the last letters
+        /// of the space's name was. The stylesheet keeps room for it at rest and fades the name out into it
+        /// under the pointer, and both are sized from how wide the badge is. Unlike the commands there is no
+        /// count to compute that from - a badge is an icon, or "+3", or "+1,204" - so it is measured, and
+        /// re-measured whenever its text changes, and written where the stylesheet reads it back (see
+        /// <c>tss-sidebar-has-badge</c> in tss.sidebar.css). The badge is hidden with visibility rather than
+        /// display where the commands take its place, so the measurement stays true.
+        /// </summary>
+        private void TrackBadgeWidth(HTMLElement wrapper, HTMLElement badges)
+        {
+            wrapper.classList.add("tss-sidebar-has-badge");
+
+            _badgeObserver = new ResizeObserver((entries, obs) =>
+            {
+                if (!badges.isConnected) return; //A detached row - the closed rail renders its own markup - measures as nothing, and would hand the label a width it loses again the moment the row is back.
+
+                wrapper.style.setProperty("--tss-sidebar-badge-width", badges.offsetWidth + "px");
+            });
+
+            _badgeObserver.observe(badges);
+        }
+
+        /// <summary>Shows the button.</summary>
+        public void Show()
+        {
+            _closedButton.Show();
+            _open.Show();
+        }
+
+        /// <summary>Collapses the button.</summary>
+        public void Collapse()
+        {
+            _closedButton.Collapse();
+            _open.Collapse();
+        }
+
+        public SidebarButton Class(string className)
+        {
+            _closedButton.Class(className);
+            _open.Class(className);
+            return this;
+        }
+
+
+        /// <summary>
+        /// Marks the button as not sortable.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton NotSortable()
+        {
+            _closedButton.Class("tss-sortable-disable");
+            _open.Class("tss-sortable-disable");
+            return this;
+        }
+
+        public SidebarButton(string identifier, ISidebarIcon image, string text, SidebarBadge badge, params SidebarCommand[] commands) : this(identifier, null, image, text, badge, commands) { }
+
+        public SidebarButton(string identifier, string href, ISidebarIcon image, string text, SidebarBadge badge, params SidebarCommand[] commands)
+        {
+            Identifier = identifier;
+            _text      = text;
+            _selected  = new SettableObservable<bool>(false);
+
+            _tooltipClosed = (b) => b.Tooltip(text, placement: TooltipPlacement.Right);
+
+            _image = image;
+
+            _closedButton = Button().Class("tss-sidebar-btn").ReplaceContent(image).Id(identifier);
+
+            _openButton = Button(text).ReplaceContent(Raw(Div(Att("tss-btn-with-image"), image.Clone().Render(), Span(Att(text: text))))).Class("tss-sidebar-btn").Id(identifier);
+
+            _closed = string.IsNullOrWhiteSpace(href) ? (IComponent)_closedButton : Raw(A(Att("tss-link-no-underline", href: href), _closedButton.Render()));
+
+            _commands = commands;
+            _badge    = badge;
+
+            _open = Wrap(_openButton);
+
+            _selected.Observe(isSelected =>
+            {
+                if (isSelected)
+                {
+                    _closedButton.Class("tss-sidebar-selected");
+                    _open.Class("tss-sidebar-selected");
+                }
+                else
+                {
+                    _closedButton.RemoveClass("tss-sidebar-selected");
+                    _open.RemoveClass("tss-sidebar-selected");
+                }
+            });
+
+            IComponent Wrap(Button button)
+            {
+                var div = Div(Att("tss-sidebar-btn-open"));
+
+                if (!string.IsNullOrWhiteSpace(href))
+                {
+                    var link = A(Att("tss-link-no-underline", href: href), button.Render());
+                    link.style.display        = "block";
+                    link.style.textDecoration = "none";
+                    div.appendChild(link);
+                }
+                else
+                {
+                    div.appendChild(button.Render());
+                }
+
+                if (_badge is object)
+                {
+                    var divBadge = Div(Att("tss-sidebar-badges"));
+                    div.appendChild(divBadge);
+                    divBadge.appendChild(_badge.Render());
+                    TrackBadgeWidth(div, divBadge);
+                }
+
+                if (_commands.Length > 0)
+                {
+                    var divCmd = Div(Att("tss-sidebar-commands"));
+                    div.appendChild(divCmd);
+                    ReserveRoomForCommands(div, _commands.Length);
+
+                    foreach (var c in _commands)
+                    {
+                        divCmd.appendChild(c.Render());
+                    }
+                }
+                return Raw(div);
+            }
+        }
+
+        /// <summary>
+        /// Clears the progress indication background.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton ClearProgress()
+        {
+            _openButton.Background   = "";
+            _closedButton.Background = "";
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a progress indication background.
+        /// </summary>
+        /// <param name="progress">The progress value (0 to 1).</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Progress(float progress)
+        {
+            var p = $"linear-gradient(to right, rgba(var(--tss-primary-background-color-root),0.2), rgba(var(--tss-primary-background-color-root),0.2) {progress * 100:0.0}%, transparent 0)";
+            _openButton.Background   = p;
+            _closedButton.Background = p;
+            return this;
+        }
+
+
+        /// <summary>
+        /// Sets the text of the button.
+        /// </summary>
+        /// <param name="text">The text.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton SetText(string text)
+        {
+            if (_image is object)
+            {
+                _openButton.ReplaceContent(Raw(Div(Att("tss-btn-with-image"), _image.Clone().Render(), Span(Att(text: text)))));
+            }
+            else
+            {
+                _openButton.SetText(text);
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Ensures that commands associated with the button are always visible when the sidebar is open.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton CommandsAlwaysVisible(bool alwaysVisible = true)
+        {
+            if (alwaysVisible)
+            {
+                _open.Class("tss-sidebar-commands-always-open");
+            }
+            else
+            {
+                _open.RemoveClass("tss-sidebar-commands-always-open");
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the button to use a light style.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Light()
+        {
+            _open.Class("tss-sidebar-btn-light");
+            _closedButton.Class("tss-sidebar-btn-light");
+            return this;
+        }
+
+        /// <summary>
+        /// Renders the button with rounded corners (defaults to a fully rounded "pill" shape),
+        /// matching the rounded SidebarSearchBox style.
+        /// </summary>
+        /// <param name="radius">The border radius to apply. Defaults to <see cref="BorderRadius.Full"/>.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Rounded(BorderRadius radius = BorderRadius.Full)
+        {
+            _openButton.Rounded(radius);
+            _closedButton.Rounded(radius);
+            _open.Class("tss-sidebar-btn-rounded");
+            _closedButton.Class("tss-sidebar-btn-rounded");
+            return this;
+        }
+
+        /// <summary>
+        /// Draws the button with a field's chrome - a border and the secondary surface behind it - instead of
+        /// as a bare row. What a rail's own action wants when it stands next to a search box: the same outline,
+        /// so the two read as a pair of controls rather than as a button beside a form field.
+        /// <para>
+        /// Only the open button takes it; around a single glyph on the closed rail an outline is just a box.
+        /// </para>
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Outlined()
+        {
+            _openButton.Class("tss-sidebar-btn-outlined");
+            return this;
+        }
+
+        /// <summary>
+        /// Dresses the button as a search field: a rounded outline, the label set as a placeholder rather
+        /// than as a label, and - when keys are given - the shortcut that reaches it shown at the far end.
+        /// <para>
+        /// For a search that answers somewhere else, which is most of them now: what the box would be for
+        /// happens in a palette or on a page, so the thing on the rail only has to look like where a search
+        /// starts and be pressable. A real input would take a caret it has nothing to do with.
+        /// </para>
+        /// </summary>
+        /// <param name="shortcutKeys">
+        /// The keys to show at the end, e.g. <c>("Ctrl", "K")</c>. None hides it. The chip is a label only -
+        /// use <see cref="SetKeyboardShortcut"/> for the key to press the button as well, which a search that
+        /// answers somewhere else usually does not want: the palette or page it opens owns that key, and
+        /// answers it from inside a text field too, where a button's shortcut steps aside.
+        /// </param>
+        public SidebarButton AsSearchBox(params string[] shortcutKeys)
+        {
+            Rounded();
+            Outlined();
+
+            _open.Class("tss-sidebar-btn-searchbox");
+            _openButton.Class("tss-sidebar-btn-searchbox-button");
+            _closedButton.Class("tss-sidebar-btn-searchbox-button");
+
+            ShowShortcutChip(shortcutKeys);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Shows the shortcut that presses this button at its far end, and answers that shortcut for as long
+        /// as the button is on screen - which is what makes the chip a promise rather than a note. The keys
+        /// are the ones <see cref="Tesserae.KeyboardShortcut"/> displays, so <c>("Ctrl", "Shift", "O")</c>
+        /// reads Ctrl+Shift+O and triggers on ⌘⇧O on a Mac.
+        /// <para>
+        /// Only the open button carries the chip - the closed rail has room for the glyph and nothing else -
+        /// but the key works on either, because a collapsed rail is a smaller rail and not a different one.
+        /// A button that is nowhere on screen holds no shortcut: there is nothing for the key to press.
+        /// </para>
+        /// </summary>
+        /// <param name="keys">The keys, e.g. <c>("Ctrl", "Shift", "O")</c>. None removes chip and binding.</param>
+        public SidebarButton SetKeyboardShortcut(params string[] keys)
+        {
+            if (_globalShortcutHandler is object)
+            {
+                window.removeEventListener("keydown", _globalShortcutHandler);
+                _globalShortcutHandler = null;
+            }
+
+            ShowShortcutChip(keys);
+
+            _shortcutKeys = (keys is object && keys.Length > 0) ? keys : null;
+
+            if (_shortcutKeys is null) return this;
+
+            _globalShortcutHandler = ev =>
+            {
+                var button = ButtonOnScreen();
+
+                if (button is null || !button.IsEnabled) return;
+
+                var e = ev.As<KeyboardEvent>();
+
+                if (!Tesserae.KeyboardShortcut.Matches(e, _shortcutKeys)) return;
+
+                StopEvent(e);
+
+                //Pressed rather than called: whatever is hooked to the button - the click handler, an href
+                //wrapper - is then reached by the key exactly as it is by the pointer.
+                button.Render().click();
+            };
+
+            window.addEventListener("keydown", _globalShortcutHandler);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Keeps the shortcut chip out of sight until the pointer is on the row - or something inside it has
+        /// focus, so a row reached by tabbing shows its key too. The binding is untouched: the key works the
+        /// same whether or not the chip is on screen.
+        /// <para>
+        /// For a rail where most rows carry a key: all the chips at once read as a column of noise beside the
+        /// labels, while one chip on the row being pointed at is still how the key gets discovered. The room
+        /// at the end stays reserved either way, so a label does not re-flow as the chip appears.
+        /// </para>
+        /// </summary>
+        /// <param name="onlyOnHover">Whether the chip waits for a hover. False shows it at all times, the default.</param>
+        public SidebarButton ShortcutOnlyOnHover(bool onlyOnHover = true)
+        {
+            if (onlyOnHover)
+            {
+                _open.Class("tss-sidebar-shortcut-on-hover");
+            }
+            else
+            {
+                _open.RemoveClass("tss-sidebar-shortcut-on-hover");
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Whichever of the two renderings the user can actually see, or null when neither is. Mounted is not
+        /// enough on its own: both are mounted at once while the sidebar hides the one it is not showing, and
+        /// a collapsed button is mounted too.
+        /// </summary>
+        private Button ButtonOnScreen()
+        {
+            if (IsOnScreen(_open.Render())) return _openButton;
+            if (IsOnScreen(_closed.Render())) return _closedButton;
+
+            return null;
+        }
+
+        private static bool IsOnScreen(HTMLElement element) => element is object && element.IsMounted() && element.clientHeight > 0;
+
+        private void ShowShortcutChip(string[] keys)
+        {
+            if (_shortcutChip is object)
+            {
+                _shortcutChip.remove();
+                _shortcutChip = null;
+            }
+
+            if (keys is null || keys.Length == 0)
+            {
+                _openButton.RemoveClass("tss-sidebar-btn-has-shortcut");
+                return;
+            }
+
+            _shortcutChip = Div(Att("tss-sidebar-btn-shortcut"), KeyboardShortcut(keys).Render());
+
+            _openButton.Class("tss-sidebar-btn-has-shortcut");
+            _openButton.Render().appendChild(_shortcutChip);
+        }
+
+        /// <summary>
+        /// Sets the button to use a danger style.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Danger()
+        {
+            _openButton.Danger();
+            _closedButton.Danger();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the button to use a warning style.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Warning()
+        {
+            _openButton.Warning();
+            _closedButton.Warning();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the button to use the default style.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Default()
+        {
+            _openButton.IsPrimary   = false;
+            _closedButton.IsPrimary = false;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the button to use a success style.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Success()
+        {
+            _openButton.Success();
+            _closedButton.Success();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the button to use the primary style.
+        /// </summary>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Primary()
+        {
+            _openButton.Primary();
+            _closedButton.Primary();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets whether the button is selected.
+        /// </summary>
+        /// <param name="isSelected">Whether the button is selected.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Selected(bool isSelected = true)
+        {
+            _selected.Value = isSelected;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a tooltip for the closed state button.
+        /// </summary>
+        /// <param name="text">The tooltip text.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Tooltip(string text)
+        {
+            _tooltipClosed = (b) => b.Tooltip(text, placement: TooltipPlacement.Right);
+            _tooltipClosed(_closedButton);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a tooltip component for the closed state button.
+        /// </summary>
+        /// <param name="tooltip">The tooltip component.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Tooltip(IComponent tooltip)
+        {
+            _tooltipClosed = (b) => b.Tooltip(tooltip, placement: TooltipPlacement.Right);
+            _tooltipClosed(_closedButton);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a tooltip generator function for the closed state button.
+        /// </summary>
+        /// <param name="tooltip">The tooltip generator function.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Tooltip(Func<IComponent> tooltip)
+        {
+            _tooltipClosed = (b) => b.Tooltip(tooltip(), placement: TooltipPlacement.Right);
+            _tooltipClosed(_closedButton);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a tooltip for the open state button.
+        /// </summary>
+        /// <param name="text">The tooltip text.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OpenedTooltip(string text)
+        {
+            _tooltipOpen = (b) => b.Tooltip(text, placement: TooltipPlacement.Right);
+            _tooltipOpen(_openButton);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a tooltip component for the open state button.
+        /// </summary>
+        /// <param name="tooltip">The tooltip component.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OpenedTooltip(IComponent tooltip)
+        {
+            _tooltipOpen = (b) => b.Tooltip(tooltip, placement: TooltipPlacement.Right);
+            _tooltipOpen(_openButton);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a tooltip generator function for the open state button.
+        /// </summary>
+        /// <param name="tooltip">The tooltip generator function.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OpenedTooltip(Func<IComponent> tooltip)
+        {
+            _tooltipOpen = (b) => b.Tooltip(tooltip(), placement: TooltipPlacement.Right);
+            _tooltipOpen(_openButton);
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a click event handler to the button.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OnClick(Action action)
+        {
+            _closedButton.OnClick(action);
+            _openButton.OnClick(action);
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a click event handler to the icon when the button is open.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OnOpenIconClick(Action<HTMLElement, MouseEvent> action)
+        {
+            _openButton.OnIconClick(action);
+            _openButton.Class("tss-sidebar-btn-has-icon-click");
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the ID of the button.
+        /// </summary>
+        /// <param name="id">The ID.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton Id(string id)
+        {
+            _open.Id(id);
+            _closedButton.Id(id);
+            return this;
+
+        }
+
+        /// <summary>
+        /// Adds a click event handler to the icon when the button is open.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OnOpenIconClick(Action action)
+        {
+            _openButton.OnIconClick((_, __) => action());
+            _openButton.Class("tss-sidebar-btn-has-icon-click");
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a context menu event handler to the button.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OnContextMenu(Action action)
+        {
+            _closedButton.OnContextMenu(action);
+            _openButton.OnContextMenu(action);
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a click event handler with button and mouse event arguments.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OnClick(Action<Button, MouseEvent> action)
+        {
+            _closedButton.OnClick((b, e) => action(b, e));
+            _openButton.OnClick((b,   e) => action(b, e));
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a context menu event handler with button and mouse event arguments.
+        /// </summary>
+        /// <param name="action">The event handler action.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton OnContextMenu(Action<Button, MouseEvent> action)
+        {
+            _closedButton.OnContextMenu((b, e) => action(b, e));
+            _openButton.OnContextMenu((b,   e) => action(b, e));
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the icon for the button.
+        /// </summary>
+        /// <param name="icon">The icon.</param>
+        /// <param name="color">The color of the icon.</param>
+        /// <param name="weight">The weight of the icon.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton SetIcon(UIcons icon, string color = "", UIconsWeight weight = UIconsWeight.Regular)
+        {
+            _closedButton.SetIcon(icon, color, weight: weight);
+            _openButton.SetIcon(icon, color, weight: weight);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets an emoji icon for the button.
+        /// </summary>
+        /// <param name="icon">The emoji icon.</param>
+        /// <returns>The current instance of the type.</returns>
+        public SidebarButton SetIcon(Emoji icon)
+        {
+            _closedButton.SetIcon(icon);
+            _openButton.SetIcon(icon);
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a rendered event handler.
+        /// </summary>
+        /// <param name="onRendered">The rendered event handler.</param>
+        /// <returns>The current instance of the type.</returns>
+        public ISidebarItem OnRendered(Action<HTMLElement> onRendered)
+        {
+            _onRendered += onRendered;
+            return this;
+        }
+        /// <summary>Renders the button for the closed state of the sidebar.</summary>
+        public IComponent RenderClosed()
+        {
+            _onRendered?.Invoke(_closed.Render());
+            _closedButton.RemoveTooltip();
+
+            DomObserver.WhenMounted(_closedButton.Render(), () =>
+            {
+                window.setTimeout(_ => { _tooltipClosed?.Invoke(_closedButton); }, Sidebar.SIDEBAR_TRANSITION_TIME);
+            });
+            return _closed;
+        }
+
+        /// <summary>Renders the button for the open state of the sidebar.</summary>
+        public IComponent RenderOpen()
+        {
+            foreach (var c in _commands) c.RefreshTooltip();
+            _tooltipOpen?.Invoke(_openButton);
+            _onRendered?.Invoke(_open.Render());
+            return _open;
+        }
+
+        public bool Search(string searchTerm)
+        {
+            if (string.IsNullOrWhiteSpace(searchTerm))
+            {
+                Show();
+                return true;
+            }
+
+            if (_text.ToLower().Contains(searchTerm.ToLower()))
+            {
+                Show();
+                return true;
+            }
+
+            Collapse();
+            return false;
+        }
+    }
+}

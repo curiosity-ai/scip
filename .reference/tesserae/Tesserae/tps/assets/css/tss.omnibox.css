@@ -1,0 +1,996 @@
+.tss-omnibox-container {
+    /* The box's own roundness, picked by .Rounded(BorderRadius) and followed by everything that meets
+       its outline: the search container, the buttons at its ends and the "Ask AI" button. */
+    --tss-omnibox-radius: var(--tss-border-radius-md);
+    display: inline-flex;
+    flex-direction: row;
+    position: relative;
+    box-shadow: var(--tss-shadow-sm);
+    margin: 0px;
+    padding: 0px;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-omnibox-radius);
+    background: var(--tss-default-background-color) none repeat scroll 0% 0%;
+    color: var(--tss-default-foreground-color);
+    align-items: stretch;
+    width: 100%;
+    outline: transparent none medium;
+    transition: all 0.15s ease-in-out;
+}
+
+    .tss-omnibox-container.tss-omnibox-chat-and-search,
+    .tss-omnibox-container.tss-omnibox-mode-chat {
+        flex-direction: column;
+    }
+
+    .tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn {
+        margin: 0px;
+    }
+
+    .tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn {
+        border-radius: 0;
+    }
+
+        .tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn.tss-omnibox-search-history-btn,{
+            border-right: 1px solid var(--tss-default-border-color);
+            cursor: pointer;
+            background: var(--tss-secondary-background-color);
+            color: var(--tss-secondary-foreground-color);
+            flex-shrink: 0;
+            border-top-left-radius: var(--tss-omnibox-radius);
+            border-bottom-left-radius: var(--tss-omnibox-radius);
+            border-top-right-radius: 0;
+            border-bottom-right-radius: 0;
+        }
+
+        .tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn.tss-omnibox-search-help-btn {
+            border-right: 1px solid var(--tss-default-border-color);
+            cursor: pointer;
+            background: var(--tss-secondary-background-color);
+            color: var(--tss-secondary-foreground-color);
+            flex-shrink: 0;
+            border-radius: 0;
+        }
+
+        .tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn.tss-omnibox-search-clear-btn,{
+            cursor: pointer;
+            color: var(--tss-secondary-foreground-color);
+            flex-shrink: 0;
+        }
+
+
+        .tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn.tss-omnibox-search-btn {
+            cursor: pointer;
+            background: transparent;
+            border-left: 1px solid var(--tss-default-border-color);
+            flex-shrink: 0;
+        }
+
+        /* Only the built-in trigger sits at the end of the row, so only it follows the box's rounded
+           corner. Hosts reuse tss-omnibox-search-btn for the look above on buttons of their own, and
+           those sit mid-row, where they keep the row's square corners. */
+        .tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn.tss-omnibox-search-trigger-btn {
+            border-top-right-radius: var(--tss-omnibox-radius);
+            border-bottom-right-radius: var(--tss-omnibox-radius);
+            border-top-left-radius: 0;
+            border-bottom-left-radius: 0;
+        }
+
+/* A search that was asked for and not answered yet: the magnifier gives its place to a spinner. The spinner
+   lies over the icon rather than beside it, so the button keeps its size and nothing in the row moves; and
+   both only cross over after a moment, so a cached or local answer never makes the button blink. */
+.tss-omnibox-search-trigger-btn {
+    position: relative;
+}
+
+/* The Spinner brings its own display:flex, so every rule here has to outweigh it - hence the child selector
+   rather than the class on its own. */
+    .tss-omnibox-search-trigger-btn > .tss-omnibox-search-spinner {
+        display: none;
+        position: absolute;
+        inset: 0;
+        margin-left: 8px;
+    }
+
+.tss-omnibox-search-trigger-btn > .tss-omnibox-search-spinner .tss-spinner {
+    --tss-spinner-size: 2px;
+    width: 14px;
+    height: 14px;
+}
+
+.tss-omnibox-searching .tss-omnibox-search-trigger-btn > .tss-omnibox-search-spinner {
+    display: flex;
+    animation: tss-omnibox-searching-in 120ms linear 140ms both;
+}
+
+.tss-omnibox-container.tss-omnibox-searching .tss-omnibox-search-trigger-btn > i {
+    animation: tss-omnibox-searching-out 120ms linear 140ms both;
+}
+
+@keyframes tss-omnibox-searching-in {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes tss-omnibox-searching-out {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+    }
+}
+
+        /* The icon buttons at the ends of the row, only: the "Ask AI" button is styled by its own
+           (primary) button style, and this rule outweighs it — a grey hover on a blue button. */
+        .tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn:not(.tss-omnibox-ask-ai-btn):hover {
+            color: var(--tss-default-foreground-hover-color);
+            background-color: var(--tss-default-background-hover-color);
+        }
+
+.tss-omnibox-footer {
+    display: inline-flex;
+    width: calc(100% - 8px);
+    align-items: center;
+    padding-left: 8px;
+    margin-bottom: 8px;
+}
+
+    .tss-omnibox-footer .tss-btn {
+        margin: 0px;
+    }
+
+
+.tss-omnibox-footer-spacer{
+    flex-grow:1;
+    width:0px;
+}
+
+.tss-omnibox-generating-container {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding-left:8px;
+}
+
+.tss-omnibox-container.tss-omnibox-generating .tss-omnibox-generating-container {
+    display: inline-flex;
+}
+
+.tss-omnibox-container.tss-omnibox-generating .tss-omnibox-footer-left {
+    display: none !important;
+}
+
+.tss-omnibox-footer .tss-icon-toggle {
+    margin-bottom: 0px;
+    margin-right: 4px;
+    align-self: center;
+    flex-shrink: 0;
+}
+
+/* The mode selector takes the shape of the box it sits in, so a pill-shaped OmniBox gets a
+   pill-shaped selector rather than a rounded rectangle floating inside the curve. */
+.tss-omnibox-container.tss-omnibox-rounded-full .tss-omnibox-mode-toggle {
+    --tss-icon-toggle-radius: var(--tss-border-radius-full);
+    border-radius: var(--tss-border-radius-full);
+}
+
+.tss-omnibox-container.tss-omnibox-rounded-sm .tss-omnibox-mode-toggle {
+    --tss-icon-toggle-radius: var(--tss-border-radius-sm);
+    border-radius: var(--tss-border-radius-sm);
+}
+
+
+.tss-omnibox-search-container {
+    display: inline-flex;
+    position: relative;
+    align-items: stretch;
+    width: 100%;
+    height: 36px;
+    border-radius: var(--tss-omnibox-radius);
+}
+
+/* A box with a chat half is a panel rather than a field - it is several rows tall and carries a footer -
+   so it takes a panel's corner. Pure search stays a field, and keeps the field's. */
+.tss-omnibox-container.tss-omnibox-chat-and-search,
+.tss-omnibox-container.tss-omnibox-mode-chat {
+    --tss-omnibox-radius: 16px;
+}
+
+/* Roundness, picked with .Rounded(BorderRadius) */
+.tss-omnibox-container.tss-omnibox-rounded-sm {
+    --tss-omnibox-radius: var(--tss-border-radius-sm);
+}
+
+.tss-omnibox-container.tss-omnibox-rounded-md {
+    --tss-omnibox-radius: var(--tss-border-radius-md);
+}
+
+.tss-omnibox-container.tss-omnibox-rounded-full {
+    --tss-omnibox-radius: var(--tss-border-radius-full);
+}
+
+/* A stadium shape only reads well on the single-row search box: on the multi-row chat layouts a
+   9999px radius curves in through the input and the footer, so BorderRadius.Full settles for a
+   generously rounded rectangle there instead. */
+.tss-omnibox-container.tss-omnibox-rounded-full.tss-omnibox-chat-and-search,
+.tss-omnibox-container.tss-omnibox-rounded-full.tss-omnibox-mode-chat {
+    --tss-omnibox-radius: 24px;
+}
+
+/* Those corners curve well into where the footer sits, so the footer pulls away from both the side and
+   the bottom of the box (the width takes the padding with it — everything here is border-box). */
+.tss-omnibox-container.tss-omnibox-rounded-full.tss-omnibox-chat-and-search .tss-omnibox-footer,
+.tss-omnibox-container.tss-omnibox-rounded-full.tss-omnibox-mode-chat .tss-omnibox-footer {
+    width: calc(100% - 16px);
+    padding-left: 16px;
+    margin-bottom: 16px;
+}
+
+/* A pill has no straight edge to hang a divider off, and its corners curve away from anything sitting
+   flush against them: so in the fully rounded box the dividers go, the buttons at the ends become
+   circles, and the row is inset far enough to stay inside the curve. The row is also taller than the
+   default one — a pill wants room around what it holds. Height()/H() still overrides this. */
+.tss-omnibox-container.tss-omnibox-rounded-full:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container {
+    box-sizing: border-box;
+    height: 48px;
+    padding: 0 8px;
+}
+
+.tss-omnibox-container.tss-omnibox-rounded-full:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn {
+    border-radius: var(--tss-border-radius-full);
+    border-left-color: transparent;
+    border-right-color: transparent;
+}
+
+/* Everything in the row keeps clear of the taller pill's edges: the icon buttons become discs (the
+   icon-only buttons hold their 1:1 aspect ratio, so the width follows the height) and "Ask AI" is a
+   little shorter than the row it sits in. */
+.tss-omnibox-container.tss-omnibox-rounded-full:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn:not(.tss-omnibox-ask-ai-btn) {
+    align-self: center;
+    height: calc(100% - 16px);
+    min-height: 0;
+    max-height: 40px;
+    padding: 0;
+}
+
+.tss-omnibox-container.tss-omnibox-rounded-full:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-container .tss-btn.tss-omnibox-ask-ai-btn {
+    height: calc(100% - 16px);
+    max-height: 40px;
+}
+
+/* The default row centers its text with a line-height as tall as itself; a taller pill would push the
+   text off-center, so the line box goes back to the font's own height and the input centers it. */
+.tss-omnibox-container.tss-omnibox-rounded-full:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-input {
+    line-height: normal;
+}
+
+/* Chips lose the grey strip and its divider in a pill — there is no straight edge for either — and go
+   fully round themselves, so their corners don't cut across the box's curve. */
+.tss-omnibox-container.tss-omnibox-rounded-full .tss-omnibox-inline-chips {
+    background: transparent;
+    border-right: none;
+    padding-left: 6px;
+}
+
+.tss-omnibox-container.tss-omnibox-rounded-full .tss-omnibox-inline-chip {
+    border-radius: var(--tss-border-radius-full);
+}
+
+/* Slot above the chat input, inside the box: what the message is being written against (a
+   compact ContextCards group of attached documents, say). Padded to line up with the input's text,
+   and taking up no space at all while nothing is in it. */
+.tss-omnibox-chat-header {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 13px 0 13px;
+}
+
+.tss-omnibox-chat-header:empty {
+    display: none;
+    padding: 0;
+}
+
+.tss-omnibox-chat-container,
+.tss-omnibox-container.tss-omnibox-chat-and-search .tss-omnibox-search-container {
+    position: relative;
+    align-items: stretch;
+    width: 100%;
+    padding: 12px 8px;
+    min-height: 80px;
+}
+
+.tss-omnibox-container.tss-disabled .tss-omnibox-search-container {
+    border-color: var(--tss-disabled-background-color);
+    background-color: var(--tss-disabled-background-color);
+    color: var(--tss-disabled-foreground-color);
+}
+
+/* Hover and focus belong to the box, which is the element with the border. They used to be set on the search
+   row inside it, which has no border of its own: the border colour did nothing, and the focus shadow drew a
+   second outline around the row, just inside the box's own - over its border on the one-line search box, and
+   as a box within the box round the search half of SearchAndChat. A box in chat mode showed no focus at all.
+   Focus is the TextBox's: a 2px primary edge inside the box, the border and a second line of the same width
+   and colour inside it. The second line is an overlay rather than an inset shadow on the box, because a shadow
+   paints under the box's children and the buttons that fill the ends of the row would cover it. The overlay is
+   the box's last positioned child with no z-index, so it paints above those buttons, under the (transparent)
+   inputs, and never outside the box. It inherits the box's border, so a theme that recolours or removes the
+   focused box's border recolours or removes the second line with it. */
+.tss-omnibox-container:not(.tss-disabled):hover {
+    border-color: var(--tss-default-foreground-color);
+    box-shadow: var(--tss-shadow-sm-hover);
+}
+
+.tss-omnibox-container:not(.tss-disabled):focus-within {
+    border-color: var(--tss-primary-border-color);
+}
+
+.tss-omnibox-container:not(.tss-disabled):focus-within::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-style: solid;
+    border-width: inherit;
+    border-color: inherit;
+    border-radius: max(0px, calc(var(--tss-omnibox-radius) - 1px));
+    pointer-events: none;
+}
+
+.tss-omnibox-search-input-container {
+    position: relative;
+    flex-grow: 1;
+    display: flex;
+    overflow: hidden;
+    cursor: text;
+
+}
+
+.tss-omnibox-search-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--tss-default-foreground-color);
+    outline: none;
+    padding: 0 5px;
+    margin: 0;
+    font-size: 14px;
+    font-family: inherit;
+    z-index: 2;
+    white-space: pre;
+    overflow-x: auto;
+    overflow-y: hidden;
+    resize: none;
+}
+
+.tss-omnibox-container:not(.tss-omnibox-chat-and-search) .tss-omnibox-search-input {
+    height: 100%;
+    line-height: 34px;
+}
+
+.tss-omnibox-search-input::placeholder {
+    color: var(--tss-default-foreground-color) !important;
+    opacity: 0.5;
+    transition: opacity 0.3s ease;
+}
+
+
+.tss-omnibox-search-tokens {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+    padding: 0 5px;
+    margin: 0;
+    font-size: 14px;
+    font-family: inherit;
+    white-space: pre;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+}
+
+.tss-omnibox-container.tss-omnibox-chat-and-search .tss-omnibox-search-container {
+    overflow: visible;
+}
+
+/* In a chat-and-search box the two halves swap in and out of the same slot, so the caret, the text
+   and the placeholder have to land on the same line whichever half is showing. The chat textarea sets
+   that line: its first line box is 20px tall and starts at the container's 12px top padding. The
+   search input and the token overlay take the same 20px box at top 0, so switching modes (and typing
+   the first character, which hands the drawing from the input's placeholder to the overlay) moves
+   nothing. The overlay's pills overhang that box by a few pixels and are meant to — hence the
+   overflow. */
+.tss-omnibox-container.tss-omnibox-chat-and-search .tss-omnibox-search-input {
+    height: 20px;
+    line-height: 20px;
+}
+
+.tss-omnibox-container.tss-omnibox-chat-and-search .tss-omnibox-search-tokens {
+    position: absolute;
+    height: 20px;
+    line-height: 20px;
+    top: 0;
+    overflow: visible;
+}
+
+.tss-omnibox-container.tss-omnibox-chat-and-search .tss-omnibox-search-input-container {
+    overflow: visible;
+}
+
+
+
+.tss-omnibox-search-token-word {
+    color: var(--tss-colors-blue-900);
+    background: var(--tss-colors-blue-100);
+    border-radius: 4px;
+    padding-left: 2px;
+    padding-right: 2px;
+    margin-left: -2px;
+    margin-right: -2px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    outline: 1px solid var(--tss-colors-blue-500);
+}
+
+.tss-omnibox-search-token-word.tss-omnibox-search-token-join-left {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.tss-omnibox-search-token-word.tss-omnibox-search-token-join-right {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.tss-omnibox-search-token-operator-and,
+.tss-omnibox-search-token-operator-or ,
+.tss-omnibox-search-token-operator-not,
+.tss-omnibox-search-token-paren,
+.tss-omnibox-search-token-quote {
+    color: var(--tss-colors-blue-500);
+}
+
+.tss-dark-mode .tss-omnibox-search-token-word {
+    color: var(--tss-colors-blue-100);
+    background: rgba(var(--tss-colors-blue-900-root), 0.3);
+    outline-color: rgba(var(--tss-colors-blue-700-root), 0.4);
+}
+
+.tss-dark-mode .tss-omnibox-search-token-operator-and,
+.tss-dark-mode .tss-omnibox-search-token-operator-or,
+.tss-dark-mode .tss-omnibox-search-token-operator-not,
+.tss-dark-mode .tss-omnibox-search-token-paren,
+.tss-dark-mode .tss-omnibox-search-token-quote {
+    color: var(--tss-colors-blue-400);
+}
+
+.tss-omnibox-chat-input {
+    width: 100%;
+    flex-grow: 1;
+    box-sizing: border-box;
+    border: none;
+    background: transparent;
+    color: var(--tss-default-foreground-color);
+    caret-color: var(--tss-default-foreground-color);
+    outline: none;
+    padding: 0 5px;
+    margin: 0;
+    font-size: 14px;
+    font-family: inherit;
+    line-height: 20px;
+    z-index: 2;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow-y: hidden;
+    resize: none;
+}
+
+/* Code blocks in the chat input (OmniBox.CodeBlocks.cs): typing ``` at the start of a line opens a box, and the
+   input becomes a column of textareas - the text, a box, the text after it, and so on. The column scrolls as one
+   past a cap, so no single textarea scrolls inside another scroller. */
+.tss-omnibox-chat-container.tss-omnibox-has-code {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: min(50vh, 420px);
+    overflow-y: auto;
+}
+
+    .tss-omnibox-chat-container.tss-omnibox-has-code > .tss-omnibox-chat-input {
+        display: block;
+        flex: 0 0 auto;
+    }
+
+.tss-omnibox-code-block {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    margin: 0 5px;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-sm);
+    background-color: var(--tss-secondary-background-color);
+    color: var(--tss-default-foreground-color);
+    cursor: text;
+}
+
+    .tss-omnibox-code-block:focus-within {
+        border-color: var(--tss-primary-background-color);
+    }
+
+.tss-omnibox-code-lang {
+    padding: 4px 10px 0 10px;
+    font-family: var(--tss-monospace-font-family);
+    font-size: 11px;
+    line-height: 16px;
+    opacity: 0.65;
+    user-select: none;
+}
+
+.tss-omnibox-code-input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    border: none;
+    background: transparent;
+    color: inherit;
+    caret-color: currentColor;
+    outline: none;
+    padding: 8px 10px;
+    margin: 0;
+    font-family: var(--tss-monospace-font-family);
+    font-size: 13px;
+    line-height: 20px;
+    tab-size: 4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-y: hidden;
+    resize: none;
+}
+
+    .tss-omnibox-code-lang + .tss-omnibox-code-input {
+        padding-top: 2px;
+    }
+
+.tss-omnibox-chat-input::placeholder {
+    color: var(--tss-default-foreground-color) !important;
+    opacity: 0.5;
+    transition: opacity 0.3s ease;
+}
+
+.tippy-box .tss-btn.tss-omnibox-search-history-entry,
+.tippy-box .tss-btn.tss-omnibox-snap-suggestion {
+    height: 32px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    margin-bottom: 8px !important;
+}
+
+.tippy-box .tss-btn.tss-omnibox-snap-suggestion {
+    height: 40px !important;
+}
+
+
+.tss-omnibox-container.tss-omnibox-mode-chat .tss-omnibox-search-container,
+.tss-omnibox-container.tss-omnibox-mode-chat .tss-omnibox-search-history-btn,
+.tss-omnibox-container.tss-omnibox-mode-chat .tss-omnibox-search-clear-btn,
+.tss-omnibox-container.tss-omnibox-mode-chat .tss-omnibox-search-btn,
+.tss-omnibox-container.tss-omnibox-mode-chat .tss-omnibox-ask-ai-btn,
+.tss-omnibox-container.tss-omnibox-mode-chat .tss-omnibox-search-footer-item {
+    display: none;
+}
+
+.tss-omnibox-container.tss-omnibox-mode-search .tss-omnibox-chat-container,
+.tss-omnibox-container.tss-omnibox-mode-search .tss-omnibox-context,
+.tss-omnibox-container.tss-omnibox-mode-search .tss-omnibox-chat-btn,
+.tss-omnibox-container.tss-omnibox-mode-search .tss-omnibox-chat-counter,
+.tss-omnibox-container.tss-omnibox-mode-search .tss-omnibox-chat-footer-item {
+    display: none;
+}
+
+/* Context attached to the next message: a wrapping row of ContextCards between the chat input and the
+   footer. The top padding leaves room for the cards' remove discs, which overhang their top edge. */
+.tss-omnibox-context {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 4px 12px;
+}
+
+    /* No context, no row - so an OmniBox that never gets one looks exactly as it did before. */
+    .tss-omnibox-context:empty {
+        display: none;
+    }
+/* Expanded state for Chat and SearchAndChat modes */
+.tss-omnibox-container.tss-omnibox-expanded .tss-omnibox-chat-container,
+.tss-omnibox-container.tss-omnibox-expanded.tss-omnibox-mode-search .tss-omnibox-search-container,
+.tss-omnibox-container.tss-omnibox-expanded.tss-omnibox-mode-chat .tss-omnibox-search-container {
+    min-height: 160px;
+    transition: min-height 0.15s ease-in-out;
+}
+
+.tss-omnibox-container:not(.tss-omnibox-expanded) .tss-omnibox-chat-container,
+.tss-omnibox-container:not(.tss-omnibox-expanded).tss-omnibox-mode-search .tss-omnibox-search-container,
+.tss-omnibox-container:not(.tss-omnibox-expanded).tss-omnibox-mode-chat .tss-omnibox-search-container {
+    transition: min-height 0.15s ease-in-out;
+}
+.tss-omnibox-inline-chips {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 4px;
+    padding-right: 4px;
+    gap: 4px;
+    background: var(--tss-secondary-background-color);
+    border-right: 1px solid var(--tss-default-border-color);
+}
+
+    .tss-omnibox-inline-chips:empty {
+        display: none;
+    }
+
+.tss-omnibox-inline-chip {
+    display: inline-flex;
+    align-items: center;
+    background-color: var(--tss-secondary-background-color);
+    color: var(--tss-secondary-foreground-color);
+    border-radius: var(--tss-border-radius-md);
+    padding: 2px 4px 2px 8px;
+    font-size: 12px;
+    height: 24px;
+    white-space: nowrap;
+}
+
+.tss-omnibox-inline-chip-close {
+    cursor: pointer;
+    margin-left: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    transition: background-color 0.2s;
+}
+
+.tss-omnibox-inline-chip-close:hover {
+    background-color: var(--tss-danger-background-color);
+    color: var(--tss-danger-foreground-color);
+}
+.tss-omnibox-inline-chip-close i {
+    font-size: 10px;
+}
+
+.tss-omnibox-right-text {
+    display: flex;
+    align-items: center;
+    margin-right: 8px;
+    color: var(--tss-secondary-foreground-color);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.tss-omnibox-shortcut {
+    display: none;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 0 6px;
+}
+
+.tss-omnibox-container.tss-omnibox-has-shortcut .tss-omnibox-shortcut {
+    display: inline-flex;
+}
+
+.tss-omnibox-container.tss-omnibox-mode-chat .tss-omnibox-shortcut,
+.tss-omnibox-container.tss-omnibox-search-focused .tss-omnibox-shortcut {
+    display: none;
+}
+
+
+.tss-omnibox-suggestion-highlight {
+    background: var(--tss-colors-blue-200) !important;
+}
+
+/* Help panel (WithHelp) */
+.tss-omnibox-help-panel {
+    padding: 4px 0;
+}
+
+.tss-omnibox-help-header {
+    padding: 10px 12px 4px 12px;
+    color: var(--tss-secondary-foreground-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 11px;
+    opacity: 0.85;
+}
+
+.tippy-box .tss-btn.tss-omnibox-help-entry {
+    height: 36px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    margin-bottom: 2px !important;
+}
+
+.tss-omnibox-help-trigger {
+    color: var(--tss-primary-foreground-color);
+    font-family: var(--tss-monospace-font-family);
+    font-weight: 600;
+}
+
+.tss-omnibox-help-example {
+    color: var(--tss-secondary-foreground-color);
+    opacity: 0.85;
+}
+
+/* How much of the message's character budget is spent, next to the send button. It only appears past
+   half the budget (the component collapses it below that), so it never crowds an ordinary message. */
+.tss-omnibox-chat-counter {
+    align-self: center;
+    flex-shrink: 0;
+    padding: 0 8px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Chat trigger (send) button. Quiet while there is nothing to send - and while it is the stop button of a
+   reply in progress - and the primary colour once there is. The transition is on the button in every
+   state, disabled included, so each of those changes fades rather than snaps. */
+.tss-btn.tss-omnibox-chat-btn {
+    transition: background-color 0.2s ease-out, color 0.2s ease-out, border-color 0.2s ease-out, opacity 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+.tss-btn.tss-omnibox-chat-btn:not(.tss-disabled) {
+    background: var(--tss-secondary-background-color);
+    color: var(--tss-secondary-foreground-color);
+    border-color: transparent;
+}
+
+.tss-btn.tss-omnibox-chat-btn:not(.tss-disabled):hover {
+    background: var(--tss-subtle-fill-color);
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-btn.tss-omnibox-chat-btn.tss-omnibox-chat-btn-active:not(.tss-disabled):not(.tss-btn-danger) {
+    background: var(--tss-primary-background-color);
+    color: var(--tss-primary-foreground-color);
+}
+
+.tss-btn.tss-omnibox-chat-btn.tss-omnibox-chat-btn-active:not(.tss-disabled):not(.tss-btn-danger):hover {
+    background: var(--tss-primary-background-hover-color);
+    color: var(--tss-primary-foreground-hover-color);
+}
+
+/* The glyph turning from "send" into "stop" and back (OmniBox.UpdateChatTriggerIcon) */
+.tss-omnibox-chat-btn > i.tss-omnibox-chat-btn-swap {
+    animation: tss-omnibox-chat-btn-swap 0.18s ease-out;
+}
+
+@keyframes tss-omnibox-chat-btn-swap {
+    from { opacity: 0; transform: scale(0.6); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tss-btn.tss-omnibox-chat-btn {
+        transition: none;
+    }
+
+    .tss-omnibox-chat-btn > i.tss-omnibox-chat-btn-swap {
+        animation: none;
+    }
+}
+
+/* Microphone (dictate) button: quiet like the send button while idle. While listening its icon turns solid danger red
+   and pulses; under reduced motion it just stays red. A theme with no red (RetroOS, Graustufe) adds a dot in its own
+   stylesheet. */
+.tss-btn.tss-omnibox-dictate-btn {
+    position: relative;
+}
+
+.tss-btn.tss-omnibox-dictate-btn:not(.tss-disabled) {
+    background: transparent;
+    color: var(--tss-secondary-foreground-color);
+    border-color: transparent;
+    transition: background-color 0.2s ease-out, color 0.2s ease-out;
+}
+
+.tss-btn.tss-omnibox-dictate-btn:not(.tss-disabled):hover {
+    background: var(--tss-subtle-fill-color);
+    color: var(--tss-default-foreground-color);
+}
+
+.tss-btn.tss-omnibox-dictate-btn.tss-omnibox-dictating-btn,
+.tss-btn.tss-omnibox-dictate-btn.tss-omnibox-dictating-btn:hover,
+.tss-btn.tss-omnibox-dictate-btn.tss-omnibox-dictating-btn > i {
+    color: var(--tss-danger-background-color);
+}
+
+.tss-btn.tss-omnibox-dictate-btn.tss-omnibox-dictating-btn > i {
+    animation: tss-omnibox-dictating-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes tss-omnibox-dictating-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tss-btn.tss-omnibox-dictate-btn { transition: none; }
+    .tss-btn.tss-omnibox-dictate-btn.tss-omnibox-dictating-btn > i { animation: none; }
+}
+
+/* "Ask AI" button (WithAskAI): a primary action at the end of the search input that follows the box's
+   roundness, so a pill box gets a pill button. It sizes itself to the box with room left around it,
+   whatever height the box is given. */
+.tss-omnibox-container .tss-omnibox-search-container .tss-btn.tss-omnibox-ask-ai-btn,
+.tss-omnibox-container .tss-omnibox-footer .tss-btn.tss-omnibox-ask-ai-btn {
+    border-radius: var(--tss-omnibox-radius);
+    align-self: center;
+    flex-shrink: 0;
+    min-width: 0;
+    min-height: 28px;
+    margin: 0 4px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.tss-omnibox-container .tss-omnibox-search-container .tss-btn.tss-omnibox-ask-ai-btn {
+    height: calc(100% - 8px);
+    max-height: 44px;
+}
+
+.tss-omnibox-container .tss-omnibox-footer .tss-btn.tss-omnibox-ask-ai-btn {
+    height: 32px;
+}
+
+/* The label is a plain span, so it takes the button's foreground; the icon needs telling. */
+.tss-btn.tss-omnibox-ask-ai-btn:not(.tss-disabled) > i {
+    color: inherit;
+}
+
+/* A disabled box ignores the click, so the button says as much. */
+.tss-omnibox-container.tss-disabled .tss-btn.tss-omnibox-ask-ai-btn {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* Tighter than the 10px a .tss-btn puts between an icon and its label: this button is compact. */
+.tss-btn.tss-omnibox-ask-ai-btn > i + span:not(:empty) {
+    margin-left: 6px;
+    min-width: 0;
+}
+
+/* Model selector button (chat footer) */
+.tss-btn.tss-omnibox-model-selector-btn {
+    height: 28px;
+    padding: 2px 10px;
+    margin: 0 4px;
+    border-radius: var(--tss-border-radius-md);
+    background: var(--tss-secondary-background-color);
+    color: var(--tss-secondary-foreground-color);
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.tss-btn.tss-omnibox-model-selector-btn:hover {
+    background: var(--tss-subtle-fill-color);
+}
+
+.tss-btn.tss-omnibox-model-selector-btn.tss-omnibox-model-selector-locked {
+    cursor: default;
+    opacity: 0.85;
+}
+
+/* Model selector popover */
+.tss-omnibox-model-selector-popover {
+    padding: 6px 4px;
+    min-width: 220px;
+}
+
+.tss-omnibox-model-selector-header {
+    padding: 6px 12px 4px 12px;
+    color: var(--tss-secondary-foreground-color);
+    text-transform: none;
+}
+
+.tss-omnibox-model-selector-divider {
+    height: 1px;
+    background: var(--tss-default-separator-color);
+    margin: 6px 4px;
+}
+
+.tippy-box .tss-btn.tss-omnibox-model-selector-row {
+    height: 32px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    margin-bottom: 2px !important;
+    border-radius: var(--tss-border-radius-md);
+}
+
+.tippy-box .tss-btn.tss-omnibox-model-selector-row:hover {
+    background: var(--tss-secondary-background-color) !important;
+}
+
+.tss-omnibox-model-selector-item {
+    width: 100%;
+    align-items: center;
+    gap: 6px;
+}
+
+.tss-omnibox-model-selector-item-name {
+    font-size: 13px;
+}
+
+.tss-omnibox-model-selector-spacer {
+    flex-grow: 1;
+}
+
+.tss-omnibox-model-selector-check {
+    color: var(--tss-primary-foreground-color);
+    margin-left: 8px;
+}
+
+/* The section headers of the popovers below are TextBlocks, so they carry .tss-fontcolor-default, which
+   tss.tooltip.css paints with the tooltip's foreground. A header wants the muted one instead, and these
+   popovers draw their own default-background surface, so the secondary foreground is what reads on it. */
+.tippy-content .tss-textblock.tss-omnibox-model-selector-header,
+.tippy-content .tss-textblock.tss-omnibox-help-header {
+    color: var(--tss-secondary-foreground-color);
+}
+
+.tss-omnibox-container:not(.tss-omnibox-chat-and-search).tss-omnibox-mode-search {
+    align-items:center;
+}
+
+/* SetSuggestedText - a suggestion drawn by the token overlay where the placeholder would be, with a Tab
+   keycap after it. The input's own placeholder is hidden while it shows so the two never overlap. */
+.tss-omnibox-container.tss-omnibox-has-suggested-text .tss-omnibox-search-input::placeholder {
+    color: transparent !important;
+}
+
+.tss-omnibox-suggested-text {
+    color: var(--tss-default-foreground-color);
+    opacity: 0.5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.tss-omnibox-suggested-text-tab {
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+
+.tss-kbd-key.tss-omnibox-suggested-text-tab {
+    height: 18px;
+    min-width: 18px;
+    font-size: 10px;
+}
+
+/* The box carries the focus, so the inputs inside it draw none of their own. Without this a theme's (or an
+   application's) global `:focus-visible` outline framed the bare input inside the framed box - a second border
+   just inside the first, around the search line of SearchAndChat and the chat text area. Three classes, so it
+   outweighs a theme's `body.tss-theme-x :focus-visible`. */
+.tss-omnibox-container .tss-omnibox-search-input:focus-visible,
+.tss-omnibox-container .tss-omnibox-chat-input:focus-visible {
+    outline: none;
+}

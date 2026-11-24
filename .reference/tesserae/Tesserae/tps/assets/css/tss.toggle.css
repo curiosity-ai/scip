@@ -1,0 +1,228 @@
+﻿/* Toggle */
+.tss-toggle-container {
+    position: relative;
+    cursor: pointer;
+    color: var(--tss-default-foreground-color);
+    font-size: var(--tss-font-size-small);
+    font-weight: var(--tss-font-weight-semibold);
+    -webkit-user-select: none;
+    user-select: none;
+    display: inline-flex;
+    height:20px;
+}
+
+    /* The gap to the switch is a margin here, not padding on the container: a caller's .PL(n) writes
+       an inline padding-left that wins over any padding declared here, which used to drop the text on
+       top of the switch. It also replaces the per-size padding-left compensation the text used to
+       carry, since the text now simply follows however wide the switch grew. */
+    .tss-toggle-container .tss-toggle-text {
+        font-weight: var(--tss-font-weight-regular);
+        text-overflow: ellipsis;
+        overflow: hidden;
+        white-space: nowrap;
+        min-width: 0;
+        min-height: 21px;
+        margin-left: 3px;
+    }
+
+    .tss-toggle-container .tss-toggle-text:empty {
+        display: none;
+    }
+
+    .tss-toggle-container .tss-checkbox {
+        position: absolute;
+        opacity: 0;
+        cursor: pointer;
+        height: 0;
+        width: 0;
+    }
+
+    .tss-toggle-container .tss-toggle-mark {
+        position: relative;
+        flex: 0 0 auto;
+        display: inline-block;
+        height: 20px;
+        width: 40px;
+        background-color: var(--tss-default-background-color);
+        border: 1px solid var(--tss-default-foreground-color);
+        border-radius: 14px;
+        box-sizing: content-box;
+    }
+
+    /* The focus lands on the hidden 0x0 checkbox, so the keyboard ring is drawn on the switch beside it. */
+    .tss-toggle-container input:focus-visible ~ .tss-toggle-mark {
+        outline: 2px solid var(--tss-primary-border-color);
+        outline-offset: 2px;
+    }
+
+    .tss-toggle-container:hover .tss-toggle-mark {
+        background-color: var(--tss-default-background-hover-color);
+        border-color: var(--tss-default-foreground-hover-color);
+    }
+
+        .tss-toggle-container:hover .tss-toggle-mark:after {
+            background-color: var(--tss-default-foreground-hover-color);
+        }
+
+    .tss-toggle-container input:checked ~ .tss-toggle-mark {
+        background-color: var(--tss-primary-background-hover-color);
+        border-color: var(--tss-primary-background-color);
+    }
+
+    .tss-toggle-container:hover input:checked ~ .tss-toggle-mark {
+        background-color: var(--tss-primary-background-color);
+    }
+
+    .tss-toggle-container input:checked ~ .tss-toggle-mark:after {
+        background-color: var(--tss-primary-foreground-color);
+        left: unset;
+        transform: translate(25px, 0);
+    }
+
+    .tss-toggle-container .tss-toggle-mark:after {
+        content: "";
+        position: absolute;
+        display: inline-block;
+        top: 4px;
+        left: 4px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background-color: var(--tss-default-foreground-color);
+        transition: transform ease-in-out 0.25s;
+    }
+
+    .tss-toggle-container.tss-disabled {
+        color: var(--tss-disabled-foreground-color);
+    }
+
+        .tss-toggle-container.tss-disabled .tss-toggle-mark {
+            background-color: var(--tss-disabled-background-color);
+            border-color: var(--tss-disabled-foreground-color);
+        }
+
+        .tss-toggle-container.tss-disabled input:checked ~ .tss-toggle-mark {
+            background-color: var(--tss-disabled-foreground-color);
+            border-color: var(--tss-disabled-foreground-color);
+        }
+
+    .tss-toggle-container.tss-fontsize-tiny {
+        height: calc(10px + var(--tss-font-size-tiny));
+    }
+
+        .tss-toggle-container.tss-fontsize-tiny .tss-toggle-mark {
+            height: calc(8px + var(--tss-font-size-tiny));
+            width: calc(20px + var(--tss-font-size-tiny));
+            border-radius: 30px;
+        }
+
+            .tss-toggle-container.tss-fontsize-tiny .tss-toggle-mark:after {
+                top: 4px;
+                left: 4px;
+                height: calc(var(--tss-font-size-tiny));
+                width: calc(var(--tss-font-size-tiny));
+            }
+
+    .tss-toggle-container.tss-fontsize-smallplus {
+        height: calc(10px + var(--tss-font-size-smallplus));
+    }
+
+        .tss-toggle-container.tss-fontsize-smallplus .tss-toggle-mark {
+            height: calc(8px + var(--tss-font-size-smallplus));
+            width: calc(30px + var(--tss-font-size-smallplus));
+            border-radius: 30px;
+        }
+
+            .tss-toggle-container.tss-fontsize-smallplus .tss-toggle-mark:after {
+                top: 4px;
+                left: 4px;
+                height: calc(var(--tss-font-size-smallplus));
+                width: calc(var(--tss-font-size-smallplus));
+            }
+
+    .tss-toggle-container.tss-fontsize-medium {
+        height: calc(10px + var(--tss-font-size-medium));
+    }
+
+        .tss-toggle-container.tss-fontsize-medium .tss-toggle-mark {
+            height: calc(8px + var(--tss-font-size-medium));
+            width: calc(30px + var(--tss-font-size-medium));
+            border-radius: 30px;
+        }
+
+            .tss-toggle-container.tss-fontsize-medium .tss-toggle-mark:after {
+                top: 4px;
+                left: 4px;
+                height: calc(var(--tss-font-size-medium));
+                width: calc(var(--tss-font-size-medium));
+            }
+
+    .tss-toggle-container.tss-fontsize-large {
+        height: calc(10px + var(--tss-font-size-large));
+    }
+
+        .tss-toggle-container.tss-fontsize-large .tss-toggle-mark {
+            height: calc(8px + var(--tss-font-size-large));
+            width: calc(30px + var(--tss-font-size-large));
+            border-radius: 30px;
+        }
+
+            .tss-toggle-container.tss-fontsize-large .tss-toggle-mark:after {
+                top: 4px;
+                left: 4px;
+                height: calc(var(--tss-font-size-large));
+                width: calc(var(--tss-font-size-large));
+            }
+
+    .tss-toggle-container.tss-fontsize-xlarge {
+        height: calc(10px + var(--tss-font-size-xlarge));
+    }
+
+        .tss-toggle-container.tss-fontsize-xlarge .tss-toggle-mark {
+            height: calc(8px + var(--tss-font-size-xlarge));
+            width: calc(30px + var(--tss-font-size-xlarge));
+            border-radius: 30px;
+        }
+
+            .tss-toggle-container.tss-fontsize-xlarge .tss-toggle-mark:after {
+                top: 4px;
+                left: 4px;
+                height: calc(var(--tss-font-size-xlarge));
+                width: calc(var(--tss-font-size-xlarge));
+            }
+
+    .tss-toggle-container.tss-fontsize-xxlarge {
+        height: calc(10px + var(--tss-font-size-xxlarge));
+    }
+
+        .tss-toggle-container.tss-fontsize-xxlarge .tss-toggle-mark {
+            height: calc(8px + var(--tss-font-size-xxlarge));
+            width: calc(30px + var(--tss-font-size-xxlarge));
+            border-radius: 30px;
+        }
+
+            .tss-toggle-container.tss-fontsize-xxlarge .tss-toggle-mark:after {
+                top: 4px;
+                left: 4px;
+                height: calc(var(--tss-font-size-xxlarge));
+                width: calc(var(--tss-font-size-xxlarge));
+            }
+
+    .tss-toggle-container.tss-fontsize-mega {
+        height: calc(10px + var(--tss-font-size-mega));
+    }
+
+        .tss-toggle-container.tss-fontsize-mega .tss-toggle-mark {
+            height: calc(8px + var(--tss-font-size-mega));
+            width: calc(30px + var(--tss-font-size-mega));
+            border-radius: 30px;
+        }
+
+            .tss-toggle-container.tss-fontsize-mega .tss-toggle-mark:after {
+                top: 4px;
+                left: 4px;
+                height: calc(var(--tss-font-size-mega));
+                width: calc(var(--tss-font-size-mega));
+            }
+
+/* IconToggle lives in tss.icontoggle.css */

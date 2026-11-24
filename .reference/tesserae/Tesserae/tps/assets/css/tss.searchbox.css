@@ -1,0 +1,388 @@
+﻿/* SearchBox */
+.tss-searchbox {
+    box-shadow: none;
+    margin: 1px;
+    padding: 0px;
+    border: 0px;
+    border-radius: 0px;
+    color: var(--tss-default-foreground-color);
+    cursor: text;
+    align-items: stretch;
+    display: block;
+    width: 100%;
+    outline: transparent none medium;
+    padding: 0px 5px;
+    background: none;
+    margin: 0px;
+    height: 36px;
+    line-height: 36px;
+}
+
+    .tss-searchbox::placeholder {
+        color: var(--tss-default-foreground-color) !important;
+        opacity: 0.5;
+        transition: opacity 0.3s ease;
+    }
+
+    .tss-searchbox:focus::placeholder {
+        opacity: 0.7;
+    }
+
+    .tss-searchbox:hover::placeholder {
+        opacity: 0.7;
+    }
+
+    /* The browser's own cancel button: WebKit's glyph in WebKit's colours, and Chromium only. The
+       toolkit draws .tss-searchbox-clear in its place. */
+    .tss-searchbox::-webkit-search-cancel-button,
+    .tss-searchbox::-webkit-search-decoration,
+    .tss-searchbox::-webkit-search-results-button,
+    .tss-searchbox::-webkit-search-results-decoration {
+        -webkit-appearance: none;
+        appearance: none;
+        display: none;
+    }
+
+.tss-searchbox-container {
+    display: inline-flex;
+    position: relative;
+    margin-right: 16px;
+    box-shadow: var(--tss-shadow-sm);
+    margin: 0px;
+    border: 1px solid var(--tss-default-border-color);
+    border-radius: var(--tss-border-radius-md);
+    background: var(--tss-default-background-color) none repeat scroll 0% 0%;
+    color: var(--tss-default-foreground-color);
+    cursor: text;
+    height: 36px;
+    align-items: stretch;
+    width: 100%;
+    outline: transparent none medium;
+    padding: 0px 5px;
+    transition: all 0.15s ease-in-out;
+}
+
+    .tss-searchbox-container.tss-disabled {
+        border-color: var(--tss-disabled-background-color);
+        background-color: var(--tss-disabled-background-color);
+        color: var(--tss-disabled-foreground-color);
+    }
+
+    /* The underline eats a pixel off the bottom of a box whose height is fixed, and the input inside is
+       fixed at that same height - so stretching it left the text sitting a pixel high in a box that looks
+       like it should be centred. The row centres its content instead, and the input gives up its fixed
+       height to be centred rather than stretched. */
+    .tss-searchbox-container.tss-underlined {
+        border-radius: 0px;
+        border-style: solid;
+        border-color: var(--tss-default-background-hover-color);
+        border-image: initial;
+        border-width: 0px 0px 1px;
+        padding-bottom: 1px;
+        align-items: center;
+    }
+
+    .tss-searchbox-container.tss-underlined > .tss-searchbox {
+        height: auto;
+        line-height: normal;
+    }
+
+        .tss-searchbox-container.tss-underlined:focus-within {
+            border-color: var(--tss-primary-border-color);
+            border-width: 0px 0px 2px;
+            padding-bottom: 0px;
+            /* Its focus is the thicker rule: the boxed field's focus edge below would draw a box round a field that has none. */
+            box-shadow: none;
+        }
+
+    .tss-searchbox-container:hover {
+        border-color: var(--tss-default-foreground-color);
+        box-shadow: var(--tss-shadow-sm-hover);
+    }
+
+    /* Focus is the TextBox's: a 2px primary edge inside the box (the border and a 1px inset line). */
+    .tss-searchbox-container:focus-within {
+        border-color: var(--tss-primary-border-color);
+        box-shadow: inset 0 0 0 1px var(--tss-primary-border-color);
+    }
+
+.tss-searchbox-icon {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+    color: var(--tss-secondary-foreground-color);
+    cursor: text;
+    transition: width 0.167s ease 0s;
+    overflow: hidden;
+}
+
+.tss-searchbox-container.tss-noicon > .tss-searchbox-icon {
+    display: none;
+}
+
+/* The clear button, drawn the way CommandPalette draws its close button: a flat square that only
+   colours in on hover, holding a cross-small glyph. It fills the row's height, capped at 28px so that
+   it sits inside the 36px box with its 1px border and 5px padding, and disappears while there is
+   nothing to clear so the input keeps the full width. */
+.tss-searchbox-clear {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    width: 28px;
+    height: 28px;
+    max-height: 100%;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--tss-secondary-foreground-color);
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+}
+
+    .tss-searchbox-clear:hover {
+        background: var(--tss-default-background-hover-color);
+        color: var(--tss-default-foreground-color);
+    }
+
+    .tss-searchbox-clear:focus-visible {
+        outline: 2px solid var(--tss-primary-border-color);
+        outline-offset: -2px;
+    }
+
+.tss-searchbox-container.tss-searchbox-has-text:not(.tss-disabled) > .tss-searchbox-clear {
+    display: inline-flex;
+}
+
+.tss-searchbox-clear-icon {
+    /* cross-small at 16px paints the same weight as the magnifier at 16px in .tss-searchbox-icon: the
+       plain cross glyph fills far more of its em box, so it is the small variant that matches. */
+    font-size: 16px;
+    line-height: 1;
+}
+
+/* The glyph is centred as a box rather than set on a text baseline. The icon font is ascent-only - its
+   em box is 1em above the baseline and nothing below - while the baseline of the line box these sit in
+   comes from the surrounding text font, which has a descent. The glyph therefore hangs above the centre
+   of a box that is itself perfectly centred: measured in Chromium, the cross and the magnifier both
+   painted 1px high. Making the icon element a flex container takes its glyph off that baseline. */
+.tss-searchbox-clear-icon,
+.tss-searchbox-cancel-icon,
+.tss-searchbox-failed-icon,
+.tss-searchbox-icon > span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* The status slot: the spinner while a search is out, the warning glyph when one did not answer. It is
+   28px like the clear button and stands in the same place, so what the row holds changes but its shape
+   does not. */
+.tss-searchbox-status {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    width: 28px;
+    height: 28px;
+    max-height: 100%;
+    flex-shrink: 0;
+}
+
+.tss-searchbox-container.tss-searchbox-is-busy:not(.tss-disabled) > .tss-searchbox-status,
+.tss-searchbox-container.tss-searchbox-failed:not(.tss-disabled) > .tss-searchbox-status {
+    display: inline-flex;
+}
+
+    /* Sized through the parent, the way .tss-spinner-size-* is: .tss-spinner sets --tss-spinner-size on
+       itself, so a single class on the same element only ties with it and loses on source order. */
+    .tss-searchbox-status > .tss-spinner {
+        display: none;
+        width: 16px;
+        height: 16px;
+        --tss-spinner-size: 2px;
+    }
+
+    .tss-searchbox-container.tss-searchbox-is-busy > .tss-searchbox-status > .tss-spinner {
+        display: block;
+    }
+
+.tss-searchbox-failed-icon {
+    display: none;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--tss-danger-background-color);
+}
+
+.tss-searchbox-container.tss-searchbox-failed:not(.tss-searchbox-is-busy) > .tss-searchbox-status > .tss-searchbox-failed-icon {
+    display: inline-flex;
+}
+
+/* The spinner takes the clear button's place only on a box that can cancel - there it trades the button
+   for one that does something about the wait, and the two are the same 28px in the same place so the row
+   does not move. Without an OnCancel handler nothing is offered in return, so the clear button stays. */
+.tss-searchbox-container.tss-searchbox-has-text.tss-searchbox-is-busy.tss-searchbox-can-cancel:not(.tss-disabled) > .tss-searchbox-clear {
+    display: none;
+}
+
+/* The cancel button, drawn like the clear button and standing in the spinner's place under a pointer. */
+.tss-searchbox-cancel {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--tss-secondary-foreground-color);
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+}
+
+    .tss-searchbox-cancel:hover {
+        background: var(--tss-default-background-hover-color);
+        color: var(--tss-default-foreground-color);
+    }
+
+    .tss-searchbox-cancel:focus-visible {
+        outline: 2px solid var(--tss-primary-border-color);
+        outline-offset: -2px;
+    }
+
+.tss-searchbox-cancel-icon {
+    font-size: 16px;
+    line-height: 1;
+}
+
+.tss-searchbox-container.tss-searchbox-is-busy.tss-searchbox-can-cancel:not(.tss-disabled):hover > .tss-searchbox-status > .tss-searchbox-cancel {
+    display: inline-flex;
+}
+
+.tss-searchbox-container.tss-searchbox-is-busy.tss-searchbox-can-cancel:not(.tss-disabled):hover > .tss-searchbox-status > .tss-spinner {
+    display: none;
+}
+
+/* A search that did not answer, said on the box for as long as SearchBox.Failed() keeps it there. The
+   focus and hover rules above are one class less specific, so neither paints over it. */
+.tss-searchbox-container.tss-searchbox-failed,
+.tss-searchbox-container.tss-searchbox-failed:hover,
+.tss-searchbox-container.tss-searchbox-failed:focus-within {
+    border-color: var(--tss-danger-background-color);
+}
+
+/* The progress bar: a 2px line along the bottom edge for data the box is still waiting on (SearchBox.Progress,
+   ProgressIndeterminate, ShowProgressWhile). It is absolutely placed so the row keeps its shape, and the box
+   clips it to its rounded corners only while it is up - the rest of the time nothing in the box overflows on
+   purpose, and the clip would be the one change a progress bar made to it. */
+.tss-searchbox-progress {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.tss-searchbox-container.tss-searchbox-has-progress {
+    overflow: hidden;
+}
+
+    .tss-searchbox-container.tss-searchbox-has-progress > .tss-searchbox-progress {
+        display: block;
+    }
+
+/* The underlined box has no corners to clip to, and its bar lies over the rule rather than above it. */
+.tss-searchbox-container.tss-underlined.tss-searchbox-has-progress {
+    overflow: visible;
+}
+
+    .tss-searchbox-container.tss-underlined > .tss-searchbox-progress {
+        bottom: -1px;
+    }
+
+    .tss-searchbox-container.tss-underlined:focus-within > .tss-searchbox-progress {
+        bottom: -2px;
+    }
+
+.tss-searchbox-progress-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 0;
+    background: var(--tss-primary-background-color);
+    transition: width 0.2s ease;
+}
+
+.tss-searchbox-progress.tss-searchbox-progress-indeterminate > .tss-searchbox-progress-bar {
+    width: 30%;
+    transition: none;
+    animation: tss-searchbox-progress-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes tss-searchbox-progress-sweep {
+    from {
+        left: -30%;
+    }
+
+    to {
+        left: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tss-searchbox-progress.tss-searchbox-progress-indeterminate > .tss-searchbox-progress-bar {
+        width: 100%;
+        left: 0;
+        opacity: 0.5;
+        animation: none;
+    }
+}
+
+.tss-searchbox-shortcut {
+    display: none;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 0 4px;
+}
+
+.tss-searchbox-container.tss-searchbox-has-shortcut > .tss-searchbox-shortcut {
+    display: inline-flex;
+}
+
+.tss-searchbox-container:focus-within > .tss-searchbox-icon {
+    width: 0px;
+}
+
+.tss-searchbox-container.tss-noicon > .tss-searchbox-icon {
+    display: none;
+    width: 0px;
+}
+
+.tss-searchbox-container.tss-noicon:focus-within > .tss-searchbox-icon {
+    width: 0px;
+}
+
+
+.tss-searchable-list-no-match {
+    opacity:0.4;
+    filter:saturate(0);
+}
+
+/* The container carries the focus (its 2px edge above), so the input inside it draws none of its own: a
+   theme's or an application's global `:focus-visible` outline would frame it a second time, inside the box. */
+.tss-searchbox-container .tss-searchbox.tss-searchbox:focus-visible {
+    outline: none;
+}

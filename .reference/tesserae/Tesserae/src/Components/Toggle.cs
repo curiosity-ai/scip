@@ -1,0 +1,232 @@
+﻿using static Transpose.Core.dom;
+using static Tesserae.UI;
+
+namespace Tesserae
+{
+    /// <summary>
+    /// A Toggle component that allows users to switch between two states (on/off).
+    /// </summary>
+    [Transpose.Name("tss.Toggle")]
+    public class Toggle : ComponentBase<Toggle, HTMLInputElement>, IBindableComponent<bool>, IRoundedStyle, ITextFormating
+    {
+        private readonly HTMLElement              _checkElement;
+        private readonly HTMLElement              _onOffSpan;
+        private readonly HTMLElement              _textSpan;
+        private readonly HTMLElement              _container;
+        private readonly IComponent               _offText;
+        private readonly IComponent               _onText;
+        private readonly SettableObservable<bool> _observable;
+
+        /// <summary>
+        /// Initializes a new instance of the Toggle class.
+        /// </summary>
+        /// <param name="onText">The text to display when the toggle is on.</param>
+        /// <param name="offText">The text to display when the toggle is off.</param>
+        public Toggle(IComponent onText = null, IComponent offText = null)
+        {
+            _onText       = onText  ?? TextBlock("On");
+            _offText      = offText ?? TextBlock("Off");
+            InnerElement  = CheckBox(Att("tss-checkbox"));
+            InnerElement.setAttribute("role", "switch");
+            _checkElement = Div(Att("tss-toggle-mark"));
+            _onOffSpan    = Div(Att("tss-toggle-text"), _offText.Render());
+            _textSpan     = Div(Att("tss-toggle-text"));
+            _container    = Div(Att("tss-toggle-container tss-default-component-margin tss-fontcolor-default tss-fontsize-small tss-fontweight-regular"), InnerElement, _checkElement, _onOffSpan, _textSpan);
+
+            _textSpan.style.display = "none";
+
+            _observable = new SettableObservable<bool>();
+
+            _container.onclick += (e) =>
+            {
+                StopEvent(e);
+                IsChecked = !IsChecked;
+                OnToggleChanged();
+                RaiseOnChange(ev: null);
+            };
+
+            OnChange((s, e) => OnToggleChanged());
+            AttachClick();
+            AttachChange();
+            AttachFocus();
+            AttachBlur();
+        }
+
+        /// <summary>
+        /// Gets or sets toggle text
+        /// </summary>
+        public string Text
+        {
+            get => _textSpan.innerText;
+            set
+            {
+                _textSpan.innerText = value;
+                var hasOwnText      = !string.IsNullOrEmpty(value);
+
+                _onOffSpan.style.display = hasOwnText ? "none" : "";
+                _textSpan.style.display  = hasOwnText ? ""     : "none";
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets whenever Toggle is enabled
+        /// </summary>
+        public bool IsEnabled
+        {
+            get => !_container.classList.contains("tss-disabled");
+            set
+            {
+                if (value)
+                {
+                    _container.classList.remove("tss-disabled");
+                }
+                else
+                {
+                    _container.classList.add("tss-disabled");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets whenever Toggle is checked
+        /// </summary>
+        public bool IsChecked
+        {
+            get => InnerElement.@checked;
+            set
+            {
+                InnerElement.@checked = value;
+                _observable.Value     = value;
+                ClearChildren(_onOffSpan);
+
+                if (value)
+                {
+                    _onOffSpan.appendChild(_onText.Render());
+                }
+                else
+                {
+                    _onOffSpan.appendChild(_offText.Render());
+                }
+            }
+        }
+
+        /// <summary>
+        /// Renders the toggle component.
+        /// </summary>
+        /// <returns>The rendered HTMLElement.</returns>
+        public override HTMLElement Render()
+        {
+            return _container;
+        }
+
+        private void OnToggleChanged()
+        {
+            ClearChildren(_onOffSpan);
+
+            if (IsChecked)
+            {
+                _onOffSpan.appendChild(_onText.Render());
+            }
+            else
+            {
+                _onOffSpan.appendChild(_offText.Render());
+            }
+            _observable.Value = IsChecked;
+        }
+
+        /// <summary>
+        /// Sets the text of the toggle.
+        /// </summary>
+        /// <param name="text">The text.</param>
+        /// <returns>The current instance of the type.</returns>
+        public Toggle SetText(string text)
+        {
+            Text = text;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets whether the toggle is disabled.
+        /// </summary>
+        /// <param name="value">Whether to disable the toggle.</param>
+        /// <returns>The current instance of the type.</returns>
+        public Toggle Disabled(bool value = true)
+        {
+            IsEnabled = !value;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets whether the toggle is checked.
+        /// </summary>
+        /// <param name="value">Whether to check the toggle.</param>
+        /// <returns>The current instance of the type.</returns>
+        public Toggle Checked(bool value = true)
+        {
+            IsChecked = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Returns an observable that tracks the checked state of the toggle.
+        /// </summary>
+        /// <returns>An observable.</returns>
+        public IObservable<bool> AsObservable()
+        {
+            return _observable;
+        }
+
+        /// <summary>
+        /// Programmatically updates the toggle as part of a two-way binding (no DOM change-event echo).
+        /// </summary>
+        public void SetBoundValue(bool value) => IsChecked = value;
+
+        /// <summary>Gets or sets the text size.</summary>
+        public TextSize Size
+        {
+            get => ITextFormatingExtensions.FromClassList(_container, TextSize.Small);
+            set
+            {
+                _container.classList.remove(Size.ToString());
+                _onText.RemoveClass(Size.ToString());
+                _offText.RemoveClass(Size.ToString());
+
+                _container.classList.add(value.ToString());
+                _onText.Class(value.ToString());
+                _offText.Class(value.ToString());
+            }
+        }
+
+        /// <summary>Gets or sets the text weight.</summary>
+        public TextWeight Weight
+        {
+            get => ITextFormatingExtensions.FromClassList(_container, TextWeight.Regular);
+            set
+            {
+                _container.classList.remove(Weight.ToString());
+                _onText.RemoveClass(Weight.ToString());
+                _offText.RemoveClass(Weight.ToString());
+                
+                _container.classList.add(value.ToString());
+                _onText.Class(value.ToString());
+                _offText.Class(value.ToString());
+            }
+        }
+
+        /// <summary>Gets or sets the text alignment.</summary>
+        public TextAlign TextAlign
+        {
+            get => ITextFormatingExtensions.FromClassList(_container, TextAlign.Left);
+            set
+            {
+                _container.classList.remove(TextAlign.ToString());
+                _onText.RemoveClass(TextAlign.ToString());
+                _offText.RemoveClass(TextAlign.ToString());
+
+                _container.classList.add(value.ToString());
+                _onText.Class(value.ToString());
+                _offText.Class(value.ToString());
+            }
+        }
+    }
+}

@@ -1,0 +1,79 @@
+﻿.tss-fade:not(.tss-fade-instant) {
+    transition: opacity 0.15s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tss-fade {
+        transition: none;
+    }
+}
+
+.tss-fade-light:not(.tss-fade-instant) {
+    transition: opacity 0.15s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tss-fade-light {
+        transition: none;
+    }
+}
+
+.tss-fade:not(.tss-show) {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    cursor: none !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+}
+
+.tss-fade-light:not(.tss-show) {
+    opacity: 0.25 !important;
+    pointer-events: none !important;
+    cursor: none !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    filter: saturate(0) !important;
+}
+
+/* The class is doubled on purpose: Collapse() must win against an application's display
+   utilities (e.g. a Bootstrap-style .app-d-flex { display: flex !important }), which are
+   single-class rules in stylesheets that load after this one - at equal (0,1,0) specificity
+   the later sheet wins and Collapse() silently stops hiding. (0,2,0) outranks any of them
+   regardless of load order, while staying below purposeful overrides like the mobile
+   navbar-drawer rule, which keeps a collapsed drawer display:flex to slide it off-screen. */
+.tss-collapse.tss-collapse {
+    display:none !important;
+}
+
+@-webkit-keyframes slideInUp {
+    from {
+        -webkit-transform: translate3d(0, 20px, 0);
+        transform: translate3d(0, 20px, 0);
+        visibility: visible;
+    }
+
+    to {
+        -webkit-transform: translate3d(0, 0, 0);
+        transform: translate3d(0, 0, 0);
+    }
+}
+
+@keyframes slideInUp {
+    from {
+        -webkit-transform: translate3d(0, 20px, 0);
+        transform: translate3d(0, 20px, 0);
+        visibility: visible;
+    }
+
+    to {
+        -webkit-transform: translate3d(0, 0, 0);
+        transform: translate3d(0, 0, 0);
+    }
+}
+
+.slideInUp {
+    -webkit-animation-name: slideInUp;
+    animation-name: slideInUp;
+    animation-duration: 0.3s;
+    animation-iteration-count: 1;
+}
