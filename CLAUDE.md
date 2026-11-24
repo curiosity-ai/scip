@@ -53,6 +53,9 @@ Build output goes to `artifacts/` (via `ArtifactsPath`), not next to the project
 - Indexer projects reference only `Scip.Indexing` (and via it `Scip`); the CLI is the only project that references them all.
 - Not-yet-ported indexers derive from `NotImplementedIndexer` and exit with code 2. Replace the base class when
   you implement one, and update `TODO.md`.
+- **Pure native port.** Indexers must not depend at runtime on external compilers/toolchains (node/tsc, javac, clang,
+  rustc, ruby, python, dart, php, language servers, plugin jars). Implement lexers/parsers/resolution in C#. External
+  toolchains are allowed only in tests (cross-checks), which must skip gracefully when the tool is unavailable.
 - Don't add CI workflows without being asked.
 
 ## Porting workflow for an indexer
