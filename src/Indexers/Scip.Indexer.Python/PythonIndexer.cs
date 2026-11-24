@@ -186,9 +186,10 @@ public sealed class PythonIndexer : IIndexer
         });
 
         var failures = 0;
-        var buffered = new List<Document>();
         var defined = new HashSet<string>(StringComparer.Ordinal);
         var referenced = new HashSet<string>(StringComparer.Ordinal);
+        var verified = new HashSet<string>(StringComparer.Ordinal);
+        var relationshipsSeen = new HashSet<(string, string)>();
         for (var i = 0; i < files.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -224,7 +225,7 @@ public sealed class PythonIndexer : IIndexer
             catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException or NullReferenceException or ArgumentException)
             {
                 failures++;
-                Console.Error.WriteLine($"scip-python: failed to index {file}: {e.Message}");
+                Console.Error.WriteLine($"scip-python: failed to index {file}: {e.Message} ({string.Join(" <- ", (e.StackTrace ?? "").Split('\n').Take(4).Select(l => l.Trim()))})");
                 continue;
             }
 
@@ -233,17 +234,21 @@ public sealed class PythonIndexer : IIndexer
                 continue;
             }
 
-            Normalize(doc, defined, referenced);
-            buffered.Add(doc);
-        }
-
-        foreach (var doc in buffered)
-        {
+            Normalize(doc, defined, referenced, verified, relationshipsSeen);
             writer.WriteDocument(doc);
         }
 
         foreach (var ext in state.ExternalSymbols.Values)
         {
+            MergeRelationships(ext);
+            for (var i = ext.Relationships.Count - 1; i >= 0; i--)
+            {
+                if (!relationshipsSeen.Add((ext.Symbol, ext.Relationships[i].Symbol)))
+                {
+                    ext.Relationships.RemoveAt(i);
+                }
+            }
+
             defined.Add(ext.Symbol);
             writer.WriteExternalSymbol(ext);
         }
@@ -269,13 +274,44 @@ public sealed class PythonIndexer : IIndexer
     /// and records global symbols that are referenced (occurrences, relationships) so that the caller can emit
     /// external symbols for any that no document defines.
     /// </summary>
-    private static void Normalize(Document doc, HashSet<string> defined, HashSet<string> referenced)
+    private static void Normalize(Document doc, HashSet<string> defined, HashSet<string> referenced, HashSet<string> verified,
+        HashSet<(string, string)> relationshipsSeen)
     {
-        // Upstream names a parameter of a local function "local N(name)", which is not a valid local symbol.
-        static string FixLocal(string s) =>
-            s.StartsWith("local ", StringComparison.Ordinal) && s.Contains('(')
-                ? string.Concat(s.Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '+' or '$' or ' ' ? c : '_')).TrimEnd('_')
-                : s;
+        // Safety net: every emitted symbol must be canonical. Locals are sanitized; a malformed global symbol
+        // (which indicates a bug upstream of here) is replaced by a document-scoped local so the index stays valid.
+        var invalid = new Dictionary<string, string>(StringComparer.Ordinal);
+        string FixLocal(string s)
+        {
+            if (s.Length == 0)
+            {
+                return s;
+            }
+
+            if (SymbolNames.IsLocal(s))
+            {
+                return SymbolNames.CanonicalLocal(s);
+            }
+
+            if (verified.Contains(s))
+            {
+                return s;
+            }
+
+            if (SymbolNames.IsCanonical(s))
+            {
+                verified.Add(s);
+                return s;
+            }
+
+            if (!invalid.TryGetValue(s, out var replacement))
+            {
+                replacement = "local invalid" + invalid.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                invalid[s] = replacement;
+                System.Diagnostics.Debug.Fail($"non-canonical symbol emitted: {s}");
+            }
+
+            return replacement;
+        }
 
         foreach (var occ in doc.Occurrences)
         {
@@ -335,6 +371,20 @@ public sealed class PythonIndexer : IIndexer
             doc.Symbols.AddRange(unique);
         }
 
+        foreach (var info in doc.Symbols)
+        {
+            MergeRelationships(info);
+
+            // The same symbol can be described by several documents; lint wants each relationship once per index.
+            for (var i = info.Relationships.Count - 1; i >= 0; i--)
+            {
+                if (!relationshipsSeen.Add((info.Symbol, info.Relationships[i].Symbol)))
+                {
+                    info.Relationships.RemoveAt(i);
+                }
+            }
+        }
+
         void Reference(string symbol)
         {
             if (symbol.Length == 0)
@@ -375,6 +425,38 @@ public sealed class PythonIndexer : IIndexer
             {
                 Reference(r.Symbol);
             }
+        }
+    }
+
+    /// <summary>Collapses several relationships to the same target into one (OR-ing the flags), as <c>scip lint</c> requires.</summary>
+    private static void MergeRelationships(SymbolInformation info)
+    {
+        if (info.Relationships.Count < 2)
+        {
+            return;
+        }
+
+        var merged = new Dictionary<string, Relationship>(StringComparer.Ordinal);
+        foreach (var r in info.Relationships)
+        {
+            if (merged.TryGetValue(r.Symbol, out var first))
+            {
+                first.IsReference |= r.IsReference;
+                first.IsImplementation |= r.IsImplementation;
+                first.IsTypeDefinition |= r.IsTypeDefinition;
+                first.IsDefinition |= r.IsDefinition;
+            }
+            else
+            {
+                merged[r.Symbol] = r;
+            }
+        }
+
+        if (merged.Count != info.Relationships.Count)
+        {
+            var list = merged.Values.ToList();
+            info.Relationships.Clear();
+            info.Relationships.AddRange(list);
         }
     }
 
