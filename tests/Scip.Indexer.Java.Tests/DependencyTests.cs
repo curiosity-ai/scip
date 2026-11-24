@@ -88,7 +88,7 @@ public class DependencyTests
         await Assert.That(rc).IsEqualTo(0);
         var doc = Index.Parser.ParseFrom(File.ReadAllBytes(output)).Documents.Single();
         var symbols = doc.Occurrences.Select(o => o.Symbol).ToHashSet();
-        const string pkg = "scip-java maven maven/com.acme/box 2.5 ";
+        const string pkg = "semanticdb maven maven/com.acme/box 2.5 ";
         await Assert.That(symbols.Contains(pkg + "p/Box#")).IsTrue();
         await Assert.That(symbols.Contains(pkg + "p/Box#`<init>`().")).IsTrue();
         await Assert.That(symbols.Contains(pkg + "p/Box#get().")).IsTrue();
@@ -96,8 +96,8 @@ public class DependencyTests
         await Assert.That(symbols.Contains(pkg + "p/Box#hello(+1).")).IsTrue();
         await Assert.That(symbols.Contains(pkg + "p/Box#Inner#run().")).IsTrue();
         // generic substitution: Box<String>.get() is a String, so length() resolves into the JDK
-        await Assert.That(symbols.Contains("scip-java maven jdk 17 java/lang/String#length().")).IsTrue();
+        await Assert.That(symbols.Contains("semanticdb maven jdk 17 java/lang/String#length().")).IsTrue();
         // project sources belong to the project's own Maven coordinates
-        await Assert.That(symbols.Contains("scip-java maven maven/org.demo/app 1.0 q/Main#")).IsTrue();
+        await Assert.That(symbols.Contains("semanticdb maven maven/org.demo/app 1.0 q/Main#")).IsTrue();
     }
 }

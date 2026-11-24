@@ -12,6 +12,9 @@ public sealed class LocalVar
     public Node? Decl { get; set; }
     public MethodInfo? OwnerMethod { get; set; }
     public TypeInfo? OwnerType { get; set; }
+
+    /// <summary>Resource and pattern-binding variables are not javac <c>LOCAL_VARIABLE</c>s, so semanticdb-javac gives them global <c>method().name.</c> symbols.</summary>
+    public MethodInfo? TermOwner { get; set; }
 }
 
 /// <summary>Lexical scope: locals, type variables and local classes, chained to enclosing scopes up to the file.</summary>
@@ -77,6 +80,9 @@ public sealed class JavaSourceFile
     public required CompilationUnit Unit { get; init; }
     public string Package { get; set; } = "";
     public JavaPackage Origin { get; set; } = JavaPackage.Empty;
+
+    /// <summary>The <c>--release</c> this file is compiled with, if configured.</summary>
+    public int? Release { get; set; }
     public List<TypeInfo> Types { get; } = [];
     public Dictionary<TypeDecl, TypeInfo> Declared { get; } = [];
     public Scope Scope { get; set; } = null!;
@@ -105,10 +111,10 @@ public sealed class Workspace : IDisposable
     public List<JavaSourceFile> Files { get; } = [];
     public Dictionary<TypeInfo, Scope> TypeScopes { get; } = [];
 
-    public JavaSourceFile AddFile(string relativePath, string text, JavaPackage? origin = null)
+    public JavaSourceFile AddFile(string relativePath, string text, JavaPackage? origin = null, int? release = null)
     {
         var cu = Parser.ParseFile(text);
-        var file = new JavaSourceFile { RelativePath = relativePath, Origin = origin ?? JavaPackage.Empty, Unit = cu, Package = string.Join('/', cu.Package.Select(p => p.Name)) };
+        var file = new JavaSourceFile { RelativePath = relativePath, Origin = origin ?? JavaPackage.Empty, Release = release, Unit = cu, Package = string.Join('/', cu.Package.Select(p => p.Name)) };
         file.Scope = new Scope { File = file };
         foreach (var d in cu.Types) file.Types.Add(Declare(d, null, file));
         Files.Add(file);
@@ -162,6 +168,7 @@ public sealed class Workspace : IDisposable
             Decl = d,
             Outer = outer,
             IsLocal = !anon,
+            LocalOwner = anon ? null : scope.EnclosingMethod,
             IsAnonymous = anon,
             Flags = d.Mods.Flags,
         };
@@ -283,6 +290,7 @@ public sealed class Workspace : IDisposable
                             mi.Varargs |= p.Varargs;
                         }
                     }
+                    mi.TypeParamBounds = md.TypeParams.Select(tp => tp.Bounds.Count > 0 ? ResolveType(tp.Bounds[0], ms, null) : JType.Object).ToList();
                     mi.Return = md.Ret is null ? JType.Void : ResolveType(md.Ret, ms, null);
                     mi.Throws = md.Throws.Select(x => ResolveType(x, ms, null)).ToList();
                     if (t.IsInterface)
@@ -468,7 +476,20 @@ public sealed class Workspace : IDisposable
                 {
                     var pkg = string.Join('/', pkgParts);
                     var t = Load(pkg + "/" + seg.Name);
-                    if (t is not null) { cur = t; sink?.TypeRef(t, seg.Start, seg.End); }
+                    if (t is not null)
+                    {
+                        cur = t;
+                        if (sink is not null)
+                        {
+                            // every segment of a qualified package name references its own package prefix
+                            for (var k = 0; k < pkgParts.Count && k < r.Segs.Count; k++)
+                            {
+                                var prefix = string.Join('/', pkgParts.Take(k + 1));
+                                if (Classes.PackageExists(prefix)) sink.PackageRef(prefix, r.Segs[k].Start, r.Segs[k].End);
+                            }
+                        }
+                        sink?.TypeRef(t, seg.Start, seg.End);
+                    }
                     else
                     {
                         if (i - 1 >= 0 && Classes.PackageExists(pkg)) sink?.PackageRef(pkg, r.Segs[i - 1].Start, r.Segs[i - 1].End);

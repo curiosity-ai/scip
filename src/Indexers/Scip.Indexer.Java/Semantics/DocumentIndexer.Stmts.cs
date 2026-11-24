@@ -72,7 +72,7 @@ public sealed partial class DocumentIndexer
             case TryStmt t:
             {
                 var ts = scope.Child();
-                foreach (var res in t.Resources) VisitStmt(res, ts);
+                foreach (var res in t.Resources) { _resource = true; VisitStmt(res, ts); _resource = false; }
                 VisitBlockBody(t.Body, ts.Child());
                 foreach (var c in t.Catches)
                 {
@@ -127,7 +127,7 @@ public sealed partial class DocumentIndexer
             var enclStart = v.Start;
             var enclEnd = v.Vars.Count == 1 ? v.End : d.End;
             if (declared is null && d.Init is not null) type = Eval(d.Init, scope);
-            var lv = DefineLocal(d, type, scope, kind, null, null, v.Mods.Flags, enclStart, enclEnd, mods: v.Mods);
+            var lv = DefineLocal(d, type, scope, kind, null, null, v.Mods.Flags, enclStart, enclEnd, mods: v.Mods, term: _resource);
             if (declared is not null && d.Init is not null) Eval(d.Init, scope, type);
             _ = lv;
         }
@@ -174,7 +174,9 @@ public sealed partial class DocumentIndexer
         if (p.Name is not null)
         {
             if (p.Type.Segs.Count == 1 && p.Type.Segs[0].Name == "var") t = JType.Unknown;
-            DefineLocal(p, t, scope, Kind.UnspecifiedKind, null, null, p.Mods.Flags, p.Start, p.NameStart + p.Name.Length, mods: p.Mods);
+            DefineLocal(p, t, scope, Kind.UnspecifiedKind, null, null, p.Mods.Flags, p.Start, p.NameStart + p.Name.Length, mods: p.Mods, term: true);
         }
     }
+
+    private bool _resource;
 }

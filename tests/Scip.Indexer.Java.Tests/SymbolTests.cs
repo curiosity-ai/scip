@@ -43,9 +43,9 @@ public class SymbolTests
     [Test]
     public async Task RewrittenSymbolsParseWithScipSymbolParser()
     {
-        var full = $"scip-java {new MavenPackage("x.jar", "g", "a", "1.0").ScipTypedEncoding} sample/Test#m1().";
+        var full = $"semanticdb {new MavenPackage("x.jar", "g", "a", "1.0").ScipTypedEncoding} sample/Test#m1().";
         var parsed = SymbolParser.Parse(full);
-        await Assert.That(parsed.Scheme).IsEqualTo("scip-java");
+        await Assert.That(parsed.Scheme).IsEqualTo("semanticdb");
         await Assert.That(parsed.Package.Version).IsEqualTo("1.0");
     }
 

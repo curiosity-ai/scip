@@ -4,7 +4,7 @@ using System.Xml;
 namespace Scip.Indexer.Java.Project;
 
 /// <summary>A source root together with the package (Maven coordinates) its classes are attributed to.</summary>
-public sealed record SourceRoot(string Directory, JavaPackage Package);
+public sealed record SourceRoot(string Directory, JavaPackage Package, int? Release = null);
 
 /// <summary>What to index: source roots, explicit files, dependency jars and the JDK to use. Built natively, no build tool run.</summary>
 public sealed class JavaProject
@@ -99,6 +99,20 @@ public sealed class Pom
     public string? TestSourceDirectory { get; set; }
     public Pom? ParentPom { get; set; }
 
+    /// <summary><c>release</c> / <c>testRelease</c> of the maven-compiler-plugin configuration (build or pluginManagement).</summary>
+    public string? CompilerRelease { get; set; }
+
+    public string? CompilerTestRelease { get; set; }
+
+    /// <summary>The <c>--release</c> javac gets for the main or test sources, or null when none is configured.</summary>
+    public int? Release(bool test)
+    {
+        string? Walk(Func<Pom, string?> pick) { for (var p = this; p is not null; p = p.ParentPom) { if (pick(p) is { } v) return v; } return null; }
+        var main = Walk(p => p.CompilerRelease) ?? Lookup("maven.compiler.release");
+        var value = test ? Walk(p => p.CompilerTestRelease) ?? Lookup("maven.compiler.testRelease") ?? main : main;
+        return value is not null && int.TryParse(Resolve(value), out var r) ? r : null;
+    }
+
     public string EffectiveGroup => Group ?? ParentPom?.EffectiveGroup ?? Parent?.Group ?? "";
 
     public string EffectiveVersion => Version ?? ParentPom?.EffectiveVersion ?? Parent?.Version ?? "";
@@ -126,7 +140,32 @@ public sealed class Pom
     public string? ManagedVersion(string group, string artifact) =>
         Managed.TryGetValue(group + ":" + artifact, out var v) ? Resolve(v) : ParentPom?.ManagedVersion(group, artifact);
 
-    public static Pom? Load(string path)
+    /// <summary>Evaluates a Maven profile <c>&lt;jdk&gt;</c> activation: a version prefix, a range such as <c>[17,)</c>, or a negation.</summary>
+    public static bool JdkActivation(string spec, int major)
+    {
+        spec = spec.Trim();
+        if (spec.StartsWith('!')) return !JdkActivation(spec[1..], major);
+        if (spec.Length > 1 && spec[0] is '[' or '(' && spec[^1] is ']' or ')')
+        {
+            var parts = spec[1..^1].Split(',');
+            static int? Num(string t)
+            {
+                t = t.Trim();
+                var segs = t.Split('.');
+                return int.TryParse(t.StartsWith("1.", StringComparison.Ordinal) && segs.Length > 1 ? segs[1] : segs[0], out var n) ? n : null;
+            }
+            if (parts.Length == 1) return Num(parts[0]) == major;
+            var lo = Num(parts[0]);
+            var hi = Num(parts[1]);
+            if (lo is { } l && (spec[0] == '[' ? major < l : major <= l)) return false;
+            if (hi is { } h && (spec[^1] == ']' ? major > h : major >= h)) return false;
+            return true;
+        }
+        var v = spec.StartsWith("1.", StringComparison.Ordinal) ? spec.Split('.')[1] : spec.Split('.')[0];
+        return v == major.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public static Pom? Load(string path, int? jdkMajor = null)
     {
         if (!File.Exists(path)) return null;
         var doc = new XmlDocument { XmlResolver = null };
@@ -156,6 +195,15 @@ public sealed class Pom
         {
             foreach (var p in props.ChildNodes.OfType<XmlElement>()) pom.Properties[p.LocalName] = p.InnerText.Trim();
         }
+        if (Child(root, "profiles") is { } profiles)
+        {
+            foreach (var profile in profiles.ChildNodes.OfType<XmlElement>().Where(x => x.LocalName == "profile"))
+            {
+                var jdk = Child(profile, "activation") is { } act ? Text(act, "jdk") : null;
+                if (jdk is null || jdkMajor is not { } major || !JdkActivation(jdk, major)) continue;
+                if (Child(profile, "properties") is { } pp) foreach (var p in pp.ChildNodes.OfType<XmlElement>()) pom.Properties[p.LocalName] = p.InnerText.Trim();
+            }
+        }
         if (Child(root, "modules") is { } mods)
         {
             foreach (var m in mods.ChildNodes.OfType<XmlElement>().Where(x => x.LocalName == "module")) pom.Modules.Add(m.InnerText.Trim());
@@ -164,6 +212,13 @@ public sealed class Pom
         {
             pom.SourceDirectory = Text(build, "sourceDirectory");
             pom.TestSourceDirectory = Text(build, "testSourceDirectory");
+            var plugins = Child(build, "plugins")?.ChildNodes.OfType<XmlElement>().Concat(Child(Child(build, "pluginManagement") ?? build, "plugins")?.ChildNodes.OfType<XmlElement>() ?? []) ?? [];
+            foreach (var plugin in plugins.Where(x => x.LocalName == "plugin" && Text(x, "artifactId") == "maven-compiler-plugin"))
+            {
+                if (Child(plugin, "configuration") is not { } cfg) continue;
+                pom.CompilerRelease ??= Text(cfg, "release");
+                pom.CompilerTestRelease ??= Text(cfg, "testRelease");
+            }
         }
         PomDependency? Dep(XmlElement d) => Text(d, "groupId") is { } g && Text(d, "artifactId") is { } a
             ? new PomDependency(g, a, Text(d, "version"), Text(d, "scope") ?? "compile", Text(d, "optional") == "true", Text(d, "type"))
@@ -191,8 +246,11 @@ public sealed class ProjectDiscovery(ArtifactLocator locator)
 {
     private static readonly string[] IgnoredDirs = ["target", "build", "out", "node_modules", ".git", ".gradle", ".idea", "bin", "obj"];
 
+    private int? _jdkMajor;
+
     public JavaProject Discover(string root, string? configPath = null)
     {
+        _jdkMajor = Classpath.ClassPath.DetectJdkMajor(null);
         root = Path.GetFullPath(root);
         var project = new JavaProject { Root = root };
         var config = configPath is not null
@@ -247,8 +305,8 @@ public sealed class ProjectDiscovery(ArtifactLocator locator)
             if (pom.Packaging == "pom") continue;
             var main = System.IO.Path.GetFullPath(pom.SourceDirectory is { } sd ? pom.Resolve(sd) : System.IO.Path.Combine("src", "main", "java"), mdir);
             var test = System.IO.Path.GetFullPath(pom.TestSourceDirectory is { } td ? pom.Resolve(td) : System.IO.Path.Combine("src", "test", "java"), mdir);
-            if (Directory.Exists(main)) project.SourceRoots.Add(new SourceRoot(main, pkg));
-            if (Directory.Exists(test)) project.SourceRoots.Add(new SourceRoot(test, pkg));
+            if (Directory.Exists(main)) project.SourceRoots.Add(new SourceRoot(main, pkg, pom.Release(test: false)));
+            if (Directory.Exists(test)) project.SourceRoots.Add(new SourceRoot(test, pkg, pom.Release(test: true)));
             var seen = new HashSet<string>();
             foreach (var dep in pom.Dependencies) ResolveMavenDependency(project, pom, dep, internalCoords, seen, 0);
         }
@@ -259,18 +317,18 @@ public sealed class ProjectDiscovery(ArtifactLocator locator)
     {
         var path = System.IO.Path.Combine(dir, "pom.xml");
         if (!visited.Add(path)) return;
-        var pom = Pom.Load(path);
+        var pom = Pom.Load(path, _jdkMajor);
         if (pom is null) return;
         pom.ParentPom = parent ?? LoadParentPom(pom, dir);
         acc.Add((dir, pom));
         foreach (var m in pom.Modules) CollectModules(System.IO.Path.GetFullPath(m, dir), pom, acc, visited);
     }
 
-    private static Pom? LoadParentPom(Pom pom, string dir)
+    private Pom? LoadParentPom(Pom pom, string dir)
     {
         if (pom.Parent is null) return null;
         var rel = System.IO.Path.GetFullPath(System.IO.Path.Combine("..", "pom.xml"), dir);
-        var p = Pom.Load(rel);
+        var p = Pom.Load(rel, _jdkMajor);
         return p is not null && p.Artifact == pom.Parent.Value.Artifact ? p : null;
     }
 
@@ -289,7 +347,7 @@ public sealed class ProjectDiscovery(ArtifactLocator locator)
         var jar = locator.Find(group, artifact, version, "jar");
         if (jar is not null) project.Dependencies.Add(new MavenPackage(jar, group, artifact, version));
         var pomFile = locator.Find(group, artifact, version, "pom");
-        if (pomFile is null || Pom.Load(pomFile) is not { } depPom) return;
+        if (pomFile is null || Pom.Load(pomFile, _jdkMajor) is not { } depPom) return;
         depPom.ParentPom = ctx.ParentPom ?? ctx;
         foreach (var t in depPom.Dependencies)
         {

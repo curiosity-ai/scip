@@ -103,12 +103,14 @@ public sealed partial class DocumentIndexer
                 return new PrimT("boolean");
             }
             case Lambda lam: return EvalLambda(lam, s, expected);
-            case MethodRef mr: return EvalMethodRef(mr, s);
+            case MethodRef mr: return EvalMethodRef(mr, s, expected);
             case ClassLit cl:
             {
                 var t = ws.ResolveType(cl.Type, s, this);
-                if (ws.Load(t) is { } clsInfo && cl.Type.Dims == 0) Reference(_names.ClassLiteral(clsInfo), cl.End - 5, cl.End);
-                return new ClassT("java/lang/Class", [t is PrimT ? JType.Unknown : t]);
+                if (cl.Type.Dims > 0) Reference(_names.SpecialClassLiteral("Array"), cl.End - 5, cl.End);
+                else if (t is PrimT prim) Reference(_names.SpecialClassLiteral(prim.Name), cl.End - 5, cl.End);
+                else if (ws.Load(t) is { } clsInfo) Reference(_names.ClassLiteral(clsInfo), cl.End - 5, cl.End);
+                return new ClassT("java/lang/Class", [t is PrimT ? Box(t) : t]);
             }
             case SwitchExpr se:
                 VisitSwitch(se.Switch, s);
@@ -172,6 +174,7 @@ public sealed partial class DocumentIndexer
         "byte" => new ClassT("java/lang/Byte", []),
         "char" => new ClassT("java/lang/Character", []),
         "boolean" => new ClassT("java/lang/Boolean", []),
+        "void" => new ClassT("java/lang/Void", []),
         _ => t,
     } : t;
 
@@ -195,7 +198,9 @@ public sealed partial class DocumentIndexer
         if (name == "super")
         {
             var cur = s.EnclosingType;
-            return cur is null ? Res.None : new Res(RKind.Value, cur.Super ?? JType.Object);
+            if (cur is null) return Res.None;
+            if (_names.ThisSuper(cur, "super") is { Length: > 0 } superSym) Reference(superSym, n.Start, n.End);
+            return new Res(RKind.Value, cur.Super ?? JType.Object);
         }
         for (var sc = s; sc is not null; sc = sc.Parent)
         {
@@ -265,8 +270,17 @@ public sealed partial class DocumentIndexer
             }
             case RKind.Type:
             {
-                if (name == "this") return new Res(RKind.Value, ThisType(target.T!));
-                if (name == "class") return new Res(RKind.Value, JType.Unknown);
+                if (name == "this")
+                {
+                    if (_names.ThisSuper(target.T!, "this") is { Length: > 0 } thisSym) Reference(thisSym, fa.NameStart, end);
+                    return new Res(RKind.Value, ThisType(target.T!));
+                }
+                if (name == "super")
+                {
+                    if (_names.ThisSuper(target.T!, "super") is { Length: > 0 } superSym) Reference(superSym, fa.NameStart, end);
+                    return new Res(RKind.Value, target.T!.Super ?? JType.Object);
+                }
+                if (name == "class") return new Res(RKind.Value, new ClassT("java/lang/Class", [new ClassT(target.T!.Name, [])]));
                 if (ws.FindField(new ClassT(target.T!.Name, []), name, s) is { } f)
                 {
                     Reference(_names.Field(f.Field), fa.NameStart, end);
@@ -281,7 +295,11 @@ public sealed partial class DocumentIndexer
             }
             case RKind.Value:
             {
-                if (target.Type is ArrayT && name == "length") return new Res(RKind.Value, new PrimT("int"));
+                if (target.Type is ArrayT && name == "length")
+                {
+                    Reference(_names.ArrayMember("length", false), fa.NameStart, end);
+                    return new Res(RKind.Value, new PrimT("int"));
+                }
                 if (ws.FindField(target.Type, name, s) is { } f)
                 {
                     Reference(_names.Field(f.Field), fa.NameStart, end);
@@ -297,6 +315,7 @@ public sealed partial class DocumentIndexer
 
     private JType EvalCall(Call c, Scope s)
     {
+        var explicitTypeArgs = c.TypeArgs.Select(t => ws.ResolveType(t, s, this)).ToList();
         var argTypes = EvalArgs(c.Args, s);
         var nameEnd = c.NameStart + c.Name.Length;
         List<(MethodInfo Method, Dictionary<string, JType> Subst)> candidates = [];
@@ -307,14 +326,15 @@ public sealed partial class DocumentIndexer
             {
                 var cur = s.EnclosingType;
                 var ctorOwner = c.Name == "this" ? cur : ws.Load(cur?.Super ?? JType.Unknown);
-                if (ctorOwner is null) return JType.Void;
+                if (ctorOwner is null) { EvalDeferredArgs(c.Args, s); return JType.Void; }
                 var ctors = ctorOwner.Methods.Where(m => m.IsCtor).Select(m => (m, new Dictionary<string, JType>())).ToList();
-                var best = ChooseMethod(ctors, argTypes);
+                var best = ChooseMethod(ctors, argTypes, s);
                 if (best is not null)
                 {
                     Reference(_names.Method(best.Value.Method), c.NameStart, nameEnd);
                     EvalLambdaArgs(c.Args, best.Value.Method, new Dictionary<string, JType>(), s);
                 }
+                else EvalDeferredArgs(c.Args, s);
                 return JType.Void;
             }
             for (var sc = s; sc is not null && candidates.Count == 0; sc = sc.Parent)
@@ -340,19 +360,39 @@ public sealed partial class DocumentIndexer
         else
         {
             var target = EvalAmbiguous(c.Target, s);
+            if (target.Kind == RKind.Value && target.Type is ArrayT && c.Name == "clone" && c.Args.Count == 0)
+            {
+                Reference(_names.ArrayMember("clone", true), c.NameStart, nameEnd);
+                return target.Type;
+            }
             if (target.Kind == RKind.Value) { receiver = target.Type; candidates = ws.FindMethods(target.Type, c.Name, s); }
             else if (target.Kind == RKind.Type) { receiver = target.Type; candidates = ws.FindMethods(target.Type, c.Name, s); }
         }
-        var chosen = ChooseMethod(candidates, argTypes);
-        if (chosen is null) return JType.Unknown;
+        if (explicitTypeArgs.Count > 0)
+        {
+            candidates = candidates.Select(cd =>
+            {
+                if (cd.Method.TypeParams.Count != explicitTypeArgs.Count) return cd;
+                var extended = new Dictionary<string, JType>(cd.Subst);
+                for (var i = 0; i < explicitTypeArgs.Count; i++) extended[cd.Method.TypeParams[i]] = explicitTypeArgs[i];
+                return (cd.Method, extended);
+            }).ToList();
+        }
+        var chosen = ChooseMethod(candidates, argTypes, s);
+        if (chosen is null)
+        {
+            EvalDeferredArgs(c.Args, s);
+            return JType.Unknown;
+        }
         var (m, map) = chosen.Value;
         Reference(_names.Method(m), c.NameStart, nameEnd);
         var bindings = new Dictionary<string, JType>(map);
+        for (var i = 0; i < explicitTypeArgs.Count && i < m.TypeParams.Count; i++) bindings[m.TypeParams[i]] = explicitTypeArgs[i];
         for (var i = 0; i < m.Params.Count && i < argTypes.Count; i++) Bind(Workspace.Subst(m.Params[i], map), argTypes[i], m.TypeParams, bindings);
         EvalLambdaArgs(c.Args, m, bindings, s);
         var ret = Workspace.Subst(m.Return, bindings);
         if (m.Name == "getClass" && m.Params.Count == 0) return new ClassT("java/lang/Class", [JType.Unknown]);
-        return ret is VarT v && m.TypeParams.Contains(v.Name) ? JType.Unknown : ret;
+        return ret is VarT v && m.TypeParams.Contains(v.Name) && !bindings.ContainsKey(v.Name) ? JType.Unknown : ret;
     }
 
     private void Bind(JType param, JType arg, List<string> typeParams, Dictionary<string, JType> map)
@@ -388,18 +428,38 @@ public sealed partial class DocumentIndexer
         }
     }
 
+    private bool _boxing;
+    private Scope? _callScope;
+    private bool _usedVarargs;
+
+    /// <summary>
+    /// Overload resolution after JLS 15.12.2: the first of the strict, loose (boxing) and variable-arity phases that has
+    /// an applicable method wins, then the most specific applicable method; ties fall back to the lowest conversion cost.
+    /// </summary>
     private (MethodInfo Method, Dictionary<string, JType> Subst)? ChooseMethod(
-        List<(MethodInfo Method, Dictionary<string, JType> Subst)> candidates, List<JType> args)
+        List<(MethodInfo Method, Dictionary<string, JType> Subst)> candidates, List<JType> args, Scope? scope = null)
     {
         if (candidates.Count == 0) return null;
-        (MethodInfo, Dictionary<string, JType>)? best = null;
-        var bestCost = int.MaxValue;
+        _callScope = scope;
+        var applicable = new List<(MethodInfo Method, Dictionary<string, JType> Subst, int Cost, int Phase)>();
         foreach (var (m, map) in candidates)
         {
+            _boxing = false;
+            _usedVarargs = false;
             var cost = ApplicabilityCost(m, map, args);
-            if (cost >= 0 && cost < bestCost) { best = (m, map); bestCost = cost; }
+            if (cost < 0) continue;
+            applicable.Add((m, map, cost, _usedVarargs ? 3 : _boxing ? 2 : 1));
         }
-        if (best is not null) return best;
+        if (applicable.Count > 0)
+        {
+            var phase = applicable.Min(a => a.Phase);
+            var set = applicable.Where(a => a.Phase == phase).ToList();
+            if (set.Count == 1) return (set[0].Method, set[0].Subst);
+            var specific = set.Where(a => set.All(b => ReferenceEquals(a.Method, b.Method) || MoreSpecific(a.Method, a.Subst, b.Method, b.Subst, args.Count, phase == 3))).ToList();
+            var pool = specific.Count > 0 ? specific : set;
+            var best = pool.OrderBy(a => a.Cost).First();
+            return (best.Method, best.Subst);
+        }
         // fall back to arity match, then to the first candidate by name
         foreach (var (m, map) in candidates)
         {
@@ -408,19 +468,73 @@ public sealed partial class DocumentIndexer
         return candidates.Count == 1 ? candidates[0] : null;
     }
 
+    private JType ParamAt(MethodInfo m, Dictionary<string, JType> map, int i, bool varargs)
+    {
+        var n = m.Params.Count;
+        var p = varargs && i >= n - 1 ? (m.Params[n - 1] is ArrayT pa ? pa.Elem : JType.Unknown) : m.Params[i];
+        return Workspace.Subst(p, map);
+    }
+
+    private bool MoreSpecific(MethodInfo a, Dictionary<string, JType> amap, MethodInfo b, Dictionary<string, JType> bmap, int argCount, bool varargs)
+    {
+        var k = varargs ? Math.Max(argCount, Math.Max(a.Params.Count, b.Params.Count)) : a.Params.Count;
+        if (!varargs && a.Params.Count != b.Params.Count) return false;
+        for (var i = 0; i < k; i++)
+        {
+            if (!IsSubtypeForSpecificity(ParamAt(a, amap, i, varargs), a, ParamAt(b, bmap, i, varargs), b)) return false;
+        }
+        return true;
+    }
+
+    private JType ErasedBound(JType t, MethodInfo owner)
+    {
+        if (t is VarT v)
+        {
+            var i = owner.TypeParams.IndexOf(v.Name);
+            if (i >= 0 && i < owner.TypeParamBounds.Count) return ErasedBound(owner.TypeParamBounds[i], owner);
+            var ot = owner.Owner;
+            var j = ot.TypeParams.IndexOf(v.Name);
+            if (j >= 0 && j < ot.TypeParamBounds.Count && ot.TypeParamBounds[j] is not VarT) return ErasedBound(ot.TypeParamBounds[j], owner);
+            return JType.Object;
+        }
+        return t is WildT w ? (w.Bound is null || w.Kind == WildKind.Super ? JType.Object : ErasedBound(w.Bound, owner)) : t;
+    }
+
+    private bool IsSubtypeForSpecificity(JType s, MethodInfo sm, JType t, MethodInfo tm)
+    {
+        s = ErasedBound(s, sm);
+        t = ErasedBound(t, tm);
+        if (!s.IsKnown || !t.IsKnown) return true;
+        switch (s)
+        {
+            case PrimT ps:
+                if (t is not PrimT pt) return false;
+                if (ps.Name == pt.Name) return true;
+                var i1 = Array.IndexOf(Numeric, ps.Name);
+                var i2 = Array.IndexOf(Numeric, pt.Name);
+                if (i1 < 0 || i2 < 0 || pt.Name == "char") return false;
+                if (ps.Name == "char") return i2 >= 3;
+                return i2 >= i1;
+            case ArrayT sa:
+                if (t is ArrayT ta) return sa.Elem is PrimT || ta.Elem is PrimT ? Equals(sa.Elem, ta.Elem) : IsSubtypeForSpecificity(sa.Elem, sm, ta.Elem, tm);
+                return t is ClassT { Name: "java/lang/Object" or "java/lang/Cloneable" or "java/io/Serializable" };
+            case ClassT sc:
+                return t is ClassT tc && IsSubclass(sc.Name, tc.Name);
+        }
+        return false;
+    }
+
     private int ApplicabilityCost(MethodInfo m, Dictionary<string, JType> map, List<JType> args)
     {
         var n = m.Params.Count;
         var varargs = m.Varargs && (args.Count != n || !(args.Count > 0 && args[^1] is ArrayT or NullT));
         if (!varargs && args.Count != n) return -1;
         if (varargs && args.Count < n - 1) return -1;
+        _usedVarargs = varargs;
         var total = varargs ? 20 : 0;
         for (var i = 0; i < args.Count; i++)
         {
-            JType p;
-            if (varargs && i >= n - 1) p = m.Params[n - 1] is ArrayT pa ? pa.Elem : JType.Unknown;
-            else p = m.Params[i];
-            p = Workspace.Subst(p, map);
+            var p = ParamAt(m, map, i, varargs);
             var c = AssignCost(args[i], p, m);
             if (c < 0) return -1;
             total += c;
@@ -431,7 +545,26 @@ public sealed partial class DocumentIndexer
     private int AssignCost(JType arg, JType param, MethodInfo m)
     {
         if (!arg.IsKnown || !param.IsKnown) return 2;
-        if (param is VarT or WildT) return arg is PrimT ? 3 : 2;
+        if (arg is VarT av && _callScope is not null && DeclaredTypeVar(av.Name, _callScope)) arg = ErasedBoundInScope(av);
+        if (param is VarT pv)
+        {
+            // a method type variable only accepts arguments within its bound
+            var bi = m.TypeParams.IndexOf(pv.Name);
+            if (bi >= 0 && bi < m.TypeParamBounds.Count && m.TypeParamBounds[bi] is ClassT { Name: not "java/lang/Object" } bound && arg is not NullT)
+            {
+                var ac = arg is PrimT ap ? Box(ap) : arg;
+                if (arg is PrimT) _boxing = true;
+                if (ac is ClassT acc) { if (!IsSubclass(acc.Name, bound.Name)) return -1; }
+                else if (ac is ArrayT) return bound.Name is "java/lang/Cloneable" or "java/io/Serializable" ? 2 : -1;
+            }
+            else if (arg is PrimT) _boxing = true;
+            return arg is PrimT ? 3 : 2;
+        }
+        if (param is WildT)
+        {
+            if (arg is PrimT) _boxing = true;
+            return arg is PrimT ? 3 : 2;
+        }
         switch (arg)
         {
             case NullT: return param is PrimT ? -1 : 1;
@@ -446,12 +579,20 @@ public sealed partial class DocumentIndexer
                     if (pa.Name == "char") return ip >= 3 ? 1 + (ip - 3) : -1;
                     return ip > ia ? 1 + (ip - ia) : -1;
                 }
-                if (param is ClassT pc) return Box(pa) is ClassT bc && (bc.Name == pc.Name || pc.Name is "java/lang/Object" or "java/lang/Number" or "java/io/Serializable" or "java/lang/Comparable") ? 10 : -1;
+                if (param is ClassT pc && Box(pa) is ClassT bc && IsSubclass(bc.Name, pc.Name))
+                {
+                    _boxing = true;
+                    return 10;
+                }
                 return -1;
             }
             case ClassT ca:
             {
-                if (param is PrimT pp2) return Unbox(ca) is PrimT up && up.Name == pp2.Name ? 10 : -1;
+                if (param is PrimT pp2)
+                {
+                    if (Unbox(ca) is PrimT up && (up.Name == pp2.Name || IsWidening(up.Name, pp2.Name))) { _boxing = true; return 10; }
+                    return -1;
+                }
                 if (param is ClassT cp) return IsSubclass(ca.Name, cp.Name) ? (ca.Name == cp.Name ? 0 : 1) : -1;
                 return -1;
             }
@@ -462,6 +603,27 @@ public sealed partial class DocumentIndexer
                 return 2;
         }
         return 2;
+    }
+
+    private static bool DeclaredTypeVar(string name, Scope scope)
+    {
+        for (var sc = scope; sc is not null; sc = sc.Parent) if (sc.TypeVars.ContainsKey(name)) return true;
+        return false;
+    }
+
+    private JType ErasedBoundInScope(VarT v)
+    {
+        var bound = ws.BoundsOf(v, _callScope).FirstOrDefault() ?? JType.Object;
+        return bound is VarT inner && inner.Name != v.Name ? JType.Object : bound is VarT ? JType.Object : bound;
+    }
+
+    private static bool IsWidening(string from, string to)
+    {
+        var ia = Array.IndexOf(Numeric, from);
+        var ip = Array.IndexOf(Numeric, to);
+        if (ia < 0 || ip < 0 || to == "char") return false;
+        if (from == "char") return ip >= 3;
+        return ip > ia;
     }
 
     private bool IsSubclass(string sub, string sup)
@@ -503,7 +665,7 @@ public sealed partial class DocumentIndexer
             if (ti is not null)
             {
                 var ctors = ti.Methods.Where(m => m.IsCtor).Select(m => (m, ConstructorSubst(ti, t))).ToList();
-                var best = ChooseMethod(ctors, argTypes);
+                var best = ChooseMethod(ctors, argTypes, s);
                 if (best is not null)
                 {
                     Reference(_names.Method(best.Value.Method), last.Start, last.End);
@@ -511,12 +673,15 @@ public sealed partial class DocumentIndexer
                     for (var i = 0; i < best.Value.Method.Params.Count && i < argTypes.Count; i++) Bind(Workspace.Subst(best.Value.Method.Params[i], b), argTypes[i], ti.TypeParams, b);
                     EvalLambdaArgs(n.Args, best.Value.Method, b, s);
                 }
+                else EvalDeferredArgs(n.Args, s);
                 // an annotated type (`new @A Foo()`) keeps its own type reference
                 if (n.Type.Annotations.Count > 0) Reference(_names.Type(ti), last.Start, last.End);
             }
+            else EvalDeferredArgs(n.Args, s);
             return t;
         }
         var type = ws.ResolveType(n.Type, s, this);
+        EvalDeferredArgs(n.Args, s);
         var anon = ws.DeclareLocal(n.Body, s, type);
         anon.Complete();
         VisitMembers(anon, n.Body.Members, ws.TypeScopes[anon]);
@@ -530,18 +695,24 @@ public sealed partial class DocumentIndexer
         return map;
     }
 
-    private List<JType> EvalArgs(List<Expr> args, Scope s) => args.Select(a => a is Lambda ? JType.Unknown : Eval(a, s)).ToList();
+    private List<JType> EvalArgs(List<Expr> args, Scope s) => args.Select(a => a is Lambda or MethodRef ? JType.Unknown : Eval(a, s)).ToList();
+
+    /// <summary>Evaluates the lambda / method reference arguments of a call whose target method could not be resolved.</summary>
+    private void EvalDeferredArgs(List<Expr> args, Scope s)
+    {
+        foreach (var a in args) if (a is Lambda or MethodRef) Eval(a, s);
+    }
 
     /// <summary>Evaluates lambda arguments once the target method is known, so parameter types can be inferred from it.</summary>
     private void EvalLambdaArgs(List<Expr> args, MethodInfo m, Dictionary<string, JType> bindings, Scope s)
     {
         for (var i = 0; i < args.Count; i++)
         {
-            if (args[i] is not Lambda lam) continue;
+            if (args[i] is not (Lambda or MethodRef)) continue;
             JType? p = i < m.Params.Count ? m.Params[i] : m.Params.Count > 0 ? m.Params[^1] : null;
             if (m.Varargs && i >= m.Params.Count - 1 && p is ArrayT pa) p = pa.Elem;
             var expected = p is null ? null : Workspace.Subst(p, bindings);
-            var result = EvalLambda(lam, s, expected);
+            var result = Eval(args[i], s, expected);
             if (expected is not null && FunctionalSig(expected, s) is { } sig && result.IsKnown) Bind(sig.Return, result, m.TypeParams, bindings);
         }
     }
@@ -582,26 +753,51 @@ public sealed partial class DocumentIndexer
         return rets.FirstOrDefault(r => r.IsKnown && r is not NullT) ?? JType.Unknown;
     }
 
-    private JType EvalMethodRef(MethodRef mr, Scope s)
+    private JType EvalMethodRef(MethodRef mr, Scope s, JType? expected = null)
     {
         JType recv;
+        var viaType = mr.TargetType is not null;
         if (mr.TargetType is not null) recv = ws.ResolveType(mr.TargetType, s, this);
         else
         {
             var r = EvalAmbiguous(mr.Target!, s);
             recv = r.Kind is RKind.Value or RKind.Type ? r.Type : JType.Unknown;
+            viaType = r.Kind == RKind.Type;
         }
         if (!recv.IsKnown) return JType.Unknown;
         var end = mr.NameStart + mr.Name.Length;
+        var sig = expected is null ? null : FunctionalSig(expected, s);
+        if (mr.Name == "new" && recv is ArrayT)
+        {
+            Reference(_names.ArrayConstructor(), mr.Start, end);
+            return recv;
+        }
         if (mr.Name == "new")
         {
             var ti = ws.Load(recv);
-            var ctor = ti?.Methods.FirstOrDefault(m => m.IsCtor);
-            if (ctor is not null) Reference(_names.Method(ctor), mr.NameStart, end);
-            return JType.Unknown;
+            if (ti is null) return JType.Unknown;
+            var ctors = ti.Methods.Where(m => m.IsCtor).Select(m => (m, ConstructorSubst(ti, recv))).ToList();
+            var ctor = sig is not null ? ChooseMethod(ctors, sig.Value.Params, s)?.Method : null;
+            ctor ??= ctors.Count > 0 ? ctors[0].m : null;
+            // javac positions a constructor reference on the whole `Type::new`
+            if (ctor is not null) Reference(_names.Method(ctor), mr.Start, end);
+            return new ClassT(ti.Name, []);
         }
         var methods = ws.FindMethods(recv, mr.Name, s);
-        if (methods.Count > 0) Reference(_names.Method(methods[0].Method), mr.NameStart, end);
+        if (methods.Count == 0) return JType.Unknown;
+        (MethodInfo Method, Dictionary<string, JType> Subst)? pick = null;
+        if (sig is not null)
+        {
+            var sp = sig.Value.Params;
+            if (viaType)
+            {
+                pick = ChooseMethod(methods.Where(m => m.Method.IsStatic).ToList(), sp, s);
+                if (pick is null && sp.Count > 0) pick = ChooseMethod(methods.Where(m => !m.Method.IsStatic).ToList(), sp.Skip(1).ToList(), s);
+            }
+            else pick = ChooseMethod(methods, sp, s);
+        }
+        pick ??= methods[0];
+        Reference(_names.Method(pick.Value.Method), mr.NameStart, end);
         return JType.Unknown;
     }
 }

@@ -193,6 +193,7 @@ public static class ClassFileReader
             }
             m.Return = parsed.Return;
             m.TypeParams = parsed.TypeParams;
+            m.TypeParamBounds = parsed.Bounds;
             m.Throws = parsed.Throws;
             if (ti.IsInterface && (a & 0x400) == 0 && (a & 0x8) == 0) m.Flags |= Mod.Default;
             ti.Methods.Add(m);
@@ -232,7 +233,7 @@ public sealed class SignatureParser(string s)
 
     public bool End => _i >= s.Length;
 
-    public sealed record MethodSig(List<string> TypeParams, List<JType> Params, JType Return, List<JType> Throws);
+    public sealed record MethodSig(List<string> TypeParams, List<JType> Params, JType Return, List<JType> Throws, List<JType> Bounds);
 
     public static JType ParseType(string sig) => new SignatureParser(sig).Type();
 
@@ -247,7 +248,7 @@ public sealed class SignatureParser(string s)
         var ret = p.Type();
         var thr = new List<JType>();
         while (p._i < sig.Length && sig[p._i] == '^') { p._i++; thr.Add(p.Type()); }
-        return new MethodSig(tps.Select(t => t.Name).ToList(), ps, ret, thr);
+        return new MethodSig(tps.Select(t => t.Name).ToList(), ps, ret, thr, tps.Select(t => t.Bound).ToList());
     }
 
     public List<(string Name, JType Bound)> TypeParams()

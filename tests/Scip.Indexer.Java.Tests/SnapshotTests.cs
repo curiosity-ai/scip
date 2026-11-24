@@ -88,5 +88,33 @@ public class SnapshotTests
     // LombokBuilder.java needs annotation processing (generated code) and is the one known mismatch.
     private const int MinimumMatching = 25;
 
-    private static string Normalize(string s) => s.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd();
+    /// <summary>
+    /// The goldens come from the newer scip-java (<c>scip-java</c> scheme, trimmed doc comments); this indexer mirrors
+    /// the 0.12.3 release (<c>semanticdb</c> scheme, javadoc text exactly as javac delivers it). Both are normalised.
+    /// </summary>
+    private static string Normalize(string s)
+    {
+        var lines = s.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("semanticdb maven ", "scip-java maven ", StringComparison.Ordinal).Split('\n').ToList();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(lines[i], @"^(//\s+>)\s?(.*?)\s*$");
+            if (m.Success) lines[i] = (m.Groups[1].Value + " " + m.Groups[2].Value).TrimEnd();
+        }
+        // the 0.12.3 release records the owner of local symbols as enclosing_symbol
+        lines.RemoveAll(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"^//\s+enclosing_symbol "));
+        // the 0.12.3 release also references the package parts of the `package` declaration
+        for (var i = lines.Count - 1; i > 0; i--)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(lines[i], @"^//\s+\^+ reference scip-java maven \. \. \S+/$")) continue;
+            var j = i - 1;
+            while (j > 0 && System.Text.RegularExpressions.Regex.IsMatch(lines[j], @"^//\s+\^+ reference ")) j--;
+            if (lines[j].TrimStart().StartsWith("package ", StringComparison.Ordinal)) lines.RemoveAt(i);
+        }
+        // a documentation block ends with the empty line javac leaves after the last comment line
+        for (var i = lines.Count - 1; i > 0; i--)
+        {
+            if (System.Text.RegularExpressions.Regex.IsMatch(lines[i], @"^//\s+>$") && !(i + 1 < lines.Count && lines[i + 1].Contains("> ", StringComparison.Ordinal))) lines.RemoveAt(i);
+        }
+        return string.Join('\n', lines).TrimEnd();
+    }
 }

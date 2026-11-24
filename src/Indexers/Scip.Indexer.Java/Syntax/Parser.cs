@@ -26,6 +26,9 @@ public sealed class Parser
 
     private readonly string _src;
     private readonly List<Token> _t;
+    private readonly Dictionary<int, string> _docs = [];
+
+    private string? DocAt(int tokenStart) => _docs.GetValueOrDefault(tokenStart);
     private int _p;
     private int _lastEnd;
     private bool _noLambda;
@@ -33,7 +36,7 @@ public sealed class Parser
     public Parser(string source)
     {
         _src = source;
-        _t = Lexer.Lex(source);
+        _t = Lexer.Lex(source, _docs);
     }
 
     public static CompilationUnit ParseFile(string source) => new Parser(source).ParseCompilationUnit();
@@ -112,6 +115,7 @@ public sealed class Parser
         if (At("package"))
         {
             Next();
+            cu.PackageMods = mods;
             ReadQualified(cu.Package);
             Expect(";");
         }
@@ -134,7 +138,7 @@ public sealed class Parser
         while (Cur.Kind != Tk.Eof)
         {
             if (Accept(";")) continue;
-            var doc = Lexer.DocBefore(_src, Cur.Start);
+            var doc = DocAt(Cur.Start);
             var m = ParseModifiers();
             if (!AtTypeKeyword()) throw Fail($"expected type declaration but found '{Cur.Text}'");
             cu.Types.Add(ParseTypeDecl(m, doc));
@@ -391,7 +395,7 @@ public sealed class Parser
             while (!At(";") && !At("}"))
             {
                 var cstart = Cur.Start;
-                var doc = Lexer.DocBefore(_src, cstart);
+                var doc = DocAt(cstart);
                 var mods = ParseModifiers();
                 var n = ExpectIdent();
                 var ec = new EnumConstant { Name = n.Text, NameStart = n.Start, Mods = mods, Doc = doc };
@@ -420,7 +424,7 @@ public sealed class Parser
     private void ParseMember(TypeDecl owner)
     {
         var start = Cur.Start;
-        var doc = Lexer.DocBefore(_src, start);
+        var doc = DocAt(start);
         if (At("{"))
         {
             var ib = new InitBlock { Body = ParseBlock() };
@@ -682,7 +686,7 @@ public sealed class Parser
             var mods = ParseModifiers();
             if (AtTypeKeyword())
             {
-                var d = ParseTypeDecl(mods, null);
+                var d = ParseTypeDecl(mods, DocAt(start));
                 d.IsLocalOrAnon = true;
                 return Fin(new LocalClassStmt { Decl = d }, start);
             }
@@ -1264,10 +1268,12 @@ public sealed class Parser
             {
                 Next();
                 if (At("new")) { e = ParseNew(e); continue; }
+                List<TypeRef>? targs = null;
                 if (At("<"))
                 {
                     Next();
-                    do ParseType();
+                    targs = [];
+                    do targs.Add(ParseType());
                     while (Accept(","));
                     Expect(">");
                 }
@@ -1285,7 +1291,12 @@ public sealed class Parser
                     continue;
                 }
                 var n = ExpectIdent();
-                if (At("(")) e = Fin(CallOf(e, n.Text, n.Start, ParseArgs()), start);
+                if (At("("))
+                {
+                    var call = CallOf(e, n.Text, n.Start, ParseArgs());
+                    if (targs is not null) call.TypeArgs.AddRange(targs);
+                    e = Fin(call, start);
+                }
                 else e = Fin(new FieldAccess { Target = e, Name = n.Text, NameStart = n.Start }, start);
             }
             else if (At("[") && AtAt(1, "]") && e is NameExpr or FieldAccess)

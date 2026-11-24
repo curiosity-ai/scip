@@ -144,6 +144,7 @@ public sealed class Import : Node
 public sealed class CompilationUnit : Node
 {
     public List<(string Name, int Start, int End)> Package { get; } = [];
+    public Modifiers? PackageMods { get; set; }
     public List<Import> Imports { get; } = [];
     public List<TypeDecl> Types { get; } = [];
     public string Source { get; set; } = "";
@@ -273,6 +274,9 @@ public sealed class Call : Expr
     public string Name { get; set; } = "";
     public int NameStart { get; set; }
     public List<Expr> Args { get; } = [];
+
+    /// <summary>Explicit method type arguments (<c>target.&lt;A, B&gt;name(...)</c>).</summary>
+    public List<TypeRef> TypeArgs { get; } = [];
 }
 
 public sealed class NewExpr : Expr

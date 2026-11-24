@@ -7,6 +7,9 @@ public abstract record JavaPackage
 {
     public static JavaPackage Empty { get; } = new EmptyPackage();
 
+    /// <summary>Scheme written by scip-java 0.12.3 (its SemanticDB-derived symbols keep the <c>semanticdb</c> scheme).</summary>
+    public const string Scheme = "semanticdb";
+
     public abstract string RepoName { get; }
 
     public abstract string Version { get; }
@@ -113,6 +116,6 @@ public sealed class SymbolRewriter(PackageTable packages)
     {
         if (string.IsNullOrEmpty(symbol) || JavaSymbols.IsLocal(symbol)) return symbol;
         var pkg = packages.PackageForSymbol(symbol) ?? JavaPackage.Empty;
-        return $"scip-java {pkg.ScipTypedEncoding} {symbol}";
+        return $"{JavaPackage.Scheme} {pkg.ScipTypedEncoding} {symbol}";
     }
 }
