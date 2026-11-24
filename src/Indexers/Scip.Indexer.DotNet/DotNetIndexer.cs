@@ -75,8 +75,14 @@ public sealed class DotNetIndexer : IIndexer
             });
             await foreach (var document in indexer.IndexDocuments(options, cancellationToken))
             {
-                SymbolCompleteness.CompleteDocument(document, defined, referenced);
                 documents.Add(document);
+            }
+
+            // The same file may be compiled by several projects / target frameworks; emit it once.
+            documents = DocumentMerger.MergeByPath(documents);
+            foreach (var document in documents)
+            {
+                SymbolCompleteness.CompleteDocument(document, defined, referenced);
             }
 
             documentCount = documents.Count;

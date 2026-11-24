@@ -25,11 +25,7 @@ internal sealed partial class ScipProjectIndexer
 
     private static void Restore(DotNetIndexOptions options, FileInfo project)
     {
-        var isSolution = project.Extension.Equals(".sln", StringComparison.OrdinalIgnoreCase)
-                         || project.Extension.Equals(".slnx", StringComparison.OrdinalIgnoreCase);
-        var arguments = isSolution
-            ? $"restore \"{project.FullName}\" /p:EnableWindowsTargeting=true"
-            : "restore /p:EnableWindowsTargeting=true";
+        var arguments = $"restore \"{project.FullName}\" /p:EnableWindowsTargeting=true";
         if (options.NugetConfigPath != null)
         {
             arguments += $" --configfile \"{options.NugetConfigPath.FullName}\"";

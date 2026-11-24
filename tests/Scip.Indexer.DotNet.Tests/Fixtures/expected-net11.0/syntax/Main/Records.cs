@@ -96,7 +96,6 @@
 //                   relationship implementation scip-dotnet nuget System.Runtime 11.0.0.0 System/IEquatable#
 //                   relationship implementation scip-dotnet nuget . . Main/Records#I1#
 //                   relationship implementation scip-dotnet nuget . . Main/Records#I2#
-//                   relationship implementation scip-dotnet nuget System.Runtime 11.0.0.0 System/IEquatable#
 //                          ^^^^^^^^^ definition scip-dotnet nuget . . Main/Records#Teacher#`.ctor`().(FirstName)
 //                                    documentation ```cs\nstring FirstName\n```
 //                                            ^^^^^^^^ definition scip-dotnet nuget . . Main/Records#Teacher#`.ctor`().(LastName)
@@ -136,7 +135,6 @@
 //                    relationship implementation scip-dotnet nuget . . Main/Records#I3#
 //                    relationship implementation scip-dotnet nuget System.Runtime 11.0.0.0 System/IEquatable#
 //                    relationship implementation scip-dotnet nuget . . Main/Records#I1#
-//                    relationship implementation scip-dotnet nuget System.Runtime 11.0.0.0 System/IEquatable#
 //                           ^^^^^^ reference scip-dotnet nuget . . Main/Records#Person#
 //                                      ^^ reference scip-dotnet nuget . . Main/Records#I1#
 
