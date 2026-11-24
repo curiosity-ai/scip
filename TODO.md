@@ -65,6 +65,6 @@ Each needs: a design note in `docs/PORTING.md`, implementation, ported tests/sna
 - [x] Decision: pure native C# for all indexers (no runtime compilers/toolchains; see CLAUDE.md)
 
 ## 5. Quality
-- [~] (lint errors fixed for all but dotnet; open: relationship-ordering decision, dotnet/Serilog) Fix findings from real-project validation (`docs/VALIDATION.md`): dotnet project loading (Serilog) + non-zero exit on failure; SymbolInformation for locals (TS, Ruby); external SymbolInformation (Java); duplicate/dangling SymbolInformation & relationships (Python, Java); make every validation index pass `scip lint`
+- [~] (lint errors fixed everywhere; open: relationship-ordering decision) Fix findings from real-project validation (`docs/VALIDATION.md`): dotnet project loading (Serilog) + non-zero exit on failure; SymbolInformation for locals (TS, Ruby); external SymbolInformation (Java); duplicate/dangling SymbolInformation & relationships (Python, Java); make every validation index pass `scip lint`
 - [ ] Cross-check outputs against Go `scip` CLI on shared fixtures (golden files)
 - [ ] Docs: port `docs/DESIGN.md`, `docs/CLI.md`, `docs/Development.md` to the C# project

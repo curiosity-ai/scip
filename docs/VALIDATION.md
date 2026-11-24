@@ -24,7 +24,7 @@ occurrences whose symbol has a definition occurrence (`defined`) or at least a `
 
 ## Findings (open)
 
-1. **dotnet**: on Serilog every real project fails to load in `MSBuildWorkspace` (`Project does not contain 'Compile' target`)
+1. **dotnet** (FIXED): Serilog's `<TargetFrameworks>$(TargetFrameworks);net10.0;...` expands to a leading empty entry on Linux, which MSBuildWorkspace does not drop, so projects loaded with an empty TargetFramework. The indexer now retries with an explicit TargetFramework and exits non-zero when a project cannot load or nothing is indexed. Original report: on Serilog every real project fails to load in `MSBuildWorkspace` (`Project does not contain 'Compile' target`)
    although `dotnet build` of the same project works; only the leftover projects are indexed, and the process still exits 0.
    Must fail loudly, and project loading needs fixing (multi-targeting / SDK resolution under `global.json`).
 2. **Lint compliance** (all indexes fail `scip lint`; the Go lint requires a `SymbolInformation` for every occurrence symbol):
@@ -40,7 +40,7 @@ Reproduce: see `docs/VALIDATION.md` commands in the scratch runner (`run1.sh`): 
 
 ## After the lint fix pass (same projects, merged build)
 
-Every index except Serilog (still being fixed) now has **0 `scip lint` errors** and every referenced symbol has a
+Every index (Serilog included) now has **0 `scip lint` errors** and every referenced symbol has a
 `SymbolInformation` (locals per document, undefined globals as `external_symbols`): gson/commons-lang/zod/fmt keep
 only "multiple relationships could be merged" warnings (50 / 5 / 2 / 1). express indexes without a tsconfig
 (inferred automatically, logged). 653 tests pass.
@@ -54,6 +54,7 @@ only "multiple relationships could be merged" warnings (50 / 5 / 2 / 1). express
 | ripgrep | 11 → 0 | 201 | 69% |
 | zlib / fmt | ~700 / ~500 → 0 | 141 / 400 | 90% / 82% |
 | monolog / shelf | 42 / 4 → 0 | 281 / 0 | 77% / 100% |
+| serilog (dotnet) | project load broken (50 docs) → 235 docs, 0 errors, 0 warnings | 862 | 62% |
 
 The remaining "unresolved to a project definition" references are library/stdlib symbols, now recorded as external symbols.
 
