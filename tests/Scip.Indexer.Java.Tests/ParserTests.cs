@@ -71,4 +71,45 @@ public class ParserTests
         await Assert.That(cu.Types.Single().Name).IsEqualTo("Shape");
         await Assert.That(cu.Types.Single().Members.Count).IsEqualTo(4);
     }
+
+    [Test]
+    public async Task Parses_hex_floats_type_annotations_qualified_array_class_and_method_ref_type_args()
+    {
+        const string src = """
+            class A {
+              static final double D = -0x1p31 + 0x1.0p31 + 0x.8p-2f;
+              java.util.@Nullable Optional<T> f(Map.@Nullable Entry<K, V> e) {
+                Object a = Map.Entry[].class;
+                Object b = java.util.Map.Entry[]::new;
+                Object c = ImmutableMap.Builder<K, V>::new;
+                Object d = Foo::<K, V>builder;
+                return null;
+              }
+            }
+            """;
+        var cu = Parser.ParseFile(src);
+        await Assert.That(cu.Types.Single().Members.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task Merges_duplicate_relationships_across_documents_and_keeps_flags()
+    {
+        static Document Doc(string path, Relationship rel, params Relationship[] more)
+        {
+            var d = new Document { RelativePath = path };
+            var info = new SymbolInformation { Symbol = "a#m()." };
+            info.Relationships.Add(rel);
+            info.Relationships.AddRange(more);
+            d.Symbols.Add(info);
+            return d;
+        }
+        var d1 = Doc("a/A.java", new Relationship { Symbol = "b#m().", IsImplementation = true });
+        var d2 = Doc("b/A.java", new Relationship { Symbol = "b#m().", IsReference = true },
+            new Relationship { Symbol = "b#m().", IsTypeDefinition = true }, new Relationship { Symbol = "c#m().", IsReference = true });
+        var removed = RelationshipMerger.Merge([d1, d2]);
+        await Assert.That(removed).IsEqualTo(2);
+        var kept = d1.Symbols[0].Relationships.Single();
+        await Assert.That(kept.IsImplementation && kept.IsReference && kept.IsTypeDefinition).IsTrue();
+        await Assert.That(d2.Symbols[0].Relationships.Select(r => r.Symbol).Single()).IsEqualTo("c#m().");
+    }
 }

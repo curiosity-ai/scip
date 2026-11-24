@@ -268,7 +268,8 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
             {
                 case TypeDecl nd:
                 {
-                    var nt = ws.Classes.Load(ti.Name + "$" + nd.Name) ?? throw new InvalidOperationException(nd.Name);
+                    // prefer this file's own declaration: the same FQN may exist in several source sets (e.g. guava/ and android/guava/)
+                    var nt = (file.Declared.TryGetValue(nd, out var own) ? own : null) ?? ws.Classes.Load(ti.Name + "$" + nd.Name) ?? throw new InvalidOperationException(nd.Name);
                     VisitType(nt, nd, scope);
                     break;
                 }
