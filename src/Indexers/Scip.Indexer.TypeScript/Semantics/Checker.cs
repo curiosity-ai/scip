@@ -824,7 +824,7 @@ public sealed class Checker(TsProgram program)
         var constraint = mapped.Clause?.Type;
         for (var i = 0; i < 4 && constraint is not null; i++)
         {
-            if (constraint is { Kind: SK.TypeOperator, Text: "keyof" } keyof) { return TypeConts(keyof.Type!, env, depth + 1); }
+            if (constraint is { Kind: SK.TypeOperator, Text: "keyof" } keyof) { return TypeConts(keyof.Type!, env, depth + 1).Select(c => c with { Derived = true }).ToList(); }
             if (constraint is { Kind: SK.TypeReference } reference && reference.Name is { Kind: SK.Identifier } nm)
             {
                 var decl = B(reference).Lookup(reference, nm.Text, Meaning.Type)?.FirstOrDefault(x => x.Kind == SK.TypeParameter);
@@ -1552,8 +1552,14 @@ public sealed class Checker(TsProgram program)
     }
 
     /// <summary>The declaration nodes of the containers giving <paramref name="literal"/> its contextual type.</summary>
-    public List<Node> ContextualContainers(Node literal, int depth = 0) =>
-        Real(ContextualConts(literal, depth)).Select(c => c.Decl).Where(d => d.Kind is SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration or SK.TypeLiteral or SK.ObjectLiteralExpression).Distinct().ToList();
+    public List<Node> ContextualContainers(Node literal, int depth = 0)
+    {
+        // Upstream reads `getContextualType(literal).symbol.declarations`: only a type that *is* a class or interface has
+        // one (unions, intersections, mapped and conditional results do not).
+        var conts = Real(ContextualConts(literal, depth));
+        if (conts.Any(c => c.Alt || c.Group != 0 || c.Derived)) { return []; }
+        return conts.Select(c => c.Decl).Where(d => d.Kind is SK.ClassDeclaration or SK.ClassExpression or SK.InterfaceDeclaration).Distinct().ToList();
+    }
 
 }
 
@@ -1578,4 +1584,4 @@ public sealed class Env(Node param, Func<int, List<Cont>> value, Env? next)
 }
 
 /// <summary>A declaration providing members plus the environment its type parameters were instantiated in.</summary>
-public readonly record struct Cont(Node Decl, Env? Env, int Group = 0, bool Alt = false);
+public readonly record struct Cont(Node Decl, Env? Env, int Group = 0, bool Alt = false, bool Derived = false);
