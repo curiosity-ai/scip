@@ -65,10 +65,17 @@ internal sealed class Decl(DeclKind kind, string name, Decl? parent, Token nameT
     public bool IsStatic { get; set; }
 
     /// <summary>A declaration that exists only so references can resolve to it; it is never defined in the document.</summary>
-    public bool IsSynthetic { get; init; }
+    public bool IsSynthetic { get; set; }
 
     /// <summary>Best-effort simple name of the declared (or obviously inferred) type; null when unknown.</summary>
     public string? TypeName { get; set; }
+
+    /// <summary>Token index of the initializer of an untyped local (<c>var x = expr</c>), or -1.</summary>
+    public int InitIndex { get; set; } = -1;
+
+    public bool InitDone { get; set; }
+
+    public Decl? InitType { get; set; }
 
     /// <summary>Names (best effort, without prefix/type arguments) of extends/with/implements/on types.</summary>
     public List<string> Supers { get; } = [];

@@ -834,6 +834,12 @@ internal sealed partial class DartParser
 
             // statement start: the previous-previous token must end a statement or open a block
             var before = At(k - 2);
+            if (prev.Is(">") || prev.Is("?"))
+            {
+                var typeStart = TypeStart(k - 1);
+                before = At(typeStart - 1);
+            }
+
             if (before.Kind == TokenKind.Identifier && before.Text is not ("static" or "final" or "external"))
             {
                 continue;

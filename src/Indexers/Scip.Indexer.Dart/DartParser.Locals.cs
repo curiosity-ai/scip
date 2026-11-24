@@ -185,14 +185,14 @@ internal sealed partial class DartParser
                     if (IsPlainName(_t[q]) && (At(q + 1).Is(",") || q + 1 == _match[k + 1]) && !_m.DeclTokenOffsets.Contains(_t[q].Offset)
                         && !At(q - 1).Is("."))
                     {
-                        AddLocal(DeclKind.LocalVariable, q, _t[q].Offset, _t[q].End, blockEnd, null);
+                        AddLocal(DeclKind.LocalVariable, q, _t[q].Offset, _t[q].End, blockEnd, null, synthetic: true);
                     }
                 }
 
                 continue;
             }
 
-            if (tk.Is("(") && _match[k] > 0 && IsClosureStart(k))
+            if (tk.Is("(") && _match[k] > 0 && IsClosureStart(k) && !IsSwitchArm(blocks, k))
             {
                 ClosureParams(k);
                 continue;
@@ -255,6 +255,10 @@ internal sealed partial class DartParser
             }
 
             var d = AddLocal(DeclKind.LocalVariable, k, forIn ? declStart : tk.Offset, declEnd, scopeEnd, typeName);
+            if (d is not null && typeName is null && !forIn && next.Is("="))
+            {
+                d.InitIndex = k + 2;
+            }
             if (forIn && d is not null)
             {
                 d.EnclosingStart = declStart;
@@ -269,14 +273,19 @@ internal sealed partial class DartParser
                     var nk = p + 1;
                     var end2 = At(nk + 1).Is("=") ? At(ExprEnd(nk + 2) - 1).End : _t[nk].End;
                     string? tn = At(nk + 1).Is("=") ? InferType(nk + 2) : typeName;
-                    AddLocal(DeclKind.LocalVariable, nk, _t[nk].Offset, end2, scopeEnd, tn);
+                    var d2 = AddLocal(DeclKind.LocalVariable, nk, _t[nk].Offset, end2, scopeEnd, tn);
+                    if (d2 is not null && tn is null && At(nk + 1).Is("="))
+                    {
+                        d2.InitIndex = nk + 2;
+                    }
+
                     p = At(nk + 1).Is("=") ? ExprEnd(nk + 2) : nk + 1;
                 }
             }
         }
     }
 
-    private Decl? AddLocal(DeclKind kind, int tokIdx, int declStart, int declEnd, int scopeEnd, string? typeName)
+    private Decl? AddLocal(DeclKind kind, int tokIdx, int declStart, int declEnd, int scopeEnd, string? typeName, bool synthetic = false)
     {
         var tk = _t[tokIdx];
         if (!_m.DeclTokenOffsets.Add(tk.Offset))
@@ -291,9 +300,14 @@ internal sealed partial class DartParser
             EnclosingStart = declStart,
             EnclosingEnd = declEnd,
             TypeName = typeName,
+            IsSynthetic = synthetic,
         };
         d.Signature = typeName is null ? tk.Text : typeName + " " + tk.Text;
-        _m.AllDecls.Add(d);
+        if (!synthetic)
+        {
+            _m.AllDecls.Add(d);
+        }
+
         _m.AddScope(d, tk.End, scopeEnd);
         return d;
     }
@@ -392,6 +406,12 @@ internal sealed partial class DartParser
         }
 
         var tk = At(i);
+        if (tk.Kind == TokenKind.Identifier && _m.ImportPrefixes.Contains(tk.Text) && At(i + 1).Is(".") && At(i + 2).Kind == TokenKind.Identifier)
+        {
+            i += 2;
+            tk = At(i);
+        }
+
         if (tk.Kind != TokenKind.Identifier || tk.Text.Length == 0 || !char.IsUpper(tk.Text[0]))
         {
             return null;
@@ -468,6 +488,40 @@ internal sealed partial class DartParser
         }
 
         return prev.Kind == TokenKind.Identifier && prev.Text is "return" or "await" or "yield" or "throw" or "else";
+    }
+
+    /// <summary>True when the parenthesis at <paramref name="k"/> starts a switch-expression arm (a pattern), not a closure.</summary>
+    private bool IsSwitchArm(Stack<int> blocks, int k)
+    {
+        if (blocks.Count == 0 || !(At(k - 1).Is("{") || At(k - 1).Is(",")))
+        {
+            return false;
+        }
+
+        var b = blocks.Peek();
+        if (b >= k || (_match[b] > 0 && _match[b] < k))
+        {
+            return false;
+        }
+
+        // the enclosing brace must be the direct container: `switch (x) {` ...
+        var close = At(b - 1);
+        if (!close.Is(")") || _match[b - 1] <= 0)
+        {
+            return false;
+        }
+
+        var open = _match[b - 1];
+        // no bracket opened between the brace and the candidate may still be pending
+        for (var i = b + 1; i < k; i++)
+        {
+            if (_t[i].Kind == TokenKind.Punctuation && _t[i].Text is "(" or "[" or "{" && _match[i] > k)
+            {
+                return false;
+            }
+        }
+
+        return At(open - 1).Is("switch");
     }
 
     private void ClosureParams(int open)

@@ -430,7 +430,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
         var locals = new LocalSymbols();
         var occs = new List<Occ>();
 
-        foreach (var d in f.AllDecls)
+        foreach (var d in f.AllDecls.Where(d => !d.IsSynthetic))
         {
             occs.Add(new Occ(d.NameToken.Offset, d.NameToken.Length, d, null, true, d));
         }
@@ -785,13 +785,101 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
 
     // ---- member chains -----------------------------------------------------------------------------------
 
-    private Decl? TypeOf(Decl d) => d.Kind switch
+    private List<Token> _chainTokens = [];
+    private Dictionary<int, Decl> _chainOcc = [];
+    private FileModel? _chainFile;
+    private readonly Dictionary<FileModel, List<Decl>> _extensionLists = [];
+
+    private Decl? TypeOf(Decl d)
     {
-        _ when d.IsTypeLike => d,
-        DeclKind.Constructor => d.Parent,
-        DeclKind.TypeParameter or DeclKind.ImportPrefix => null,
-        _ => d.TypeName is { } n ? LookupTypeFor(n, d) : null,
-    };
+        if (d.IsTypeLike)
+        {
+            return d;
+        }
+
+        switch (d.Kind)
+        {
+            case DeclKind.Constructor:
+                return d.Parent;
+            case DeclKind.TypeParameter or DeclKind.ImportPrefix:
+                return null;
+        }
+
+        if (d.TypeName is { } n)
+        {
+            return LookupTypeFor(n, d);
+        }
+
+        return d.InitIndex >= 0 && d.External is null ? InferFromInitializer(d) : null;
+    }
+
+    /// <summary>Type of <c>var x = expr;</c> when <c>expr</c> is a plain member chain or constructor call.</summary>
+    private Decl? InferFromInitializer(Decl d)
+    {
+        if (d.InitDone)
+        {
+            return d.InitType;
+        }
+
+        d.InitDone = true;
+        var t = _chainTokens;
+        var i = d.InitIndex;
+        while (i < t.Count && (t[i].Is("await") || t[i].Is("new") || t[i].Is("const")))
+        {
+            i++;
+        }
+
+        if (i >= t.Count || !_chainOcc.TryGetValue(t[i].Offset, out var head))
+        {
+            return null;
+        }
+
+        var (type, typeHead, end) = WalkChain(i, head, null, null);
+        if (!typeHead && end < t.Count && (t[end].Is(";") || t[end].Is(",")))
+        {
+            d.InitType = type;
+        }
+
+        return d.InitType;
+    }
+
+    private List<Decl> ExtensionsFor(FileModel f)
+    {
+        if (_extensionLists.TryGetValue(f, out var cached))
+        {
+            return cached;
+        }
+
+        var list = _files.Values.SelectMany(x => x.TopLevel).Where(d => d.Kind == DeclKind.Extension).ToList();
+        list.AddRange(ScopeOf(f).Names.Values.Where(d => d.Kind == DeclKind.Extension && d.External is not null));
+        _extensionLists[f] = list;
+        return list;
+    }
+
+    private Decl? FindExtensionMember(Decl receiver, string name)
+    {
+        if (_chainFile is not { } f)
+        {
+            return null;
+        }
+
+        var names = new HashSet<string>(SuperTypes(receiver).Select(x => x.Name)) { receiver.Name };
+        foreach (var ext in ExtensionsFor(f))
+        {
+            if (!ext.Supers.Any(names.Contains))
+            {
+                continue;
+            }
+
+            var m = ext.Members.FirstOrDefault(x => x.Name == name && x.Kind is DeclKind.Method or DeclKind.Property or DeclKind.Field && !x.IsStatic);
+            if (m is not null)
+            {
+                return m;
+            }
+        }
+
+        return null;
+    }
 
     private static int MatchClose(List<Token> t, int open)
     {
@@ -829,6 +917,14 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             indexByOffset.TryAdd(t[i].Offset, i);
         }
 
+        _chainTokens = t;
+        _chainFile = f;
+        _chainOcc = [];
+        foreach (var o in occs.Where(o => !o.Definition && o.Target is not null))
+        {
+            _chainOcc[o.Start] = o.Target!;
+        }
+
         var have = new HashSet<int>(occs.Select(o => o.Start));
         for (var i = 0; i + 2 < t.Count; i++)
         {
@@ -843,11 +939,11 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 {
                     have.Add(t[i + 2].Offset);
                     occs.Add(new Occ(t[i + 2].Offset, t[i + 2].Length, m, null, false));
+                    _chainOcc[t[i + 2].Offset] = m;
                 }
             }
         }
 
-        // `this.x`, `super.x`, `this.x.y` heads that the main pass resolved only as members
         for (var n = 0; n < occs.Count; n++)
         {
             var o = occs[n];
@@ -856,158 +952,179 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 continue;
             }
 
-            var idx = k + 1;
-            var cur = target;
-            var curType = TypeOf(cur);
-            var typeHead = cur.IsTypeLike;
-            var callable = cur.Kind is DeclKind.Method or DeclKind.Function or DeclKind.Constructor;
-            Decl? cascadeType = null;
-            var cascading = false;
-            while (idx < t.Count)
+            WalkChain(k, target, occs, have);
+        }
+    }
+
+    private (Decl? Type, bool TypeHead, int End) WalkChain(int k, Decl target, List<Occ>? occs, HashSet<int>? have)
+    {
+        var t = _chainTokens;
+        var idx = k + 1;
+        var cur = target;
+        var curType = TypeOf(cur);
+        var typeHead = cur.IsTypeLike;
+        var callable = cur.Kind is DeclKind.Method or DeclKind.Function or DeclKind.Constructor;
+        Decl? cascadeType = null;
+        var cascading = false;
+        while (idx < t.Count)
+        {
+            var tk = t[idx];
+            if (tk.Is("?") && idx + 1 < t.Count && t[idx + 1].Is("..") && t[idx + 1].Offset == tk.End)
             {
-                var tk = t[idx];
-                if (tk.Is("?") && idx + 1 < t.Count && t[idx + 1].Is("..") && t[idx + 1].Offset == tk.End)
+                idx++;
+                continue;
+            }
+
+            if (tk.Is("..") && idx + 1 < t.Count && t[idx + 1].Kind == TokenKind.Identifier)
+            {
+                if (!cascading)
                 {
-                    idx++;
-                    continue;
+                    cascading = true;
+                    cascadeType = typeHead ? null : curType;
                 }
 
-                if (tk.Is("..") && idx + 1 < t.Count && t[idx + 1].Kind == TokenKind.Identifier)
+                if (cascadeType is null)
                 {
-                    if (!cascading)
-                    {
-                        cascading = true;
-                        cascadeType = typeHead ? null : curType;
-                    }
+                    break;
+                }
 
-                    if (cascadeType is null)
-                    {
-                        break;
-                    }
-
-                    var cname = t[idx + 1];
-                    var cmember = FindInstanceMember(cascadeType, cname.Text);
-                    if (cmember is null)
-                    {
-                        // keep scanning: later cascade sections may still resolve
-                        idx += 2;
-                        curType = null;
-                        callable = false;
-                        continue;
-                    }
-
-                    if (have.Add(cname.Offset))
-                    {
-                        occs.Add(new Occ(cname.Offset, cname.Length, cmember, null, false));
-                    }
-
-                    cur = cmember;
-                    curType = TypeOf(cmember);
-                    typeHead = false;
-                    callable = cmember.Kind is DeclKind.Method or DeclKind.Constructor;
+                var cname = t[idx + 1];
+                var cmember = FindInstanceMember(cascadeType, cname.Text) ?? FindExtensionMember(cascadeType, cname.Text);
+                if (cmember is null)
+                {
+                    // keep scanning: later cascade sections may still resolve
                     idx += 2;
-                    continue;
-                }
-
-                if (tk.Is("<") && (callable || typeHead) && idx > 0 && t[idx - 1].Kind == TokenKind.Identifier)
-                {
-                    var depth = 0;
-                    var j = idx;
-                    for (; j < t.Count; j++)
-                    {
-                        if (t[j].Is("<"))
-                        {
-                            depth++;
-                        }
-                        else if (t[j].Is(">") && --depth == 0)
-                        {
-                            break;
-                        }
-                        else if (t[j].Is(";") || t[j].Is("{") || t[j].Is("(") && depth == 0)
-                        {
-                            j = t.Count;
-                            break;
-                        }
-                    }
-
-                    if (j >= t.Count)
-                    {
-                        break;
-                    }
-
-                    idx = j + 1;
-                    continue;
-                }
-
-                if (tk.Is("("))
-                {
-                    var close = MatchClose(t, idx);
-                    if (close < 0)
-                    {
-                        break;
-                    }
-
-                    ResolveNamedArguments(t, idx, close, cur, occs, have);
-                    if (typeHead)
-                    {
-                        typeHead = false; // constructor call: instance of the type
-                    }
-                    else if (!callable)
-                    {
-                        curType = null;
-                    }
-
-                    callable = false;
-                    idx = close + 1;
-                    continue;
-                }
-
-                if (tk.Is("["))
-                {
-                    var close = MatchClose(t, idx);
-                    if (close < 0)
-                    {
-                        break;
-                    }
-
                     curType = null;
                     callable = false;
-                    typeHead = false;
-                    idx = close + 1;
                     continue;
                 }
 
-                if (tk.Is("!"))
+                if (occs is not null && have!.Add(cname.Offset))
                 {
-                    idx++;
-                    continue;
+                    occs.Add(new Occ(cname.Offset, cname.Length, cmember, null, false));
+                    _chainOcc[cname.Offset] = cmember;
                 }
 
-                if ((tk.Is(".") || tk.Is("?.")) && idx + 1 < t.Count && t[idx + 1].Kind == TokenKind.Identifier && curType is not null)
+                cur = cmember;
+                curType = TypeOf(cmember);
+                typeHead = false;
+                callable = cmember.Kind is DeclKind.Method or DeclKind.Constructor;
+                idx += 2;
+                continue;
+            }
+
+            if (tk.Is("<") && (callable || typeHead) && idx > 0 && t[idx - 1].Kind == TokenKind.Identifier)
+            {
+                var depth = 0;
+                var j = idx;
+                for (; j < t.Count; j++)
                 {
-                    var name = t[idx + 1];
-                    var member = typeHead ? FindStaticMember(curType, name.Text) : FindInstanceMember(curType, name.Text);
-                    if (member is null)
+                    if (t[j].Is("<"))
+                    {
+                        depth++;
+                    }
+                    else if (t[j].Is(">") && --depth == 0)
                     {
                         break;
                     }
-
-                    if (have.Add(name.Offset))
+                    else if (t[j].Is(";") || t[j].Is("{") || t[j].Is("(") && depth == 0)
                     {
-                        occs.Add(new Occ(name.Offset, name.Length, member, null, false));
+                        j = t.Count;
+                        break;
                     }
-
-                    cur = member;
-                    curType = TypeOf(member);
-                    typeHead = false;
-                    callable = member.Kind is DeclKind.Method or DeclKind.Constructor;
-                    idx += 2;
-                    continue;
                 }
 
-                break;
+                if (j >= t.Count)
+                {
+                    break;
+                }
+
+                idx = j + 1;
+                continue;
             }
+
+            if (tk.Is("("))
+            {
+                var close = MatchClose(t, idx);
+                if (close < 0)
+                {
+                    break;
+                }
+
+                if (occs is not null)
+                {
+                    ResolveNamedArguments(t, idx, close, cur, occs, have!);
+                }
+
+                if (typeHead)
+                {
+                    typeHead = false; // constructor call: instance of the type
+                }
+                else if (!callable)
+                {
+                    curType = null;
+                }
+
+                callable = false;
+                idx = close + 1;
+                continue;
+            }
+
+            if (tk.Is("["))
+            {
+                var close = MatchClose(t, idx);
+                if (close < 0)
+                {
+                    break;
+                }
+
+                curType = null;
+                callable = false;
+                typeHead = false;
+                idx = close + 1;
+                continue;
+            }
+
+            if (tk.Is("!"))
+            {
+                idx++;
+                continue;
+            }
+
+            if ((tk.Is(".") || tk.Is("?.")) && idx + 1 < t.Count && t[idx + 1].Kind == TokenKind.Identifier)
+            {
+                var name = t[idx + 1];
+                var member = _chainOcc.GetValueOrDefault(name.Offset);
+                if (member is null && curType is not null)
+                {
+                    member = typeHead
+                        ? name.Text == "new" ? ConstructorOf(curType, "") : FindStaticMember(curType, name.Text)
+                        : FindInstanceMember(curType, name.Text) ?? FindExtensionMember(curType, name.Text);
+                }
+
+                if (member is null)
+                {
+                    break;
+                }
+
+                if (occs is not null && have!.Add(name.Offset))
+                {
+                    occs.Add(new Occ(name.Offset, name.Length, member, null, false));
+                    _chainOcc[name.Offset] = member;
+                }
+
+                cur = member;
+                curType = TypeOf(member);
+                typeHead = member.IsTypeLike;
+                callable = member.Kind is DeclKind.Method or DeclKind.Constructor;
+                idx += 2;
+                continue;
+            }
+
+            break;
         }
+
+        return (curType, typeHead, idx);
     }
 
     private Decl? FindStaticMember(Decl type, string name)
