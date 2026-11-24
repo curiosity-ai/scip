@@ -66,6 +66,25 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             documents.Add(BuildDocument(_files[rel], sources[rel]));
         }
 
+        // Implicit (synthetic) default constructors referenced from any file need a SymbolInformation in the declaring file.
+        var byPath = documents.ToDictionary(d => d.RelativePath, StringComparer.Ordinal);
+        foreach (var ctor in _syntheticCtors.Values)
+        {
+            if (!ctor.IsLocal && byPath.TryGetValue(ctor.File, out var doc))
+            {
+                var symbol = SymbolOf(ctor, new LocalSymbols());
+                if (!doc.Symbols.Any(x => x.Symbol == symbol))
+                {
+                    doc.Symbols.Add(new SymbolInformation
+                    {
+                        Symbol = symbol,
+                        Kind = SymbolInformation.Types.Kind.Constructor,
+                        SignatureDocumentation = new Signature { Language = "Dart", Text = ctor.Parent!.Name + "()" },
+                    });
+                }
+            }
+        }
+
         if (indexPubspec)
         {
             documents.Add(PubspecIndexer.Index(_pubspec, pubspecText, _lock));
