@@ -246,7 +246,7 @@ public sealed class ProjectConfig
         {
             toml = MiniToml.Parse(File.ReadAllText(path));
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or ArgumentException or InvalidOperationException)
         {
             return new ProjectConfig { ConfigDirectory = projectRoot };
         }

@@ -345,7 +345,14 @@ public sealed class TreeVisitor
         return false;
     }
 
-    private string Text(Node n) => _module.Text[n.Start..n.End];
+    private string Text(Node n)
+    {
+        // Nodes parsed out of string (forward-reference) annotations can carry offsets outside the module text.
+        var text = _module.Text;
+        var start = Math.Clamp(n.Start, 0, text.Length);
+        var end = Math.Clamp(n.End, start, text.Length);
+        return text[start..end];
+    }
 
     private string FunctionStub(FunctionNode node)
     {
@@ -1022,7 +1029,9 @@ public sealed class TreeVisitor
         }
 
         var scope = suite ?? (parent is TypeAnnotationNode ? parent.Parent! : parent);
-        return SymbolNames.Term(GetScipSymbol(scope), node.Value);
+        var owner = GetScipSymbol(scope);
+        // Names bound inside a comprehension (e.g. walrus targets) have no enclosing global symbol: use a local.
+        return owner.Length == 0 ? NextLocal() : SymbolNames.Term(owner, node.Value);
     }
 
     private string GetFunctionSymbol(Declaration decl)
