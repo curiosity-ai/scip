@@ -343,6 +343,7 @@ internal sealed partial class RubyWalker
                 Punct(t);
                 break;
             case Tk.Str:
+                EmitRegexpReference(t);
                 SetExpr(CoreInstance("String"), _i);
                 _i++;
                 break;
@@ -704,6 +705,12 @@ internal sealed partial class RubyWalker
                 break;
             case "rescue":
                 _rescueLine = true;
+                if (Tok(_i + 1) is { Kind: Tk.Newline or Tk.Eof } or { Kind: Tk.Punct, Text: "=>" or ";" } or { Kind: Tk.Keyword, Text: "then" })
+                {
+                    // A bare `rescue` catches StandardError: upstream references it at the keyword.
+                    Emit(t, null, (int)SymbolRole.ReadAccess, p => p.FindType(["StandardError"]) is { Core: not null } ? p.TypeSymbol(["StandardError"]) : null);
+                }
+
                 _i++;
                 break;
             case "alias":
@@ -726,6 +733,18 @@ internal sealed partial class RubyWalker
                 _i++;
                 break;
         }
+    }
+
+    /// <summary>A regular expression literal is a reference to <c>Regexp</c> over the whole literal.</summary>
+    private void EmitRegexpReference(Token t)
+    {
+        var raw = RawText(t);
+        if (raw.Length < 2 || raw[0] != '/' && !raw.StartsWith("%r", StringComparison.Ordinal) || t.Col + raw.Length != t.EndCol)
+        {
+            return;
+        }
+
+        Emit(t, null, (int)SymbolRole.ReadAccess, p => p.FindType(["Regexp"]) is { Core: not null } ? p.TypeSymbol(["Regexp"]) : null);
     }
 
     private void ForLoop()
@@ -1356,6 +1375,11 @@ internal sealed partial class RubyWalker
         var isCall = next is { Kind: Tk.Punct, Text: "(" } && !next.SpaceBefore;
         if (!isCall && Scope.Lookup(t.Text) is { } id)
         {
+            if (IsAssignOp(next) && next.Text != "=")
+            {
+                Emit(t, LocalSym(id), (int)SymbolRole.ReadAccess);
+            }
+
             var chained = _i >= 2 && _t[_i - 1] is { Kind: Tk.Punct, Text: "=" } && _t[_i - 2].Text == t.Text && next is { Kind: Tk.Punct, Text: "=" };
             var role = IsAssignOp(next) ? LocalAssignRole(id, next.Text is not ("=" or "||=")) : TouchLocal(id);
             Emit(t, LocalSym(id), chained && id >= 0 ? (int)SymbolRole.Definition : role);
@@ -1594,6 +1618,12 @@ internal sealed partial class RubyWalker
                     && next.Kind is Tk.Newline or Tk.Eof or Tk.Keyword && (next.Kind != Tk.Keyword || next.Text == "then")
                 || next is { Kind: Tk.Punct, Text: "?", SpaceBefore: true });
         // A bare condition (`x if @flag`) is not a read of the CFG local, so it does not make a later assignment a write.
+        if (assign && next.Text != "=" && _i >= _lhsEnd)
+        {
+            // `@x ||= v` / `@x += v` read the variable as well as assigning it: upstream emits both occurrences.
+            Emit(t, symbol, (int)SymbolRole.ReadAccess).Field = fieldKey0;
+        }
+
         var again = (!bareCondition && !FieldScopeFrame().AssignedFields.Add(t.Text) && assign)
             || assign && (next.Text is not ("=" or "||=") && _i >= _lhsEnd || ReadsFieldOnRightHandSide(t));
         if (again)

@@ -10,8 +10,10 @@ public class UpstreamParityTests
 
     private static Document Index(string source) => RubyIndexer.IndexSources([("a.rb", source)], Gem)[0];
 
+    /// <summary>The roles at a position; a compound assignment (`x ||= v`) also has a ReadAccess twin, which is ignored here.</summary>
     private static int RolesAt(Document doc, int line, int col) =>
-        doc.Occurrences.Single(o => o.SingleLineRange.Line == line && o.SingleLineRange.StartCharacter == col).SymbolRoles;
+        doc.Occurrences.Where(o => o.SingleLineRange.Line == line && o.SingleLineRange.StartCharacter == col)
+            .Select(o => o.SymbolRoles).OrderBy(r => r == (int)SymbolRole.ReadAccess ? int.MaxValue : r).First();
 
     private static string[] DocsOf(Document doc, string symbolSuffix) =>
         [.. doc.Symbols.Single(s => s.Symbol.EndsWith(symbolSuffix, StringComparison.Ordinal)).Documentation];
@@ -152,6 +154,44 @@ public class UpstreamParityTests
         var doc = Index("class SomeTest < Minitest::Test\n  setup do\n    @app = 1\n  end\n\n  describe 'x' do\n    it 'y' do\n      @app\n    end\n  end\nend\n");
         var info = doc.Symbols.Single(s => s.Symbol.EndsWith("`<describe 'x'>`#`@app`.", StringComparison.Ordinal));
         await Assert.That(info.Relationships.Single().Symbol).IsEqualTo("scip-ruby gem g 1.0 SomeTest#`@app`.");
+    }
+
+    // ---- structure ------------------------------------------------------------------------------------------
+
+    [Test]
+    public async Task TopLevelDescribeByConstantDefinesAGroupAtTheLastSegment()
+    {
+        var doc = Index("describe Rack::MediaType do\n  before { @h = {} }\n  describe 'inner' do\n    it 'x' do\n      @h\n    end\n  end\nend\n");
+        var defs = doc.Occurrences.Where(o => (o.SymbolRoles & 1) != 0 && !o.Symbol.StartsWith("local", StringComparison.Ordinal)).Select(o => o.Symbol[(o.Symbol.IndexOf("1.0 ", StringComparison.Ordinal) + 4)..]).ToList();
+        await Assert.That(defs).Contains("`<describe 'Rack::MediaType'>`#");
+        await Assert.That(defs).Contains("`<describe 'Rack::MediaType'>`#`<describe 'inner'>`#`<it 'x'>`().");
+        var group = doc.Occurrences.Single(o => o.Symbol.EndsWith("`<describe 'Rack::MediaType'>`#", StringComparison.Ordinal) && (o.SymbolRoles & 1) != 0);
+        await Assert.That(group.SingleLineRange.StartCharacter).IsEqualTo(15);
+    }
+
+    [Test]
+    public async Task CharacterLiteralsOfPunctuationDoNotStartRegexes()
+    {
+        var doc = Index("def f(p)\n  p == ?/\n  x = 1\nend\ndef g; end\n");
+        await Assert.That(doc.Occurrences.Count(o => (o.SymbolRoles & 1) != 0 && o.Symbol.EndsWith("g().", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(doc.Occurrences.Any(o => o.SingleLineRange.Line == 2 && o.SingleLineRange.StartCharacter == 2 && (o.SymbolRoles & 1) != 0)).IsTrue();
+    }
+
+    [Test]
+    public async Task ParametersOfEmptyMethodsAreNotDefinedButAnonymousSplatsAre()
+    {
+        var doc = Index("def empty(a, b)\nend\ndef used(a, *)\n  a\nend\n");
+        var locals = doc.Occurrences.Where(o => o.Symbol.StartsWith("local", StringComparison.Ordinal) && (o.SymbolRoles & 1) != 0).Select(o => (o.SingleLineRange.Line, o.SingleLineRange.StartCharacter)).ToList();
+        await Assert.That(locals).IsEquivalentTo(new[] { (2, 9), (2, 12) });
+    }
+
+    [Test]
+    public async Task RegexLiteralsAndBareRescueReferenceCoreClasses()
+    {
+        var doc = Index("def f(s)\n  s =~ /a+/\n  begin\n    1\n  rescue\n    2\n  end\nend\n");
+        var refs = doc.Occurrences.Where(o => (o.SymbolRoles & 1) == 0).Select(o => (o.Symbol, o.SingleLineRange.Line, o.SingleLineRange.StartCharacter, o.SymbolRoles)).ToList();
+        await Assert.That(refs.Any(r => r.Symbol.EndsWith("Regexp#", StringComparison.Ordinal) && r.Line == 1 && r.StartCharacter == 7 && r.SymbolRoles == 8)).IsTrue();
+        await Assert.That(refs.Any(r => r.Symbol.EndsWith("StandardError#", StringComparison.Ordinal) && r.Line == 4 && r.StartCharacter == 2)).IsTrue();
     }
 
     // ---- fixtures ------------------------------------------------------------------------------------------
