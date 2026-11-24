@@ -15,8 +15,8 @@ public sealed class Checker(TsProgram program)
 
     private Binder B(Node n) => Program.BinderFor(n.File!);
 
-    private const int MaxDepth = 14;
-    private const int MaxNest = 72;
+    private const int MaxDepth = 40;
+    private const int MaxNest = 160;
     [ThreadStatic] private static int _nest;
     [ThreadStatic] private static HashSet<(Node, int)>? _activeSet;
     private static HashSet<(Node, int)> Active => _activeSet ??= [];
@@ -486,7 +486,7 @@ public sealed class Checker(TsProgram program)
             case SK.ParenthesizedType or SK.OptionalType or SK.RestType or SK.NamedTupleMember:
                 return t.Type is null ? [] : TypeConts(t.Type, env, depth + 1);
             case SK.UnionType:
-                return t.Elements.SelectMany(e => TypeConts(e, env, depth + 1)).ToList();
+                return t.Elements.SelectMany(e => TypeConts(e, env, depth + 1)).Select(c => c with { Alt = true }).ToList();
             case SK.IntersectionType:
             {
                 var group = ++_groups;
@@ -544,7 +544,7 @@ public sealed class Checker(TsProgram program)
             }
 
             case SK.ConditionalType:
-                return [.. TypeConts(t.Then!, env, depth + 1), .. TypeConts(t.Else!, env, depth + 1)];
+                return TypeConts(t.Then!, env, depth + 1).Concat(TypeConts(t.Else!, env, depth + 1)).Select(c => c with { Alt = true }).ToList();
             case SK.ImportType when t.Name is null && t.Extra is { Kind: SK.LiteralType, Expression: { } lit }:
             {
                 var target = Program.ResolveModule(t.File!, lit.Text);
@@ -724,6 +724,7 @@ public sealed class Checker(TsProgram program)
 
     private List<Hit> MembersCore(List<Cont> containers, string name, HashSet<Cont> visited, int depth)
     {
+        var alternatives = new List<Hit>();
         foreach (var c in containers)
         {
             if (ReferenceEquals(c.Decl, Opaque) || !visited.Add(c)) { continue; }
@@ -810,10 +811,12 @@ public sealed class Checker(TsProgram program)
                     break;
             }
 
-            if (found.Count > 0) { return found; }
+            if (found.Count == 0) { continue; }
+            if (!c.Alt && c.Group == 0) { return alternatives.Count == 0 ? found : [.. alternatives, .. found]; }
+            alternatives.AddRange(found);
         }
 
-        return [];
+        return alternatives;
     }
 
     private List<Cont> MappedSourceConts(Node mapped, Env? env, int depth)
@@ -1171,7 +1174,7 @@ public sealed class Checker(TsProgram program)
     /// <summary>Binds type parameters that appear directly as a parameter type to the containers of the matching argument.</summary>
     private Env? InferTypeArguments(Node fn, Node call, int depth)
     {
-        Env? env = null;
+        Env? env = InferFromReturnContext(fn, call, depth);
         foreach (var tp in fn.TypeParameters)
         {
             for (var i = 0; i < fn.Parameters.Count && i < call.Arguments.Count; i++)
@@ -1187,6 +1190,32 @@ public sealed class Checker(TsProgram program)
                     break;
                 }
             }
+        }
+
+        return env;
+    }
+
+    /// <summary>
+    /// `const x: Box&lt;Foo&gt; = make("a", (inst) => ...)` with `make&lt;T&gt;(...): Box&lt;T&gt;`: T is inferred from the contextual
+    /// type of the call when the declared return type is a reference to the same generic type.
+    /// </summary>
+    private Env? InferFromReturnContext(Node fn, Node call, int depth)
+    {
+        if (fn.Type is not { Kind: SK.TypeReference } rt || rt.TypeArguments.Count == 0) { return null; }
+        var returnDecls = EntityDecls(rt.Name!, Meaning.Type, depth + 1);
+        if (returnDecls is null) { return null; }
+        Env? env = null;
+        foreach (var c in ContextualConts(call, depth + 1))
+        {
+            if (!returnDecls.Contains(c.Decl)) { continue; }
+            for (var i = 0; i < rt.TypeArguments.Count && i < c.Decl.TypeParameters.Count; i++)
+            {
+                if (rt.TypeArguments[i] is not { Kind: SK.TypeReference, Name: { Kind: SK.Identifier } nm } || c.Env?.Find(c.Decl.TypeParameters[i]) is not { } bound) { continue; }
+                var tp = fn.TypeParameters.FirstOrDefault(x => x.Name!.Text == nm.Text);
+                if (tp is not null) { env = new Env(tp, bound, env); }
+            }
+
+            if (env is not null) { break; }
         }
 
         return env;
@@ -1451,6 +1480,7 @@ public sealed class Checker(TsProgram program)
     {
         var contextual = ContextualConts(literal, 0);
         if (contextual.Count == 0) { return null; }
+        contextual = Discriminate(literal, contextual);
         // `getProperty` on a union needs the property in every constituent; intersections need it in one.
         var found = new List<Node>();
         var groups = new Dictionary<int, bool>();
@@ -1465,6 +1495,60 @@ public sealed class Checker(TsProgram program)
 
         if (groups.Values.Any(v => !v)) { return null; }
         return found.Count == 0 ? null : found.Distinct().ToList();
+    }
+
+    /// <summary>
+    /// TypeScript narrows a contextual union type by the literal-valued properties already present in the object
+    /// literal (`{ code: "too_big", ... }` selects the member whose `code` is `"too_big"`).
+    /// </summary>
+    private List<Cont> Discriminate(Node literal, List<Cont> contextual)
+    {
+        var expanded = new List<Cont>();
+        foreach (var c in contextual) { Expand(c, expanded, 0); }
+        if (expanded.Count < 2) { return contextual; }
+        var narrowed = expanded;
+        foreach (var element in literal.Elements)
+        {
+            if (element.Kind != SK.PropertyAssignment || element.Initializer is not { Kind: SK.StringLiteral or SK.NumericLiteral or SK.KeywordLiteral } value || Binder.NameText(element.Name) is not { } prop) { continue; }
+            var kept = new List<Cont>();
+            foreach (var c in narrowed)
+            {
+                var hits = Members([c], prop, 0);
+                if (hits.Count == 0 || hits.Any(h => LiteralAllows(h.Decl.Type, value))) { kept.Add(c); }
+            }
+
+            if (kept.Count > 0) { narrowed = kept; }
+        }
+
+        return narrowed.Count == expanded.Count ? contextual : narrowed;
+    }
+
+    private void Expand(Cont c, List<Cont> into, int depth)
+    {
+        if (c.Decl.Kind == SK.MappedType && depth < 4)
+        {
+            var source = MappedSourceConts(c.Decl, c.Env, depth + 1);
+            if (source.Count > 0) { foreach (var s in source) { Expand(c.Group != 0 ? s with { Group = c.Group } : s, into, depth + 1); } return; }
+        }
+
+        into.Add(c);
+    }
+
+    /// <summary>False only when <paramref name="type"/> is a literal type (or union of them) that excludes <paramref name="value"/>.</summary>
+    private static bool LiteralAllows(Node? type, Node value)
+    {
+        if (type is null) { return true; }
+        switch (type.Kind)
+        {
+            case SK.LiteralType:
+                return type.Expression is { } lit && (lit.Kind != value.Kind || lit.Text == value.Text || lit.Kind is not (SK.StringLiteral or SK.NumericLiteral or SK.KeywordLiteral));
+            case SK.UnionType:
+                return type.Elements.Any(e => LiteralAllows(e, value));
+            case SK.ParenthesizedType:
+                return LiteralAllows(type.Type, value);
+            default:
+                return true;
+        }
     }
 
     /// <summary>The declaration nodes of the containers giving <paramref name="literal"/> its contextual type.</summary>
@@ -1494,4 +1578,4 @@ public sealed class Env(Node param, Func<int, List<Cont>> value, Env? next)
 }
 
 /// <summary>A declaration providing members plus the environment its type parameters were instantiated in.</summary>
-public readonly record struct Cont(Node Decl, Env? Env, int Group = 0);
+public readonly record struct Cont(Node Decl, Env? Env, int Group = 0, bool Alt = false);
