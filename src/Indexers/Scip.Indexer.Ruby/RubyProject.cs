@@ -371,6 +371,11 @@ internal sealed class RubyProject(GemMetadata gem)
             return new RType(r.Path, false);
         }
 
+        if (recv is { Singleton: false } inst && name == "class")
+        {
+            return new RType(inst.Path, true);
+        }
+
         if (m is not { } t)
         {
             return null;
@@ -392,6 +397,25 @@ internal sealed class RubyProject(GemMetadata gem)
             "^" => recv is { } rr ? new RType(rr.Path, false) : null,
             _ => FindType(ret.Split("::")) is not null ? new RType(ret.Split("::"), false) : null,
         };
+    }
+
+    /// <summary>True when <paramref name="path"/> looks like a spec group: <c>Minitest::Spec</c> or a class with a project-defined <c>it</c>.</summary>
+    public bool IsSpecGroup(string[] path)
+    {
+        if (FindType(path) is not { } t)
+        {
+            return false;
+        }
+
+        foreach (var a in Ancestors(t))
+        {
+            if (a.SingletonMethods.Contains("it") || a.SingletonMethods.Contains("describe") || a.Super is { Segments: ["Minitest", "Spec"] })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public Dictionary<string, TypeFn> MethodRets { get; } = [];

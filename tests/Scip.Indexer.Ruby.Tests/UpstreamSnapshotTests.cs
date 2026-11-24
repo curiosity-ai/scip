@@ -13,14 +13,14 @@ public class UpstreamSnapshotTests
         "cattr","classes","constructor_navigation","def_delegator","delegate","field_inheritance","fields_and_attrs","for",
         "freeze_constants","functions","gem_metadata","globals","hashes","hoverdocs","implicit_super_arg","indexed_assignment",
         "inheritance","keyword_argument_errors","keyword_parameter_returns","legacy_single_argument_union","literal_receiver",
-        "loops_and_conditionals","mattr","metaprog","method_inheritance","method_redefinitions","missing_dsl_instance_methods",
-        "module_function","nested_constants","nilable_shape_union_intersection","non_existent","opus","rbs_errors",
-        "rbs_keyword_arguments","rbs_signatures","requires","requires_ancestor","rescue","retained_receiver_types",
-        "return_operands","safe_navigation","safe_navigation_hover","shape_union_intersection","singleton","singleton_class",
-        "super_call","t_helpers","tuple_comparison_blocks","tuple_shape_merge","type_docs","typed_false","typed_ignore",
-        "typed_strong","unresolved_constant_scopes","upstream_anonymous_forwarding","upstream_block_locals",
-        "upstream_destructuring","upstream_implicit_it","upstream_local_scopes","upstream_punned_kwargs","upstream_wrapped_calls",
-        "yield_block",
+        "loops_and_conditionals","mattr","metaprog","method_inheritance","method_redefinitions","minitest_2","minitest_3",
+        "missing_dsl_instance_methods","module_class_recovery","module_function","nested_constants",
+        "nilable_shape_union_intersection","non_existent","opus","rbs_errors","rbs_keyword_arguments","rbs_signatures","requires",
+        "requires_ancestor","rescue","retained_receiver_types","return_operands","safe_navigation","safe_navigation_hover",
+        "shape_union_intersection","singleton","singleton_class","struct","super_call","t_helpers","tuple_comparison_blocks",
+        "tuple_shape_merge","type_docs","typed_false","typed_ignore","typed_strong","unresolved_constant_scopes",
+        "upstream_anonymous_forwarding","upstream_block_locals","upstream_destructuring","upstream_implicit_it",
+        "upstream_local_scopes","upstream_punned_kwargs","upstream_wrapped_calls","yield_block",
     ];
 
     [Test]

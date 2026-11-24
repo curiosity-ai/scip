@@ -86,6 +86,11 @@ internal sealed class Frame(FrameKind kind, LocalScope locals)
 
     /// <summary>A <c>Struct.new(...) do ... end</c> block, which behaves like a class body.</summary>
     public bool StructBlock { get; init; }
+
+    public bool IsFlatfile { get; init; }
+
+    /// <summary>An <c>it "..." do</c> / <c>before do</c> body, modelled as a synthesized method.</summary>
+    public bool ExampleBlock { get; init; }
 }
 
 /// <summary>
@@ -109,6 +114,8 @@ internal sealed partial class RubyWalker
     private int _nextLocal;
     private int _parenDepth;
     private string[]? _structBlock;
+    private bool _flatfileBlock;
+    private (string[] Owner, string Name, Occ Def, int Line, int Col)? _exampleBlock;
     private int _lhsEnd = -1;
     private int _lastChainEnd = -1;
     private RefSpec? _lastChain;
@@ -374,7 +381,7 @@ internal sealed partial class RubyWalker
                 OpenBrace();
                 break;
             case "}":
-                if (Top.Kind is FrameKind.Block or FrameKind.Brace || Top is { StructBlock: true })
+                if (Top.Kind is FrameKind.Block or FrameKind.Brace || Top is { StructBlock: true } or { ExampleBlock: true })
                 {
                     var hash = Top.Kind == FrameKind.Brace;
                     if (_stack.Count > 1)
@@ -438,8 +445,15 @@ internal sealed partial class RubyWalker
     {
         var frame = _structBlock is { } sb
             ? new Frame(FrameKind.Class, new LocalScope(null)) { Path = sb, Cref = [sb, .. CurCref], StructBlock = true }
-            : new Frame(FrameKind.Block, new LocalScope(Scope));
+            : _exampleBlock is { } ex
+                ? new Frame(FrameKind.Def, new LocalScope(null))
+                {
+                    OwnerPath = ex.Owner, MethodName = ex.Name, DefOcc = ex.Def, StartLine = ex.Line, StartCol = ex.Col, ExampleBlock = true,
+                }
+                : new Frame(FrameKind.Block, new LocalScope(Scope)) { IsFlatfile = _flatfileBlock };
+        _exampleBlock = null;
         _structBlock = null;
+        _flatfileBlock = false;
         foreach (var (name, id) in _pendingBlockLocals)
         {
             frame.Locals.Declare(name, id);
@@ -777,6 +791,12 @@ internal sealed partial class RubyWalker
         if (!isModule && Tok(_i) is { Kind: Tk.Punct, Text: "<" } && TryReadChain(_i + 1, out _, out var superSegs, out _, out var superAbs))
         {
             info.Super ??= new RefSpec(outerCref, superSegs, superAbs);
+            if (superSegs is ["T", "Enum"])
+            {
+                info.Methods.Add("serialize");
+                Emit(nameTok, _project.MethodSymbol(fullPath, false, "serialize"), (int)SymbolRole.Definition, null, SymbolInformation.Types.Kind.Method);
+            }
+
             if (superSegs is ["T", "Struct"])
             {
                 // Sorbet's T::Struct rewriter synthesises an `initialize` for the declared props.
@@ -958,6 +978,7 @@ internal sealed partial class RubyWalker
             owner.Constants.Add(segs[0]);
             _project.InvalidateAncestors();
             Emit(toks[0], _project.ConstantSymbol([.. ns, segs[0]]), (int)SymbolRole.Definition, null, SymbolInformation.Types.Kind.Constant);
+            BeginAssign(0, "const:" + RubyProject.Key([.. ns, segs[0]]));
             _i = lastIdx + 1;
             return;
         }
@@ -966,7 +987,7 @@ internal sealed partial class RubyWalker
         EmitConstRefs(start, lastIdx, spec);
         _lastChain = spec;
         _lastChainEnd = lastIdx;
-        SetExpr(ClassOf(spec, segs.Length), lastIdx);
+        SetExpr(ConstExpr(spec, segs.Length), lastIdx);
         _i = lastIdx + 1;
     }
 

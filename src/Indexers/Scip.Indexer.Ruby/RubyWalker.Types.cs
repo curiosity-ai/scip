@@ -56,8 +56,13 @@ internal sealed partial class RubyWalker
     private static TypeFn InstanceOf(RefSpec spec) =>
         p => p.ResolveType(spec) is { } t ? new RType(t.Path, false) : null;
 
-    private static TypeFn ClassOf(RefSpec spec, int count) =>
-        p => p.Resolve(spec, count) is { IsType: true } c ? new RType(c.Path, true) : null;
+    private static TypeFn ConstExpr(RefSpec spec, int count) =>
+        p => p.Resolve(spec, count) switch
+        {
+            { IsType: true } c => new RType(c.Path, true),
+            { } c when p.FieldTypes.TryGetValue("const:" + RubyProject.Key(c.Path), out var fn) => p.Guarded(() => fn(p)),
+            _ => null,
+        };
 
     private void BeginAssign(int localId, string? fieldKey) => _assign = new AssignTarget(localId, fieldKey, _parenDepth);
 

@@ -23,6 +23,7 @@ internal sealed partial class RubyWalker
         var depth = 0;
         var start = j;
         var last = j - 1;
+        var closer = -1;
         for (; j < _t.Count; j++)
         {
             var tk = _t[j];
@@ -45,11 +46,7 @@ internal sealed partial class RubyWalker
             {
                 if (depth == 0)
                 {
-                    if (paren)
-                    {
-                        last = j;
-                    }
-
+                    closer = paren ? j : -1;
                     break;
                 }
 
@@ -74,7 +71,7 @@ internal sealed partial class RubyWalker
             args.Add(new Arg(start, last));
         }
 
-        return (args, last);
+        return (args, closer >= 0 ? closer : last);
     }
 
     private bool IsSymbolArg(Arg a) => a.Start == a.End && _t[a.Start].Kind == Tk.Symbol;
@@ -94,12 +91,13 @@ internal sealed partial class RubyWalker
 
     private static string Unquote(string raw) => raw.Length >= 2 && raw[0] is '"' or '\'' ? raw[1..^1] : raw;
 
-    private Occ DefineMethodOcc(Token tok, string[] owner, bool singleton, string name, SymbolInformation.Types.Kind kind, int endLine, int endCol, bool colon = false)
+    private Occ DefineMethodOcc(Token tok, string[] owner, bool singleton, string name, SymbolInformation.Types.Kind kind, int endLine, int endCol, bool colon = false,
+        int? startCol = null, int? nameEndCol = null)
     {
         var info = _project.Type(owner);
         (singleton ? info.SingletonMethods : info.Methods).Add(name);
         _project.InvalidateAncestors();
-        var occ = Emit(tok, _project.MethodSymbol(owner, singleton, name), (int)SymbolRole.Definition, null, kind, startCol: colon ? tok.Col - 1 : tok.Col);
+        var occ = Emit(tok, _project.MethodSymbol(owner, singleton, name), (int)SymbolRole.Definition, null, kind, startCol: startCol ?? (colon ? tok.Col - 1 : tok.Col), endCol: nameEndCol);
         occ.Enclosing = [tok.Line, tok.Col, endLine, endCol];
         return occ;
     }
@@ -137,6 +135,21 @@ internal sealed partial class RubyWalker
                     return false;
                 }
 
+            case "it" or "specify" or "xspecify" or "before" or "after":
+                return ExampleDsl(t);
+            case "encrypted_prop":
+                return CallThen(t, EncryptedPropDsl(t));
+            case "token_prop" or "created_prop" or "timestamped_token_prop":
+                return CallThen(t, OpusPropDsl(t));
+            case "flatfile":
+                if (Tok(_i + 1) is { Kind: Tk.Keyword, Text: "do" })
+                {
+                    _flatfileBlock = true;
+                }
+
+                return false;
+            case "from" or "pattern" or "field" when _stack.Any(f => f.IsFlatfile):
+                return CallThen(t, FlatfileDsl(t));
             case "delegate":
                 return DelegateDsl(t);
             case "def_delegator" or "def_instance_delegator" or "def_delegators" or "def_instance_delegators":
@@ -169,6 +182,159 @@ internal sealed partial class RubyWalker
             _project.FieldTypes.TryAdd(RubyProject.RetKey(path, false, "@" + sym.Text), fn);
         }
 
+        _i++;
+        return true;
+    }
+
+    private bool ExampleDsl(Token t)
+    {
+        var (path, singleton) = DefOwner();
+        if (singleton || Top.Kind != FrameKind.Class && Top.Kind != FrameKind.Module && Top.Kind != FrameKind.Block)
+        {
+            return false;
+        }
+
+        string name;
+        int startCol, endCol, line = t.Line;
+        if (t.Text is "before" or "after")
+        {
+            if (Tok(_i + 1) is not ({ Kind: Tk.Keyword, Text: "do" } or { Kind: Tk.Punct, Text: "{" }))
+            {
+                return false;
+            }
+
+            name = $"<{t.Text}>";
+            startCol = t.Col;
+            endCol = t.EndCol;
+        }
+        else
+        {
+            var j = _i + 1;
+            Token? open = Tok(j) is { Kind: Tk.Punct, Text: "(", SpaceBefore: false } o ? o : null;
+            if (open is not null)
+            {
+                j++;
+            }
+
+            var str = Tok(j);
+            if (str.Kind != Tk.Str || str.Line != t.Line)
+            {
+                return false;
+            }
+
+            var raw = RawText(str);
+            if (raw.Length < 2 || raw[0] is not ('"' or '\'') || raw[^1] != raw[0] || raw.Contains("#{", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            j++;
+            Token? close = null;
+            if (open is not null)
+            {
+                if (Tok(j) is not { Kind: Tk.Punct, Text: ")" } c)
+                {
+                    return false;
+                }
+
+                close = c;
+                j++;
+            }
+
+            if (Tok(j) is not ({ Kind: Tk.Keyword, Text: "do" } or { Kind: Tk.Punct, Text: "{" }))
+            {
+                return false;
+            }
+
+            name = $"<{t.Text} '{Unquote(raw)}'>";
+            startCol = open?.Col ?? str.Col;
+            endCol = close?.EndCol ?? str.EndCol;
+        }
+
+        var owner = _project.Type(path);
+        owner.Methods.Add(name);
+        var sym = _project.MethodSymbol(path, false, name);
+        var occ = new Occ
+        {
+            Line = line, Col = startCol, EndCol = endCol, Roles = (int)SymbolRole.Definition, Kind = SymbolInformation.Types.Kind.Method,
+            Resolver = p => p.IsSpecGroup(path) ? sym : null,
+        };
+        AddOcc(occ);
+        _exampleBlock = (path, name, occ, t.Line, t.Col);
+        _i++;
+        return true;
+    }
+
+    /// <summary>Handled DSL calls whose helper is user-defined still reference that helper, as an ordinary call would.</summary>
+    private bool CallThen(Token t, bool handled)
+    {
+        if (handled)
+        {
+            var (path, singleton) = SelfContext();
+            EmitCall(t, t.Text, new RType(path, singleton), Tok(_i));
+        }
+
+        return handled;
+    }
+
+    private bool EncryptedPropDsl(Token t)
+    {
+        var (args, last) = ReadArgs(_i + 1);
+        if (args.Count == 0 || !IsSymbolArg(args[0]))
+        {
+            return false;
+        }
+
+        var (path, _) = DefOwner();
+        var sym = _t[args[0].Start];
+        var end = _t[Math.Max(last, args[^1].End)];
+        var immutable = LabelArg(args, "immutable") is { } im && _t[Math.Min(im.End, im.Start + 1)] is { Kind: Tk.Keyword, Text: "true" };
+        foreach (var name in new[] { sym.Text, "encrypted_" + sym.Text })
+        {
+            if (!immutable)
+            {
+                DefineMethodOcc(sym, path, false, name + "=", SymbolInformation.Types.Kind.Setter, end.Line, end.EndCol);
+            }
+
+            DefineMethodOcc(sym, path, false, name, SymbolInformation.Types.Kind.Getter, end.Line, end.EndCol);
+        }
+
+        _i++;
+        return true;
+    }
+
+    private bool OpusPropDsl(Token t)
+    {
+        var name = t.Text switch { "token_prop" or "timestamped_token_prop" => "token", _ => "created" };
+        var (args, last) = ReadArgs(_i + 1);
+        var immutable = LabelArg(args, "immutable") is { } im && _t[Math.Min(im.End, im.Start + 1)] is { Kind: Tk.Keyword, Text: "true" };
+        var (path, _) = DefOwner();
+        var end = _t[Math.Max(last, _i)];
+        var start = t.Col + t.Text.Length - "_prop".Length - name.Length;
+        if (!immutable)
+        {
+            DefineMethodOcc(t, path, false, name + "=", SymbolInformation.Types.Kind.Setter, end.Line, end.EndCol, false, start, start + name.Length);
+        }
+
+        DefineMethodOcc(t, path, false, name, SymbolInformation.Types.Kind.Getter, end.Line, end.EndCol, false, start, start + name.Length);
+        _i++;
+        return true;
+    }
+
+    private bool FlatfileDsl(Token t)
+    {
+        var (args, last) = ReadArgs(_i + 1);
+        var sym = args.LastOrDefault(IsSymbolArg);
+        if (sym.End == 0 && sym.Start == 0)
+        {
+            return false;
+        }
+
+        var (path, _) = DefOwner();
+        var tok = _t[sym.Start];
+        var end = _t[Math.Max(last, sym.End)];
+        DefineMethodOcc(tok, path, false, tok.Text + "=", SymbolInformation.Types.Kind.Setter, end.Line, end.EndCol, true);
+        DefineMethodOcc(tok, path, false, tok.Text, SymbolInformation.Types.Kind.Getter, end.Line, end.EndCol, true);
         _i++;
         return true;
     }
@@ -399,6 +565,7 @@ internal sealed partial class RubyWalker
         info.Super ??= new RefSpec([], ["Struct"], true);
         _project.Type(path[..^1]).Constants.Add(path[^1]);
         _project.InvalidateAncestors();
+        Emit(constTok, _project.TypeSymbol(path), 0);
         var def = Emit(constTok, _project.TypeSymbol(path), (int)SymbolRole.Definition, null, SymbolInformation.Types.Kind.Class);
         var (args, last) = ReadArgs(structIdx + 3);
         var endTok = _t[Math.Max(last, structIdx + 2)];
