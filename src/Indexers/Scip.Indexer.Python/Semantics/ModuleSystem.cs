@@ -284,7 +284,7 @@ public sealed class ModuleSystem
         }
 
         // typeshed's stdlib stubs win over a sibling module of the importing file (`import typing` next to a typing.py)
-        if (parts.Count > 0 && Hardcoded.StdlibModuleNames.Contains(parts[0]))
+        if (parts.Count > 0 && (Hardcoded.StdlibModuleNames.Contains(parts[0]) || Hardcoded.IsTypeshedOnlyStdlibModule(parts[0])))
         {
             return new ResolvedModule(null, false, true, null);
         }

@@ -867,6 +867,8 @@ public sealed class TreeVisitor
     /// Symbol for a stdlib/untyped-module member. Without typeshed we cannot know the declaration kind, so
     /// CamelCase names are classes, typing special forms and CONSTANTS are terms, everything else a function.
     /// </summary>
+    private readonly Dictionary<string, string> _stdlibLocals = new(StringComparer.Ordinal);
+
     private string ExternalSymbol(PythonPackage package, string module, string name, bool memberAccess = false)
     {
         // scip-python 0.6.8 resolves every member of `os.path` to the first declaration of ntpath's star import: `ntpath/join()`.
@@ -890,6 +892,26 @@ public sealed class TreeVisitor
         {
             // typeshed's builtins.pyi imports these, and pyright resolves them through the builtins scope.
             return _names.Class(Stdlib, "builtins", name);
+        }
+
+        // Re-exports: collections.abc and typing_extensions forward to the declarations in typing.
+        if (module is "collections.abc" or "_collections_abc" && Hardcoded.TypingNames.Contains(name) ||
+            module == "typing_extensions" && Hardcoded.TypingExtensionsReexports.Contains(name))
+        {
+            module = "typing";
+            package = Stdlib;
+        }
+        else if (package == Stdlib && (module.Contains('.') && !Hardcoded.StdlibModuleNames.Contains(module) || Hardcoded.IsTypeshedOnlyStdlibModule(module)))
+        {
+            // pyright names the declaring module `urllib.parse`, which is not in scip-python's (top level) stdlib list, so the
+            // declaration gets no package: one local per declaration and document.
+            var key = module + "/" + name;
+            if (!_stdlibLocals.TryGetValue(key, out var local))
+            {
+                _stdlibLocals[key] = local = NextLocal();
+            }
+
+            return local;
         }
 
         if (Hardcoded.IsStdlibLowercaseClass(module, name) ||
@@ -1045,7 +1067,7 @@ public sealed class TreeVisitor
             return package;
         }
 
-        return Hardcoded.StdlibModuleNames.Contains(moduleName.Split('.')[0]) ? Stdlib : null;
+        return Hardcoded.StdlibModuleNames.Contains(moduleName.Split('.')[0]) || Hardcoded.IsTypeshedOnlyStdlibModule(moduleName) ? Stdlib : null;
     }
 
     // ------------------------------------------------------------------ symbol construction (makeScipSymbol)

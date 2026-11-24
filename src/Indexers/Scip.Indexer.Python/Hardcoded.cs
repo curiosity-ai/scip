@@ -148,6 +148,7 @@ internal static class Hardcoded
         ["logging"] = ["raiseExceptions", "logThreads", "logMultiprocessing", "logProcesses", "lastResort", "root", "BASIC_FORMAT"],
         ["warnings"] = ["filters"],
         ["time"] = ["altzone", "daylight", "timezone", "tzname"],
+        ["typing"] = ["TYPE_CHECKING"],
     };
 
     /// <summary>Stdlib variables that stubs declare with a type annotation.</summary>
@@ -165,6 +166,31 @@ internal static class Hardcoded
     /// <summary>Stdlib functions that the public module re-exports from a private module (<c>warnings.warn</c> is <c>_warnings.warn</c>).</summary>
     public static string? StdlibDefiningModule(string module, string name) =>
         DefiningModules.TryGetValue(module, out var entry) && entry.Names.Contains(name) ? entry.Module : null;
+
+    /// <summary>Names typing exports that collections.abc re-exports.</summary>
+    public static readonly HashSet<string> TypingNames = new(StringComparer.Ordinal)
+    {
+        "Awaitable", "Coroutine", "AsyncIterable", "AsyncIterator", "AsyncGenerator", "Iterable", "Iterator", "Reversible", "Sized",
+        "Container", "Collection", "Callable", "MutableSet", "Mapping", "MutableMapping", "Sequence", "MutableSequence",
+        "ByteString", "KeysView", "ItemsView", "ValuesView", "MappingView", "Generator", "Hashable",
+    };
+
+    /// <summary>typing_extensions names that are plain re-exports of typing on Python 3.11.</summary>
+    public static readonly HashSet<string> TypingExtensionsReexports = new(StringComparer.Ordinal)
+    {
+        "Annotated", "Any", "Awaitable", "Callable", "ClassVar", "Concatenate", "Final", "Literal", "LiteralString", "Never", "NewType",
+        "NoReturn", "NotRequired", "ParamSpec", "Protocol", "Required", "Self", "TypeAlias", "TypeGuard", "TypeVar", "TypeVarTuple",
+        "TypedDict", "Unpack", "assert_never", "assert_type", "cast", "final", "get_type_hints", "overload", "reveal_type",
+        "runtime_checkable", "dataclass_transform", "NamedTuple", "Optional", "Union", "Generic", "Type", "Tuple", "Dict", "List",
+        "Text", "TYPE_CHECKING", "IO", "TextIO", "BinaryIO", "Iterable", "Iterator", "Mapping", "MutableMapping", "Sequence",
+        "Coroutine", "AsyncIterator", "AsyncIterable", "AsyncGenerator", "ContextManager", "AsyncContextManager", "DefaultDict",
+        "Deque", "Counter", "ChainMap", "OrderedDict", "SupportsIndex", "SupportsInt", "SupportsFloat", "SupportsAbs",
+        "SupportsBytes", "SupportsComplex", "SupportsRound", "Hashable", "Sized", "Collection", "Container", "Reversible",
+        "AbstractSet", "MutableSet", "MutableSequence", "KeysView", "ItemsView", "ValuesView", "Generator", "Pattern", "Match",
+    };
+
+    /// <summary>Modules that typeshed ships in <c>stdlib/</c> but that scip-python's hardcoded stdlib list does not name.</summary>
+    public static bool IsTypeshedOnlyStdlibModule(string module) => module is "typing_extensions" or "_typeshed";
 
     public static bool IsBuiltinClass(string name) => BuiltinClasses.Contains(name);
 

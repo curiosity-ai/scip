@@ -41,6 +41,55 @@ public class IndexerTests
     }
 
     [Test]
+    public async Task ImportsAreReadAccessOnlyAndSrcIsNotAnImplicitRoot()
+    {
+        var dir = NewProject(
+            ("src/pkg/__init__.py", "def f():\n    pass\n"),
+            ("main.py", "import os\nfrom pkg import f\nprint(__name__, os.sep)\nf(a=1)\n"));
+        var index = IndexProject(dir);
+        var main = index.Documents.Single(d => d.RelativePath == "main.py");
+        // no `Import` bit: upstream emits 8
+        await Assert.That(main.Occurrences.Any(o => (o.SymbolRoles & (int)SymbolRole.Import) != 0)).IsFalse();
+        // src is not an import root, so `pkg` is unresolved (a local) and the package module is named after its path
+        await Assert.That(main.Occurrences.Any(o => o.Symbol.EndsWith("`src.pkg`/__init__:", StringComparison.Ordinal))).IsFalse();
+        var pkg = index.Documents.Single(d => d.RelativePath == "src/pkg/__init__.py");
+        await Assert.That(pkg.Occurrences[0].Symbol).EndsWith("`src.pkg`/__init__:");
+        // module intrinsics resolve to the module namespace symbol, unresolvable keyword arguments to locals
+        await Assert.That(main.Occurrences.Any(o => o.Symbol.EndsWith(" main/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(main.Occurrences.Count(o => o.Symbol.StartsWith("local ", StringComparison.Ordinal))).IsGreaterThanOrEqualTo(3);
+    }
+
+    [Test]
+    public async Task MixedTypeArraysInPyprojectHideNameVersionAndSettings()
+    {
+        await Assert.That(MiniToml.HasMixedTypeArray("[a]\ndev = [{include-group = \"x\"}, \"y\"]\n")).IsTrue();
+        await Assert.That(MiniToml.HasMixedTypeArray("[a]\ndev = [\"x\", \"y\"]\nmatrix = [[1, 2], [\"a\"]]\n")).IsFalse();
+        var dir = NewProject(("pyproject.toml", "[project]\nname = \"abc\"\nversion = \"1.2\"\n[dependency-groups]\ndev = [{include-group = \"t\"}, \"r\"]\n"), ("m.py", "x = 1\n"));
+        var config = ProjectConfig.Load(dir);
+        await Assert.That(config.Name).IsNull();
+        await Assert.That(config.Version).IsNull();
+    }
+
+    [Test]
+    public async Task DocstringParameterDocumentationIsExtracted()
+    {
+        await Assert.That(DocStrings.ExtractParameterDocumentation("Do it.\n\n    :param a: first\n    :param b: second\n", "b")).IsEqualTo("b: second");
+        await Assert.That(DocStrings.ExtractParameterDocumentation("Args:\n    a (int): first", "a")).IsEqualTo("a (int): first");
+        await Assert.That(DocStrings.CleanAndSplit("  first\n    second\n    third\n")).IsEquivalentTo(new[] { "first", "second", "third" });
+    }
+
+    [Test]
+    public async Task FunctionStubsPrintDecoratorsDefaultsAndReturnComments()
+    {
+        var dir = NewProject(("main.py", "import app\n\n\n@app.route(\"/\", defaults={\"a\": 1})\ndef view(x, y=None, *, z: int = 3):\n    pass\n\n\ndef lit():\n    return \"ok\"\n"));
+        var main = IndexProject(dir).Documents.Single();
+        var view = main.Symbols.Single(s => s.Symbol.EndsWith("main/view().", StringComparison.Ordinal));
+        await Assert.That(view.Documentation[0]).IsEqualTo("```python\n@app.route(\"/\", defaults={ \"a\": 1 })\ndef view(\n  x,\n  y=None,\n  *,\n  z: int = 3\n): # -> None:\n```");
+        var lit = main.Symbols.Single(s => s.Symbol.EndsWith("main/lit().", StringComparison.Ordinal));
+        await Assert.That(lit.Documentation[0]).IsEqualTo("```python\ndef lit(): # -> Literal['ok']:\n```");
+    }
+
+    [Test]
     public async Task EmitsMetadataDocumentsAndUtf16Positions()
     {
         var dir = NewProject(("main.py", "x = '😀'; y = x\n"));
