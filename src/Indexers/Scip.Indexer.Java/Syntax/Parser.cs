@@ -1268,10 +1268,12 @@ public sealed class Parser
             {
                 Next();
                 if (At("new")) { e = ParseNew(e); continue; }
+                List<TypeRef>? targs = null;
                 if (At("<"))
                 {
                     Next();
-                    do ParseType();
+                    targs = [];
+                    do targs.Add(ParseType());
                     while (Accept(","));
                     Expect(">");
                 }
@@ -1289,7 +1291,12 @@ public sealed class Parser
                     continue;
                 }
                 var n = ExpectIdent();
-                if (At("(")) e = Fin(CallOf(e, n.Text, n.Start, ParseArgs()), start);
+                if (At("("))
+                {
+                    var call = CallOf(e, n.Text, n.Start, ParseArgs());
+                    if (targs is not null) call.TypeArgs.AddRange(targs);
+                    e = Fin(call, start);
+                }
                 else e = Fin(new FieldAccess { Target = e, Name = n.Text, NameStart = n.Start }, start);
             }
             else if (At("[") && AtAt(1, "]") && e is NameExpr or FieldAccess)

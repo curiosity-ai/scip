@@ -64,6 +64,18 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
                 info.Kind = Kind.StaticField;
                 info.SignatureDocumentation = new Signature { Language = "java", Text = $"public static final Class<{cl.Type.Simple}> class" };
                 break;
+            case ArrayMemberEntity am:
+                info.DisplayName = am.Name;
+                info.Kind = am.IsMethod ? Kind.Method : Kind.Field;
+                break;
+            case ThisSuperEntity ts:
+                info.DisplayName = ts.Name;
+                info.Kind = Kind.Field;
+                break;
+            case SpecialClassLiteralEntity sc:
+                info.DisplayName = "class";
+                info.Kind = Kind.StaticField;
+                break;
             case PackageEntity p:
                 info.DisplayName = p.Name[(p.Name.LastIndexOf('/') + 1)..];
                 info.Kind = Kind.Package;
@@ -129,7 +141,8 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         var info = new SymbolInformation { Symbol = symbol, DisplayName = displayName };
         if (signature is { Length: > 0 }) info.SignatureDocumentation = new Signature { Language = "java", Text = signature };
         if (!string.IsNullOrEmpty(doc)) info.Documentation.Add(doc);
-        _ = enclosingSymbol; // upstream snapshots carry no enclosing_symbol
+        // scip-java 0.12.3 records the owner of local symbols only; globals are nested by their descriptor
+        if (enclosingSymbol is { Length: > 0 } && symbol.StartsWith("local ", StringComparison.Ordinal)) info.EnclosingSymbol = enclosingSymbol;
         if (kind != Kind.UnspecifiedKind) info.Kind = kind;
         _infos[symbol] = info;
         _infoOrder.Add(symbol);
@@ -219,7 +232,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         var typeSymbol = _names.Type(ti);
         if (!anon)
         {
-            EmitAnnotations(d.Mods, scope);
+            EmitAnnotations(d.Mods, parent); // class annotations are resolved in the enclosing scope
             Definition(typeSymbol, d.NameStart, d.NameStart + d.Name.Length, (d.Start, d.End));
             var info = AddInfo(typeSymbol, d.Name, d.Kind switch
             {
@@ -228,7 +241,8 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
                 TypeKind.Interface or TypeKind.Annotation => Kind.Interface,
                 _ => Kind.UnspecifiedKind,
             }, FormatClass(ti, d), d.Doc, EnclosingSymbolOf(ti));
-            foreach (var parent2 in ParentTypes(ti))
+            // scip-java 0.12.3 records no supertype relationships for records
+            foreach (var parent2 in ti.Kind == TypeKind.Record ? [] : ParentTypes(ti))
             {
                 var ps = _names.Type(parent2);
                 if (!info.Relationships.Any(r => r.Symbol == ps)) info.Relationships.Add(new Relationship { Symbol = ps, IsImplementation = true });
@@ -262,7 +276,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
             ws.ResolveType(rc.Type!, scope, this);
             var fs = _names.Field(f);
             Definition(fs, rc.NameStart, rc.NameStart + rc.Name.Length, (rc.Start, rc.End));
-            AddInfo(fs, rc.Name, Kind.UnspecifiedKind, FormatField(f, rc.Mods, scope), null, typeSymbol);
+            AddInfo(fs, rc.Name, Kind.Field, FormatField(f, rc.Mods, scope), null, typeSymbol);
         }
         foreach (var ec in d.EnumConstants)
         {
@@ -305,7 +319,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
         var sig = $"{ti.Simple}.{ec.Name}{(ec.Args.Count > 0 ? $"({args})" : "")} /* ordinal {ordinal} */";
         AddInfo(fs, display, Kind.UnspecifiedKind, sig, ec.Doc, null);
         var ctors = ti.Methods.Where(m => m.IsCtor).Select(m => (m, new Dictionary<string, JType>())).ToList();
-        var best = ChooseMethod(ctors, argTypes);
+        var best = ChooseMethod(ctors, argTypes, scope);
         if (best is not null) Reference(_names.Method(best.Value.Method), ec.NameStart, ec.NameStart + ec.Name.Length);
         if (ec.Body is not null)
         {
@@ -473,6 +487,8 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
                 foreach (var cand in st.Methods)
                 {
                     if (cand.Name != m.Name || cand.IsStatic || cand.Params.Count != m.Params.Count || (cand.Flags & Mod.Private) != 0) continue;
+                    // package-private methods are only overridden from within their own package
+                    if ((cand.Flags & (Mod.Public | Mod.Protected)) == 0 && !st.IsInterface && st.Package != m.Owner.Package) continue;
                     var ok = true;
                     for (var i = 0; i < cand.Params.Count && ok; i++)
                     {

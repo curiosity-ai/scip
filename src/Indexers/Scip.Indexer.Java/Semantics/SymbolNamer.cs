@@ -72,6 +72,24 @@ public sealed class SymbolNamer
         return Note(Full(Top(t).Origin, bare + "class."), new ClassLiteralEntity(t));
     }
 
+    /// <summary>Members javac models on its synthetic array class: <c>Array#length.</c> and <c>Array#clone().</c>.</summary>
+    public string ArrayMember(string name, bool method) =>
+        Note(Full(JavaPackage.Empty, "Array#" + name + (method ? "()." : ".")), new ArrayMemberEntity(name, method));
+
+    /// <summary>javac models <c>this</c> / <c>super</c> as fields of the class; semanticdb-javac references them for <c>super</c> and <c>Outer.this</c>.</summary>
+    public string ThisSuper(TypeInfo owner, string name)
+    {
+        var bare = BareType(owner);
+        if (bare.StartsWith("local ", StringComparison.Ordinal)) return "";
+        return Note(Full(Top(owner).Origin, bare + name + "."), new ThisSuperEntity(owner, name));
+    }
+
+    /// <summary><c>int.class</c> / <c>String[].class</c>: javac owns these by a synthetic class in the root package.</summary>
+    public string SpecialClassLiteral(string owner) => Note(Full(JavaPackage.Empty, owner + "#class."), new SpecialClassLiteralEntity(owner));
+
+    /// <summary><c>Feature[]::new</c>: javac resolves array constructor references to a synthetic constructor with index -1.</summary>
+    public string ArrayConstructor() => Note(Full(JavaPackage.Empty, "Array#`<init>`(+-1)."), new ArrayMemberEntity("<init>", true));
+
     public string Package(string pkg) => Note(Full(JavaPackage.Empty, PackageBare(pkg)), new PackageEntity(pkg));
 
     public static string Disambiguator(MethodInfo m)
@@ -133,3 +151,12 @@ public sealed record ClassLiteralEntity(TypeInfo Type);
 
 /// <summary>Entity behind a package symbol.</summary>
 public sealed record PackageEntity(string Name);
+
+/// <summary>Entity behind an <c>Array#length.</c> / <c>Array#clone().</c> symbol.</summary>
+public sealed record ArrayMemberEntity(string Name, bool IsMethod);
+
+/// <summary>Entity behind a <c>Foo#this.</c> / <c>Foo#super.</c> symbol.</summary>
+public sealed record ThisSuperEntity(TypeInfo Owner, string Name);
+
+/// <summary>Entity behind an <c>int#class.</c> / <c>Array#class.</c> symbol.</summary>
+public sealed record SpecialClassLiteralEntity(string Owner);

@@ -100,6 +100,8 @@ public class SnapshotTests
             var m = System.Text.RegularExpressions.Regex.Match(lines[i], @"^(//\s+>)\s?(.*?)\s*$");
             if (m.Success) lines[i] = (m.Groups[1].Value + " " + m.Groups[2].Value).TrimEnd();
         }
+        // the 0.12.3 release records the owner of local symbols as enclosing_symbol
+        lines.RemoveAll(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"^//\s+enclosing_symbol "));
         // the 0.12.3 release also references the package parts of the `package` declaration
         for (var i = lines.Count - 1; i > 0; i--)
         {

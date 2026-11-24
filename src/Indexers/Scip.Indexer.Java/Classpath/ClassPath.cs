@@ -116,6 +116,19 @@ public sealed class ClassPath : IDisposable
     private JImage? _jdk;
     private ZipArchive? _jdkFallback;
     private Dictionary<string, ZipArchiveEntry>? _jdkFallbackEntries;
+    private ZipArchive? _ctSym;
+    private Dictionary<string, List<(string Releases, ZipArchiveEntry Entry)>>? _ctIndex;
+    private readonly Dictionary<(int Release, string Name), TypeInfo?> _jdkCache = [];
+    private readonly HashSet<string> _nonJdkMisses = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The <c>--release</c> the file being indexed is compiled with. For a release older than the running JDK javac reads
+    /// the API from <c>lib/ct.sym</c> (public members only, in a different member order), which determines overload
+    /// numbering of JDK symbols; <see langword="null"/> means the full JDK image.
+    /// </summary>
+    public int? Release { get; set; }
+
+    private int JdkMajor => int.TryParse(Jdk.JdkVersion, out var v) ? v : 0;
 
     public JdkPackage Jdk { get; private set; } = new("17");
 
@@ -235,6 +248,23 @@ public sealed class ClassPath : IDisposable
         return false;
     }
 
+    /// <summary>Major version of the JDK at <paramref name="home"/> (or <c>JAVA_HOME</c> / the <c>java</c> on <c>PATH</c>), if it can be determined.</summary>
+    public static int? DetectJdkMajor(string? home)
+    {
+        home ??= Environment.GetEnvironmentVariable("JAVA_HOME");
+        if (string.IsNullOrEmpty(home)) home = DiscoverJavaHome();
+        var rel = home is null ? null : Path.Combine(home, "release");
+        if (rel is null || !File.Exists(rel)) return null;
+        foreach (var line in File.ReadLines(rel))
+        {
+            if (!line.StartsWith("JAVA_VERSION=", StringComparison.Ordinal)) continue;
+            var v = line["JAVA_VERSION=".Length..].Trim('"');
+            var major = v.StartsWith("1.", StringComparison.Ordinal) ? v.Split('.')[1] : JdkPackage.Parse(v).JdkVersion;
+            return int.TryParse(major, out var n) ? n : null;
+        }
+        return null;
+    }
+
     private static string? DiscoverJavaHome()
     {
         foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
@@ -251,10 +281,85 @@ public sealed class ClassPath : IDisposable
     public TypeInfo? Load(string internalName)
     {
         if (_cache.TryGetValue(internalName, out var hit)) return hit;
-        var ti = LoadUncached(internalName);
-        _cache[internalName] = ti;
-        if (ti?.OuterName is { } on) ti.Outer = Load(on);
-        return ti;
+        var ti = _nonJdkMisses.Contains(internalName) ? null : LoadUncached(internalName);
+        if (ti is null) _nonJdkMisses.Add(internalName);
+        else
+        {
+            _cache[internalName] = ti;
+            if (ti.OuterName is { } on) ti.Outer = Load(on);
+            return ti;
+        }
+        // JDK classes depend on the compile release, so they are cached per release
+        var release = EffectiveRelease();
+        if (_jdkCache.TryGetValue((release, internalName), out var jdkHit)) return jdkHit;
+        var jt = LoadJdk(internalName, release);
+        _jdkCache[(release, internalName)] = jt;
+        if (jt?.OuterName is { } jon) jt.Outer = Load(jon);
+        return jt;
+    }
+
+    private int EffectiveRelease()
+    {
+        if (Release is not { } r || r >= JdkMajor || r < 8 || JdkHome is null) return 0;
+        return OpenCtSym() ? r : 0;
+    }
+
+    private bool OpenCtSym()
+    {
+        if (_ctIndex is not null) return true;
+        if (_ctSym is not null || JdkHome is null) return false;
+        var path = Path.Combine(JdkHome, "lib", "ct.sym");
+        if (!File.Exists(path)) return false;
+        try
+        {
+            _ctSym = ZipFile.OpenRead(path);
+            _ctIndex = new Dictionary<string, List<(string, ZipArchiveEntry)>>(StringComparer.Ordinal);
+            foreach (var e in _ctSym.Entries)
+            {
+                if (!e.FullName.EndsWith(".sig", StringComparison.Ordinal)) continue;
+                var first = e.FullName.IndexOf('/', StringComparison.Ordinal);
+                var second = first < 0 ? -1 : e.FullName.IndexOf('/', first + 1);
+                if (second < 0) continue;
+                var name = e.FullName[(second + 1)..^4];
+                if (!_ctIndex.TryGetValue(name, out var list)) _ctIndex[name] = list = [];
+                list.Add((e.FullName[..first], e));
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            _ctIndex = null;
+            return false;
+        }
+    }
+
+    private TypeInfo? LoadJdk(string name, int release)
+    {
+        if (release != 0)
+        {
+            var c = (char)(release <= 9 ? '0' + release : 'A' + release - 10);
+            if (_ctIndex!.TryGetValue(name, out var list))
+            {
+                foreach (var (releases, entry) in list)
+                {
+                    if (!releases.Contains(c, StringComparison.Ordinal)) continue;
+                    using var s = entry.Open();
+                    using var ms = new MemoryStream();
+                    s.CopyTo(ms);
+                    return ClassFileReader.Read(ms.ToArray(), Jdk);
+                }
+            }
+            return null;
+        }
+        if (_jdk is not null && _jdk.ReadClass(name) is { } bytes) return ClassFileReader.Read(bytes, Jdk);
+        if (_jdkFallbackEntries is not null && _jdkFallbackEntries.TryGetValue(name, out var je))
+        {
+            using var s = je.Open();
+            using var ms = new MemoryStream();
+            s.CopyTo(ms);
+            return ClassFileReader.Read(ms.ToArray(), Jdk);
+        }
+        return null;
     }
 
     private TypeInfo? LoadUncached(string name)
@@ -273,14 +378,6 @@ public sealed class ClassPath : IDisposable
             var f = Path.Combine(dir, name + ".class");
             if (File.Exists(f) && ClassFileReader.Read(File.ReadAllBytes(f), pkg) is { } t) return t;
         }
-        if (_jdk is not null && _jdk.ReadClass(name) is { } bytes) return ClassFileReader.Read(bytes, Jdk);
-        if (_jdkFallbackEntries is not null && _jdkFallbackEntries.TryGetValue(name, out var je))
-        {
-            using var s = je.Open();
-            using var ms = new MemoryStream();
-            s.CopyTo(ms);
-            return ClassFileReader.Read(ms.ToArray(), Jdk);
-        }
         return null;
     }
 
@@ -289,5 +386,6 @@ public sealed class ClassPath : IDisposable
         foreach (var (_, _, zip) in _jars) zip.Dispose();
         _jdk?.Dispose();
         _jdkFallback?.Dispose();
+        _ctSym?.Dispose();
     }
 }

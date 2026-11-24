@@ -18,23 +18,23 @@ public static class NativeProjectIndexer
         foreach (var dep in project.Dependencies) ws.Classes.AddJar(dep);
         foreach (var note in project.Notes) reporter.Warning(note);
 
-        var files = new Dictionary<string, JavaPackage>(StringComparer.Ordinal);
+        var files = new Dictionary<string, (JavaPackage Package, int? Release)>(StringComparer.Ordinal);
         foreach (var root in project.SourceRoots)
         {
             if (!Directory.Exists(root.Directory)) continue;
-            foreach (var f in ProjectDiscovery.EnumerateJavaFiles(root.Directory)) files.TryAdd(Path.GetFullPath(f), root.Package);
+            foreach (var f in ProjectDiscovery.EnumerateJavaFiles(root.Directory)) files.TryAdd(Path.GetFullPath(f), (root.Package, root.Release));
         }
-        foreach (var (f, p) in project.SourceFiles) files.TryAdd(Path.GetFullPath(f), p);
+        foreach (var (f, p) in project.SourceFiles) files.TryAdd(Path.GetFullPath(f), (p, null));
 
         var sources = new List<JavaSourceFile>();
-        foreach (var (path, pkg) in files.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        foreach (var (path, (pkg, release)) in files.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             ct.ThrowIfCancellationRequested();
             if (Path.GetFileName(path) is "module-info.java") continue;
             var rel = Path.GetRelativePath(project.Root, path).Replace('\\', '/');
             try
             {
-                sources.Add(ws.AddFile(rel, await File.ReadAllTextAsync(path, ct), pkg));
+                sources.Add(ws.AddFile(rel, await File.ReadAllTextAsync(path, ct), pkg, release));
             }
             catch (ParseException e)
             {
@@ -68,6 +68,7 @@ public static class NativeProjectIndexer
                 {
                     try
                     {
+                        ws.Classes.Release = file.Release;
                         var di = new DocumentIndexer(ws, file);
                         documents.Add(di.Index());
                         indexers.Add(di);
