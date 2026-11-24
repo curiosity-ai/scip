@@ -92,6 +92,113 @@ public static class MiniToml
         return tables;
     }
 
+    /// <summary>
+    /// True when some array mixes element kinds (string, number, table, array...), which TOML 0.5 parsers such as
+    /// <c>@iarna/toml</c> reject. Only a lexical scan: strings and comments are skipped.
+    /// </summary>
+    public static bool HasMixedTypeArray(string text)
+    {
+        // Frame kind: 'A' array, 'T' inline table; First is the kind of the first element of an array.
+        var stack = new Stack<(char Frame, char First)>();
+        var mixed = false;
+
+        void Element(char kind)
+        {
+            if (stack.Count == 0 || stack.Peek().Frame != 'A')
+            {
+                return;
+            }
+
+            var top = stack.Pop();
+            if (top.First == '\0')
+            {
+                top.First = kind;
+            }
+            else if (top.First != kind)
+            {
+                mixed = true;
+            }
+
+            stack.Push(top);
+        }
+
+        for (var i = 0; i < text.Length && !mixed; i++)
+        {
+            var c = text[i];
+            if (c == '#')
+            {
+                while (i < text.Length && text[i] != '\n')
+                {
+                    i++;
+                }
+            }
+            else if (c is '"' or '\'')
+            {
+                Element('s');
+                if (i + 2 < text.Length && text[i + 1] == c && text[i + 2] == c)
+                {
+                    var end = text.IndexOf(new string(c, 3), i + 3, StringComparison.Ordinal);
+                    i = end < 0 ? text.Length : end + 2;
+                }
+                else
+                {
+                    var j = i + 1;
+                    while (j < text.Length && text[j] != c && text[j] != '\n')
+                    {
+                        j += c == '"' && text[j] == '\\' ? 2 : 1;
+                    }
+
+                    i = j;
+                }
+            }
+            else if (c == '[')
+            {
+                if (stack.Count == 0)
+                {
+                    // a table header (the '[' starts the line)
+                    var lineStart = i == 0 ? 0 : text.LastIndexOf('\n', i - 1) + 1;
+                    if (text[lineStart..i].Trim().Length == 0)
+                    {
+                        while (i < text.Length && text[i] != '\n')
+                        {
+                            i++;
+                        }
+
+                        continue;
+                    }
+                }
+
+                Element('a');
+                stack.Push(('A', '\0'));
+            }
+            else if (c == '{')
+            {
+                Element('t');
+                stack.Push(('T', '\0'));
+            }
+            else if (c is ']' or '}')
+            {
+                if (stack.Count > 0)
+                {
+                    stack.Pop();
+                }
+            }
+            else if (stack.Count > 0 && stack.Peek().Frame == 'A' && !char.IsWhiteSpace(c) && c != ',')
+            {
+                var j = i;
+                while (j < text.Length && !char.IsWhiteSpace(text[j]) && text[j] is not (',' or ']' or '}'))
+                {
+                    j++;
+                }
+
+                Element(c is 't' or 'f' ? 'b' : 'n');
+                i = j - 1;
+            }
+        }
+
+        return mixed;
+    }
+
     private static int IndexOfTopLevelEquals(string line)
     {
         var q = '\0';
@@ -244,7 +351,16 @@ public sealed class ProjectConfig
         Dictionary<string, Dictionary<string, object>> toml;
         try
         {
-            toml = MiniToml.Parse(File.ReadAllText(path));
+            var contents = File.ReadAllText(path);
+            if (MiniToml.HasMixedTypeArray(contents))
+            {
+                // scip-python 0.6.8 parses pyproject.toml with a TOML 0.5 reader (@iarna/toml 2.x) that rejects arrays mixing
+                // value types (e.g. `[{include-group = "x"}, "y"]`). The failure is swallowed: no name, version or
+                // [tool.scip]/[tool.pyright] settings are read, but the project root stays the pyproject directory.
+                return new ProjectConfig { PyprojectPath = path, ConfigDirectory = Path.GetDirectoryName(path)! };
+            }
+
+            toml = MiniToml.Parse(contents);
         }
         catch (Exception e) when (e is IOException or ArgumentException or InvalidOperationException)
         {
@@ -304,21 +420,12 @@ public sealed class ProjectConfig
         return null;
     }
 
-    /// <summary>The effective extra import roots (<c>extraPaths</c>, or an auto-detected <c>src</c> directory).</summary>
-    public List<string> ResolveExtraPaths()
-    {
-        var result = ExtraPaths.Select(p => Path.GetFullPath(Path.Combine(ConfigDirectory, p))).ToList();
-        if (result.Count == 0)
-        {
-            var src = Path.Combine(ConfigDirectory, "src");
-            if (Directory.Exists(src) && !File.Exists(Path.Combine(src, "__init__.py")))
-            {
-                result.Add(src);
-            }
-        }
-
-        return result;
-    }
+    /// <summary>
+    /// The effective extra import roots. scip-python 0.6.8 (the published build) passes <c>autoSearchPaths = false</c>, so a
+    /// conventional <c>src</c> directory is not added implicitly: modules below it are named <c>src.pkg.mod</c>.
+    /// </summary>
+    public List<string> ResolveExtraPaths() =>
+        ExtraPaths.Select(p => Path.GetFullPath(Path.Combine(ConfigDirectory, p))).ToList();
 
     /// <summary>Returns a predicate that tells whether a path is excluded, and the list of include roots.</summary>
     public (List<string> Roots, Func<string, bool> IsExcluded) FileSelection(string projectRoot)

@@ -337,7 +337,13 @@ public sealed class TreeVisitor
 
         foreach (var p in node.Parameters)
         {
-            _doc.Symbols.Add(new SymbolInformation { Symbol = GetScipSymbol(p) });
+            var paramInfo = new SymbolInformation { Symbol = GetScipSymbol(p) };
+            if (p.Name is not null && DocStrings.ExtractParameterDocumentation(functionDoc ?? "", p.Name.Value) is { Length: > 0 } paramDoc)
+            {
+                paramInfo.Documentation.Add(paramDoc);
+            }
+
+            _doc.Symbols.Add(paramInfo);
             Walk(p);
         }
 
@@ -354,44 +360,7 @@ public sealed class TreeVisitor
         return text[start..end];
     }
 
-    private string FunctionStub(FunctionNode node)
-    {
-        var sb = new StringBuilder();
-        sb.Append(node.IsAsync ? "async def " : "def ").Append(node.Name.Value).Append('(');
-        var parms = node.Parameters.Select(p =>
-        {
-            var s = p.Category switch { ParamCategory.ArgsList => "*", ParamCategory.KwargsDict => "**", _ => "" };
-            if (p.Name is null)
-            {
-                return p.Category == ParamCategory.Simple ? "/" : s;
-            }
-
-            s += p.Name.Value;
-            if (p.Annotation is not null)
-            {
-                s += ": " + Text(p.Annotation);
-            }
-
-            if (p.Default is not null)
-            {
-                s += " = " + Text(p.Default);
-            }
-
-            return s;
-        }).ToList();
-        if (parms.Count > 0)
-        {
-            sb.Append("\n  ").Append(string.Join(",\n  ", parms)).Append('\n');
-        }
-
-        sb.Append(')');
-        if (node.ReturnAnnotation is not null)
-        {
-            sb.Append(" -> ").Append(Text(node.ReturnAnnotation));
-        }
-
-        return sb.Append(':').ToString();
-    }
+    private string FunctionStub(FunctionNode node) => HoverStubs.Function(node, _module.Text);
 
     // ------------------------------------------------------------------ imports
 
@@ -408,7 +377,7 @@ public sealed class TreeVisitor
     private bool VisitImportFrom(ImportFromNode node)
     {
         var symbol = GetScipSymbol(node);
-        Push(node.Module, symbol, (int)SymbolRole.Import | (int)SymbolRole.ReadAccess);
+        Push(node.Module, symbol, (int)SymbolRole.ReadAccess);
         var symbolPackage = ModuleNameToPackage(node.Module, null);
         if (symbolPackage == Stdlib)
         {
@@ -425,7 +394,7 @@ public sealed class TreeVisitor
 
     private bool VisitImportFromAs(ImportFromAsNode node)
     {
-        Push(node, GetScipSymbol(node), (int)SymbolRole.Import | (int)SymbolRole.ReadAccess);
+        Push(node, GetScipSymbol(node), (int)SymbolRole.ReadAccess);
         return false;
     }
 
@@ -433,7 +402,7 @@ public sealed class TreeVisitor
     {
         var moduleName = node.Module.Formatted;
         var resolved = _state.Modules.Resolve(node.Module, _module);
-        var roles = (int)SymbolRole.Import | (int)SymbolRole.ReadAccess;
+        var roles = (int)SymbolRole.ReadAccess;
 
         if (resolved?.FilePath is { } file && _state.Modules.IsUnderProject(file))
         {
@@ -476,18 +445,27 @@ public sealed class TreeVisitor
         if (decls.Count == 0)
         {
             // Without a declaration, member accesses (and keyword arguments we could not resolve) get no occurrence.
-            if (node.Parent is MemberAccessNode or ArgumentNode)
+            if (node.Parent is MemberAccessNode)
             {
                 return true;
             }
 
-            Push(node, GetLocalForDeclaration(node));
+            if (node.Parent is ArgumentNode { Parent: CallNode call } && !IsUnknownCallee(call))
+            {
+                return true;
+            }
+
+            // pyright's hover for a name without declaration: the Unknown type printed with the "function" label.
+            Push(node, GetLocalForDeclaration(node, ["```python\n(function) " + node.Value + ": Unknown\n```"]));
             return true;
         }
 
         EmitDeclaration(node, decls[0]);
         return true;
     }
+
+    /// <summary>True when pyright would evaluate the callee to Unknown (e.g. an unresolved import), so keyword arguments get locals.</summary>
+    private bool IsUnknownCallee(CallNode call) => _eval.EvalExpression(_module, call.Left) is null;
 
     private void EmitDeclaration(NameNode node, Declaration decl)
     {
@@ -656,11 +634,7 @@ public sealed class TreeVisitor
         return package is null ? null : _names.Class(package, b.Module.ModuleName, b.Node.Name.Value);
     }
 
-    private string ClassStub(ClassNode cls)
-    {
-        var args = cls.Arguments.Count > 0 ? "(" + string.Join(", ", cls.Arguments.Select(Text)) + ")" : "";
-        return $"class {cls.Name.Value}{args}:";
-    }
+    private string ClassStub(ClassNode cls) => HoverStubs.Class(cls, _module.Text);
 
     private void EmitNameWithoutDeclaration(NameNode node) => Push(node, GetLocalForDeclaration(node));
 
