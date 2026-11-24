@@ -107,6 +107,12 @@ public sealed partial class ClangIndexer : IIndexer
         {
             var sym = TranslationUnitIndexer.FileSymbol(path);
             doc.Occurrences.Add((0, 0, 0, sym, (int)SymbolRole.Definition));
+            if (!doc.Symbols.ContainsKey(sym))
+            {
+                var info = new SymbolInformation { Symbol = sym, Kind = SymbolInformation.Types.Kind.File, DisplayName = Path.GetFileName(path) };
+                info.Documentation.Add("File: " + path);
+                doc.Symbols[sym] = info;
+            }
         }
     }
 

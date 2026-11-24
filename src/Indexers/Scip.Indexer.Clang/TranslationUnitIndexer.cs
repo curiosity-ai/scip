@@ -23,6 +23,7 @@ public sealed class TranslationUnitIndexer : IOccurrenceSink
 {
     private readonly FileTable _files;
     private readonly TranslationUnitResult _result = new();
+    private readonly Dictionary<int, CommentIndex?> _comments = [];
 
     private TranslationUnitIndexer(string root) => _files = new FileTable(root);
 
@@ -95,6 +96,11 @@ public sealed class TranslationUnitIndexer : IOccurrenceSink
 
         var parser = new CppParser(pp.Output, _files, this);
         parser.Run();
+        parser.ComputeRelationships();
+        foreach (var ent in parser.Entities.Where(static e => e.Relationships.Count > 0 && e.Defined))
+        {
+            AddRelationships(ent);
+        }
 
         for (var f = 0; f < _files.Count; f++)
         {
@@ -132,6 +138,23 @@ public sealed class TranslationUnitIndexer : IOccurrenceSink
         }
 
         return _result;
+    }
+
+    private void AddRelationships(Entity ent)
+    {
+        foreach (var doc in _result.Documents.Values)
+        {
+            if (doc.Symbols.TryGetValue(ent.Symbol, out var info))
+            {
+                foreach (var (sym, isRef) in ent.Relationships)
+                {
+                    if (!info.Relationships.Any(r => r.Symbol == sym))
+                    {
+                        info.Relationships.Add(new Relationship { Symbol = sym, IsImplementation = true, IsReference = isRef });
+                    }
+                }
+            }
+        }
     }
 
     private static bool IsC(string file) => file.EndsWith(".c", StringComparison.OrdinalIgnoreCase);
@@ -190,7 +213,18 @@ public sealed class TranslationUnitIndexer : IOccurrenceSink
         doc.Occurrences.Add((at.Line, at.Col, at.Col + at.Len, entity.Symbol, definition ? (int)SymbolRole.Definition : 0));
         if (definition && !doc.Symbols.ContainsKey(entity.Symbol))
         {
-            doc.Symbols[entity.Symbol] = new SymbolInformation { Symbol = entity.Symbol, Kind = entity.SymbolKind, DisplayName = entity.Name };
+            var info = new SymbolInformation { Symbol = entity.Symbol, Kind = entity.SymbolKind, DisplayName = entity.Name };
+            if (!_comments.TryGetValue(at.File, out var comments))
+            {
+                _comments[at.File] = comments = CommentIndex.TryLoad(_files.Path(at.File));
+            }
+
+            if (comments?.DocFor(at.Line, at.Col, at.Line) is { } text)
+            {
+                info.Documentation.Add(text);
+            }
+
+            doc.Symbols[entity.Symbol] = info;
         }
     }
 }

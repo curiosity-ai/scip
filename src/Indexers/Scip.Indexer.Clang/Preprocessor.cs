@@ -80,12 +80,13 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
     private void Process(string path, int depth)
     {
         var id = files.Id(path);
-        if (depth > 100 || _once.Contains(id) || !File.Exists(path))
+        var virtualHeader = BuiltinHeaders.IsVirtual(path);
+        if (depth > 100 || _once.Contains(id) || (!virtualHeader && !File.Exists(path)))
         {
             return;
         }
 
-        var toks = Lexer.Lex(File.ReadAllBytes(path), id);
+        var toks = Lexer.Lex(virtualHeader ? BuiltinHeaders.Read(path) : File.ReadAllBytes(path), id);
         var conds = new List<(bool ParentActive, bool Taken, bool Active)>();
         bool Active() => conds.Count == 0 || conds[^1].Active;
 
@@ -301,7 +302,7 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
             }
         }
 
-        return null;
+        return BuiltinHeaders.Resolve(name);
     }
 
     // ---- macro expansion ----------------------------------------------------------------------------------
