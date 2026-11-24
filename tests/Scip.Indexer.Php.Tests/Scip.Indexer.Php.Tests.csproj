@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Scip.Indexer.Php.Tests</RootNamespace>
+    <NoWarn>$(NoWarn);CA1822;CA1859;CA1305;CA1307;CA1310;CA1861;CA1707;CA2007</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\Scip\Scip.csproj" />
+    <ProjectReference Include="..\..\src\Indexers\Scip.Indexer.Php\Scip.Indexer.Php.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Fixtures ported from scip-php/tests, copied verbatim (no symlinks) next to the test assembly. -->
+    <Content Include="testdata\**\*" CopyToOutputDirectory="PreserveNewest" LinkBase="testdata" />
+  </ItemGroup>
+</Project>
