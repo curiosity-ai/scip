@@ -92,6 +92,8 @@ public sealed class Checker(TsProgram program)
     {
         switch (parent.Kind)
         {
+            case SK.LiteralType when parent.Parent is { Kind: SK.IndexedAccessType } access && ReferenceEquals(access.Right, parent):
+                return MemberDecls(TypeConts(access.Left!, null, 0), node.Text);
             case SK.ImportDeclaration or SK.ExportDeclaration when ReferenceEquals(parent.ModuleSpecifier, node):
             case SK.ExternalModuleReference:
             case SK.ImportCall when parent.Arguments.Count > 0 && ReferenceEquals(parent.Arguments[0], node):
@@ -357,6 +359,7 @@ public sealed class Checker(TsProgram program)
 
     private static readonly Node Opaque = new(SK.KeywordType, 0) { Text = "any" };
     private static readonly Node ThisKey = new(SK.ThisType, 0);
+    private static readonly Node GlobalThis = new(SK.ModuleDeclaration, 0) { Text = "globalThis" };
 
     private int _cuts;
     private int _groups;
@@ -758,7 +761,18 @@ public sealed class Checker(TsProgram program)
         return hits.Count == 0 ? null : hits.Select(h => h.Decl).Distinct().ToList();
     }
 
-    public List<Hit> Members(List<Cont> containers, string name, int depth) => Members(containers, name, [], depth);
+    public List<Hit> Members(List<Cont> containers, string name, int depth)
+    {
+        var hits = Members(containers, name, [], depth);
+        if (hits.Count > 0 || name.Length == 0) { return hits; }
+        // Every object type has the members of the global `Object` interface (`constructor`, `toString`, ...).
+        if (containers.Any(c => c.Decl.Kind is SK.InterfaceDeclaration or SK.ClassDeclaration or SK.TypeLiteral or SK.ObjectLiteralExpression or SK.MappedType && !c.Decl.File!.IsLib || c.Decl.Kind == SK.TypeQuery))
+        {
+            return Members(LibConts("Object"), name, [], depth + 1);
+        }
+
+        return hits;
+    }
 
     private List<Hit> Members(List<Cont> containers, string name, HashSet<Cont> visited, int depth)
     {
@@ -775,6 +789,13 @@ public sealed class Checker(TsProgram program)
             if (ReferenceEquals(c.Decl, Opaque) || !visited.Add(c)) { continue; }
             var found = new List<Hit>();
             var decl = c.Decl;
+            if (ReferenceEquals(decl, GlobalThis))
+            {
+                foreach (var g in Program.Libs.Lookup(name, Meaning.Any) ?? []) { found.Add(new Hit(g, null, c)); }
+                if (found.Count > 0) { return found; }
+                continue;
+            }
+
             switch (decl.Kind)
             {
                 case SK.TsSourceFile:
@@ -1041,9 +1062,13 @@ public sealed class Checker(TsProgram program)
             case SK.Identifier:
             {
                 var decls = SymbolAtLocation(e);
-                return decls is null ? [] : ContainersOfDecls(decls, depth + 1, asValue: true);
+                if (decls is null) { return e.Text == "globalThis" ? [new Cont(GlobalThis, null)] : []; }
+                var declared = ContainersOfDecls(decls, depth + 1, asValue: true);
+                return Narrow(e, declared, depth + 1) ?? declared;
             }
 
+            case SK.MetaProperty when e.Name?.Text == "meta":
+                return LibConts("ImportMeta");
             case SK.This:
                 return EnclosingThisContainers(e);
             case SK.Super:
@@ -1135,6 +1160,58 @@ public sealed class Checker(TsProgram program)
 
             default:
                 return [];
+        }
+    }
+
+    /// <summary>
+    /// Control-flow narrowing of an identifier by an enclosing guard: <c>x instanceof C</c>, <c>typeof x === "string"</c>,
+    /// <c>Array.isArray(x)</c> in a conditional expression, an <c>if</c> statement or the right operand of <c>&amp;&amp;</c>.
+    /// </summary>
+    private List<Cont>? Narrow(Node identifier, List<Cont> declared, int depth)
+    {
+        _ = declared;
+        var child = identifier;
+        for (var p = identifier.Parent; p is not null; child = p, p = p.Parent)
+        {
+            Node? guard = null;
+            if (p.Kind == SK.ConditionalExpression && ReferenceEquals(p.Then, child)) { guard = p.Condition; }
+            else if (p.Kind == SK.IfStatement && ReferenceEquals(p.Then, child)) { guard = p.Condition; }
+            else if (p.Kind == SK.BinaryExpression && p.Text == "&&" && ReferenceEquals(p.Right, child)) { guard = p.Left; }
+            else if (p.Kind is SK.FunctionDeclaration or SK.FunctionExpression or SK.ArrowFunction or SK.MethodDeclaration or SK.TsSourceFile) { break; }
+            if (guard is null) { continue; }
+            var narrowed = GuardConts(guard, identifier.Text, depth);
+            if (narrowed is not null) { return narrowed; }
+        }
+
+        return null;
+    }
+
+    private List<Cont>? GuardConts(Node guard, string name, int depth)
+    {
+        switch (guard.Kind)
+        {
+            case SK.ParenthesizedExpression:
+                return GuardConts(guard.Expression!, name, depth + 1);
+            case SK.BinaryExpression when guard.Text == "&&":
+                return GuardConts(guard.Right!, name, depth + 1) ?? GuardConts(guard.Left!, name, depth + 1);
+            case SK.BinaryExpression when guard.Text == "instanceof" && guard.Left is { Kind: SK.Identifier } l && l.Text == name:
+            {
+                var result = new List<Cont>();
+                foreach (var c in ValueConts(guard.Right!, depth + 1)) { result.AddRange(ConstructResult(c, [], null, depth + 1)); }
+                return result.Count > 0 ? result : null;
+            }
+
+            case SK.BinaryExpression when guard.Text is "===" or "==" && guard.Left is { Kind: SK.TypeOfExpression, Expression: { Kind: SK.Identifier } t } && t.Text == name && guard.Right is { Kind: SK.StringLiteral } lit:
+                return lit.Text switch
+                {
+                    "string" => LibConts("String"), "number" => LibConts("Number"), "boolean" => LibConts("Boolean"),
+                    "bigint" => LibConts("BigInt"), "symbol" => LibConts("Symbol"), "function" => FunctionConts(), _ => null,
+                };
+            case SK.CallExpression when guard.Expression is { Kind: SK.PropertyAccessExpression, Name.Text: "isArray", Expression: { Kind: SK.Identifier, Text: "Array" } }
+                && guard.Arguments is [{ Kind: SK.Identifier } arg] && arg.Text == name:
+                return LibConts("Array");
+            default:
+                return null;
         }
     }
 
