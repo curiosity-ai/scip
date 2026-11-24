@@ -18,10 +18,10 @@ def my_cool_function_2(a: str):
     x = ", world"
 #   ^ definition local 1
     return (lambda y: a + x + y)("oh no")
-#                  ^ definition local 2(y)
+#                  ^ definition local 2_y
 #                     ^ reference  snapshot-util 0.1 single_function/my_cool_function_2().(a)
 #                         ^ reference local 1
-#                             ^ reference local 2(y)
+#                             ^ reference local 2_y
 
 def next_level():
 #   ^^^^^^^^^^ definition  snapshot-util 0.1 single_function/next_level().
