@@ -17,6 +17,9 @@ public sealed record SelfEntity(ClassEntity Class, bool IsClassObject) : Entity;
 
 public sealed record FunctionEntity(FunctionNode Node, SourceModule Module) : Entity;
 
+/// <summary>An instance of one of the builtin classes (<c>str</c>, <c>list</c>, <c>dict</c>...) whose methods we know from typeshed.</summary>
+public sealed record BuiltinInstanceEntity(string Class) : Entity;
+
 /// <summary>A symbol of a module we have no source for (stdlib), or a builtin.</summary>
 public sealed record ExternalEntity(string Module, string Name, bool IsClass) : Entity;
 
@@ -120,6 +123,12 @@ public sealed class Evaluator(ModuleSystem modules)
             case MemberAccessNode ma when ma.Member == name:
             {
                 var left = EvalExpression(module, ma.Left);
+                if (left is ModuleEntity { Dotted: "os", Remaining.Count: 0 } && name.Value == "path" && !ImportsSubmodule(module, "os", "path"))
+                {
+                    // `os/__init__.pyi` declares `path`, so (unlike other submodules) it has a declaration.
+                    return [new Declaration { Kind = DeclKind.External, Name = "path", ExternalModule = "os" }];
+                }
+
                 if (left is ModuleEntity m && (m.Remaining.Count > 0 && m.Remaining[0] == name.Value
                     || m.Source is null && Hardcoded.IsStdlibSubmodule(m.Dotted + "." + name.Value)))
                 {
@@ -151,6 +160,39 @@ public sealed class Evaluator(ModuleSystem modules)
         }
 
         return [];
+    }
+
+    private readonly Dictionary<SourceModule, HashSet<string>> _importedDotted = [];
+
+    /// <summary>True when the module contains <c>import a.b</c> (pyright then models <c>b</c> as an implicit import of <c>a</c>).</summary>
+    public bool ImportsSubmodule(SourceModule module, string package, string submodule)
+    {
+        if (!_importedDotted.TryGetValue(module, out var set))
+        {
+            set = [];
+            var stack = new Stack<Node>();
+            stack.Push(module.Tree);
+            while (stack.Count > 0)
+            {
+                var n = stack.Pop();
+                if (n is ImportAsNode ia)
+                {
+                    set.Add(string.Join('.', ia.Module.NameParts.Select(p => p.Value)));
+                }
+
+                foreach (var c in n.Children())
+                {
+                    if (c is not null)
+                    {
+                        stack.Push(c);
+                    }
+                }
+            }
+
+            _importedDotted[module] = set;
+        }
+
+        return set.Contains(package + "." + submodule);
     }
 
     private IReadOnlyList<Declaration> KeywordParameter(SourceModule module, ArgumentNode arg, string name)
@@ -383,8 +425,12 @@ public sealed class Evaluator(ModuleSystem modules)
                 return EvalExpression(module, annotation, depth + 1) switch
                 {
                     ClassEntity c => new InstanceEntity(c),
+                    ExternalEntity { Module: "builtins", IsClass: true, Name: var bn } when BuiltinMembers.Methods.ContainsKey(bn) => new BuiltinInstanceEntity(bn),
                     _ => null,
                 };
+            case IndexNode { Left: NameNode { Value: "list" or "dict" or "set" or "frozenset" or "tuple" } generic } when
+                EvalExpression(module, generic, depth + 1) is ExternalEntity { Module: "builtins", IsClass: true }:
+                return new BuiltinInstanceEntity(generic.Value);
             case IndexNode { Left: NameNode { Value: "Optional" or "Final" or "ClassVar" or "Annotated" } } idx when idx.Items.Count > 0:
                 return InstanceOfAnnotation(module, idx.Items[0].Value, depth + 1);
             case BinaryNode { Operator: "|" } b:
@@ -454,9 +500,22 @@ public sealed class Evaluator(ModuleSystem modules)
                 return null;
             }
 
+            case StringListNode sl:
+                return new BuiltinInstanceEntity(sl.Strings.Count > 0 && IsBytesLiteral(module, sl.Strings[0]) ? "bytes" : "str");
+            case SequenceNode { Kind: NodeKind.List }:
+                return new BuiltinInstanceEntity("list");
+            case SequenceNode { Kind: NodeKind.Set }:
+                return new BuiltinInstanceEntity("set");
+            case DictionaryNode:
+                return new BuiltinInstanceEntity("dict");
+            case CallNode { Left: MemberAccessNode bma } when EvalExpression(module, bma.Left, depth + 1) is BuiltinInstanceEntity bi:
+                return BuiltinMembers.Methods.TryGetValue(bi.Class, out var bm) && bm.TryGetValue(bma.Member.Value, out var retClass) && retClass.Length > 0
+                    ? new BuiltinInstanceEntity(retClass)
+                    : null;
             case CallNode call:
                 return EvalExpression(module, call.Left, depth + 1) switch
                 {
+                    ExternalEntity { Module: "builtins", IsClass: true, Name: "str" or "bytes" or "list" or "dict" or "set" or "frozenset" or "tuple" or "int" or "float" } b => new BuiltinInstanceEntity(b.Name),
                     ClassEntity c => new InstanceEntity(c),
                     SelfEntity { IsClassObject: true } s => new InstanceEntity(s.Class),
                     FunctionEntity f when f.Node.ReturnAnnotation is { } ret => InstanceOfAnnotation(f.Module, ret, depth + 1),
@@ -470,6 +529,21 @@ public sealed class Evaluator(ModuleSystem modules)
             default:
                 return null;
         }
+    }
+
+    private static bool IsBytesLiteral(SourceModule module, StringNode str)
+    {
+        var text = module.Text;
+        var start = Math.Clamp(str.Start, 0, text.Length);
+        for (var i = start; i < text.Length && char.IsLetter(text[i]); i++)
+        {
+            if (text[i] is 'b' or 'B')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Return type inference by looking at the first <c>return &lt;expr&gt;</c> that evaluates to something.</summary>
@@ -535,6 +609,8 @@ public sealed class Evaluator(ModuleSystem modules)
                 return ClassMembers(i.Class, name, []);
             case SelfEntity s:
                 return ClassMembers(s.Class, name, []);
+            case BuiltinInstanceEntity b when BuiltinMembers.Methods.TryGetValue(b.Class, out var methods) && methods.ContainsKey(name):
+                return [new Declaration { Kind = DeclKind.External, Name = name, ExternalModule = "builtins", ExternalClass = b.Class }];
         }
 
         _ = module;

@@ -154,6 +154,18 @@ internal static class Hardcoded
     public static bool IsStdlibAnnotatedVariable(string module, string name) =>
         AnnotatedVariables.TryGetValue(module, out var names) && names.Contains(name);
 
+    private static readonly Dictionary<string, (string Module, string[] Names)> DefiningModules = new(StringComparer.Ordinal)
+    {
+        ["warnings"] = ("_warnings", ["warn", "warn_explicit"]),
+        ["socket"] = ("_socket", ["inet_aton", "inet_ntoa", "inet_pton", "inet_ntop", "gethostname", "gethostbyname", "gethostbyaddr",
+            "getaddrinfo", "getnameinfo", "getservbyname", "getservbyport", "htons", "htonl", "ntohs", "ntohl", "getdefaulttimeout",
+            "setdefaulttimeout", "socketpair", "if_nameindex", "if_nametoindex", "if_indextoname"]),
+    };
+
+    /// <summary>Stdlib functions that the public module re-exports from a private module (<c>warnings.warn</c> is <c>_warnings.warn</c>).</summary>
+    public static string? StdlibDefiningModule(string module, string name) =>
+        DefiningModules.TryGetValue(module, out var entry) && entry.Names.Contains(name) ? entry.Module : null;
+
     public static bool IsBuiltinClass(string name) => BuiltinClasses.Contains(name);
 
     public static bool IsBuiltin(string name) => BuiltinClasses.Contains(name) || BuiltinFunctions.Contains(name);

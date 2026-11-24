@@ -726,6 +726,11 @@ public sealed class TreeVisitor
     private bool IsSubmoduleAccess(MemberAccessNode ma)
     {
         var left = _eval.EvalExpression(_module, ma.Left);
+        if (left is ModuleEntity { Dotted: "os", Remaining.Count: 0 } && ma.Member.Value == "path" && !_eval.ImportsSubmodule(_module, "os", "path"))
+        {
+            return false; // os/__init__.pyi declares `path`
+        }
+
         return left is ModuleEntity m
             && (m.Remaining.Count > 0 && m.Remaining[0] == ma.Member.Value
                 || m.Source is null && Hardcoded.IsStdlibSubmodule(m.Dotted + "." + ma.Member.Value));
@@ -845,6 +850,14 @@ public sealed class TreeVisitor
             return;
         }
 
+        if (decl.ExternalClass.Length > 0)
+        {
+            var methodSymbol = SymbolNames.Method(_names.Class(Stdlib, "builtins", decl.ExternalClass), decl.Name);
+            Push(node, methodSymbol);
+            EmitExternalSymbolInformation(methodSymbol, []);
+            return;
+        }
+
         var symbol = ExternalSymbol(package, decl.ExternalModule, decl.Name, node.Parent is MemberAccessNode m && m.Member == node);
         Push(node, symbol);
         EmitExternalSymbolInformation(symbol, []);
@@ -856,6 +869,22 @@ public sealed class TreeVisitor
     /// </summary>
     private string ExternalSymbol(PythonPackage package, string module, string name, bool memberAccess = false)
     {
+        // scip-python 0.6.8 resolves every member of `os.path` to the first declaration of ntpath's star import: `ntpath/join()`.
+        if (module == "os.path")
+        {
+            return SymbolNames.Method(_names.Module(Stdlib, "ntpath"), "join");
+        }
+
+        if (module == "os" && name == "path")
+        {
+            return SymbolNames.Term(_names.Module(package, module), name);
+        }
+
+        if (Hardcoded.StdlibDefiningModule(module, name) is { } definingModule)
+        {
+            module = definingModule;
+        }
+
         // Only for `typing.Callable`-style member access: names imported with `from typing import X` keep their typing symbol.
         if (memberAccess && Hardcoded.IsBuiltinsImportedClass(module, name))
         {
