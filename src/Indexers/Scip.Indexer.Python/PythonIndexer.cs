@@ -186,6 +186,9 @@ public sealed class PythonIndexer : IIndexer
         });
 
         var failures = 0;
+        var buffered = new List<Document>();
+        var defined = new HashSet<string>(StringComparer.Ordinal);
+        var referenced = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < files.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -230,12 +233,27 @@ public sealed class PythonIndexer : IIndexer
                 continue;
             }
 
+            Normalize(doc, defined, referenced);
+            buffered.Add(doc);
+        }
+
+        foreach (var doc in OrderForLint(buffered))
+        {
             writer.WriteDocument(doc);
         }
 
         foreach (var ext in state.ExternalSymbols.Values)
         {
+            defined.Add(ext.Symbol);
             writer.WriteExternalSymbol(ext);
+        }
+
+        foreach (var sym in referenced)
+        {
+            if (!defined.Contains(sym))
+            {
+                writer.WriteExternalSymbol(new SymbolInformation { Symbol = sym });
+            }
         }
 
         if (!options.Quiet)
@@ -244,6 +262,211 @@ public sealed class PythonIndexer : IIndexer
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Makes a document lint-clean: merges repeated SymbolInformation, adds information for local symbols that lack it,
+    /// and records global symbols that are referenced (occurrences, relationships) so that the caller can emit
+    /// external symbols for any that no document defines.
+    /// </summary>
+    private static void Normalize(Document doc, HashSet<string> defined, HashSet<string> referenced)
+    {
+        // Upstream names a parameter of a local function "local N(name)", which is not a valid local symbol.
+        static string FixLocal(string s) =>
+            s.StartsWith("local ", StringComparison.Ordinal) && s.Contains('(')
+                ? string.Concat(s.Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '+' or '$' or ' ' ? c : '_')).TrimEnd('_')
+                : s;
+
+        foreach (var occ in doc.Occurrences)
+        {
+            occ.Symbol = FixLocal(occ.Symbol);
+        }
+
+        foreach (var info in doc.Symbols)
+        {
+            info.Symbol = FixLocal(info.Symbol);
+            foreach (var r in info.Relationships)
+            {
+                r.Symbol = FixLocal(r.Symbol);
+            }
+        }
+
+        var byName = new Dictionary<string, SymbolInformation>(StringComparer.Ordinal);
+        var unique = new List<SymbolInformation>();
+        foreach (var info in doc.Symbols)
+        {
+            if (!byName.TryGetValue(info.Symbol, out var first))
+            {
+                byName[info.Symbol] = info;
+                unique.Add(info);
+                continue;
+            }
+
+            foreach (var d in info.Documentation)
+            {
+                if (!first.Documentation.Contains(d))
+                {
+                    first.Documentation.Add(d);
+                }
+            }
+
+            foreach (var r in info.Relationships)
+            {
+                if (!first.Relationships.Any(x => x.Symbol == r.Symbol))
+                {
+                    first.Relationships.Add(r);
+                }
+            }
+
+            if (first.Kind == SymbolInformation.Types.Kind.UnspecifiedKind)
+            {
+                first.Kind = info.Kind;
+            }
+
+            if (first.DisplayName.Length == 0)
+            {
+                first.DisplayName = info.DisplayName;
+            }
+        }
+
+        if (unique.Count != doc.Symbols.Count)
+        {
+            doc.Symbols.Clear();
+            doc.Symbols.AddRange(unique);
+        }
+
+        void Reference(string symbol)
+        {
+            if (symbol.Length == 0)
+            {
+                return;
+            }
+
+            if (SymbolNames.IsLocal(symbol))
+            {
+                if (byName.ContainsKey(symbol))
+                {
+                    return;
+                }
+
+                var added = new SymbolInformation { Symbol = symbol };
+                byName[symbol] = added;
+                doc.Symbols.Add(added);
+            }
+            else
+            {
+                referenced.Add(symbol);
+            }
+        }
+
+        foreach (var occ in doc.Occurrences)
+        {
+            Reference(occ.Symbol);
+        }
+
+        foreach (var info in doc.Symbols.ToList())
+        {
+            if (!SymbolNames.IsLocal(info.Symbol))
+            {
+                defined.Add(info.Symbol);
+            }
+
+            foreach (var r in info.Relationships)
+            {
+                Reference(r.Symbol);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The lint resolves a relationship target only if it was defined by an earlier (or the same) document, so documents
+    /// are ordered definitions-first. Relationships that still point at a later document (import cycles) are dropped.
+    /// </summary>
+    private static List<Document> OrderForLint(List<Document> docs)
+    {
+        var definedIn = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < docs.Count; i++)
+        {
+            foreach (var info in docs[i].Symbols)
+            {
+                if (!SymbolNames.IsLocal(info.Symbol))
+                {
+                    definedIn.TryAdd(info.Symbol, i);
+                }
+            }
+        }
+
+        var state = new byte[docs.Count];
+        var order = new List<Document>(docs.Count);
+        var emitted = new HashSet<string>(StringComparer.Ordinal);
+
+        void Visit(int start)
+        {
+            var stack = new Stack<(int Index, IEnumerator<int> Deps)>();
+            state[start] = 1;
+            stack.Push((start, Dependencies(start).GetEnumerator()));
+            while (stack.Count > 0)
+            {
+                var (index, deps) = stack.Peek();
+                if (deps.MoveNext())
+                {
+                    var d = deps.Current;
+                    if (state[d] == 0)
+                    {
+                        state[d] = 1;
+                        stack.Push((d, Dependencies(d).GetEnumerator()));
+                    }
+
+                    continue;
+                }
+
+                stack.Pop();
+                state[index] = 2;
+                var doc = docs[index];
+                foreach (var info in doc.Symbols)
+                {
+                    emitted.Add(info.Symbol);
+                }
+
+                foreach (var info in doc.Symbols)
+                {
+                    for (var r = info.Relationships.Count - 1; r >= 0; r--)
+                    {
+                        var target = info.Relationships[r].Symbol;
+                        if (definedIn.ContainsKey(target) && !emitted.Contains(target))
+                        {
+                            info.Relationships.RemoveAt(r);
+                        }
+                    }
+                }
+
+                order.Add(doc);
+            }
+        }
+
+        IEnumerable<int> Dependencies(int i)
+        {
+            foreach (var info in docs[i].Symbols)
+            {
+                foreach (var r in info.Relationships)
+                {
+                    if (definedIn.TryGetValue(r.Symbol, out var j) && j != i)
+                    {
+                        yield return j;
+                    }
+                }
+            }
+        }
+
+        for (var i = 0; i < docs.Count; i++)
+        {
+            if (state[i] == 0)
+            {
+                Visit(i);
+            }
+        }
+
+        return order;
     }
 
     private static IEnumerable<string> ImportedProjectFiles(SourceModule module, ModuleSystem modules)
