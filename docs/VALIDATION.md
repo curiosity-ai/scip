@@ -63,3 +63,31 @@ The (faithfully ported) Go lint resolves a relationship target only if it is def
 To pass it, the Java indexer drops cross-file inverse relationships that cannot be ordered (flag `--all-inverse-relationships`
 restores the full output but fails lint), Python drops relationships left pointing at a later document (import cycles), and
 Dart/Clang order documents definitions-first. Decision pending: keep this, or make the lint order-independent and keep all relationships.
+
+## Large-project batch (build at commit ee58cab, lint order-independent)
+
+| Lang | Project | Time / peak RSS | Index | Lint (errors / warnings) |
+|---|---|---|---|---|
+| java | spring-framework | 37 s / 2.0 GB | 204 MB | 0 / 0 |
+| java | guava | 16 s / 1.1 GB | 71 MB | 0 / 7,560 (duplicate relationships) |
+| typescript | vuejs/core | 8 s / 0.5 GB | 13 MB | 0 / 0 |
+| typescript | nestjs/nest | 7 s / 0.3 GB | 12 MB | 0 / 0 |
+| typescript | microsoft/playwright (`--infer-tsconfig`) | 13 s / 0.9 GB | 44 MB | 0 / 0 (72 parser syntax-error warnings) |
+| typescript | angular/angular (`--infer-tsconfig`) | **crash**: stack overflow in `Checker.ResolveEntityExpression`; 13 parser syntax errors before it | | |
+| python | django | 19 s / 0.9 GB | 97 MB | 0 / 0 |
+| python | home-assistant/core | 102 s / 5.0 GB | 638 MB | 0 / 0 |
+| ruby | discourse | 18 s / 1.5 GB | 75 MB | 0 / 0 |
+| ruby | rails/rails | **crash**: stack overflow in `RubyProject.LookupInstance` | | |
+| rust | tokio, starship | 2 s / 0.2 GB each | 6 / 5 MB | 0 / 0 |
+| clang | curl, redis, nlohmann/json | 14 s, 27 s, 6 s | 8 / 24 / 3 MB | 0 / 0 |
+| clang | abseil-cpp | 88 s / 2.0 GB | 21 MB | 0 / 0 |
+| dart | flutter `packages/flutter` | 14 s / 1.1 GB | 82 MB | 2,136 / 2,038 |
+| dart | riverpod `packages/riverpod` | 1 s | 2.5 MB | 439 / 24 |
+| php | laravel/framework | 9 s / 0.5 GB | 38 MB | 11 / 0 |
+| php | symfony/symfony | 22 s / 1.5 GB | 102 MB | 69 / 0 (invalid U+FFFD symbols from non-UTF-8 sources) |
+| dotnet | Humanizer | | | 0 / 25 (duplicate documents per target framework) |
+| dotnet | Newtonsoft.Json (with relaxed `Src/global.json`) | 13 s / 0.3 GB | 5 MB | 0 / 20 (repeated SymbolInformation per TFM) |
+
+Lint change made along the way: `scip lint` is now order-independent for relationships, and `local N` symbols are scoped per document in the duplicate-relationship check
+(most "multiple relationships" warnings on gson/commons-lang/zod were this false positive).
+Fix pass for the remaining items is tracked in TODO.md.

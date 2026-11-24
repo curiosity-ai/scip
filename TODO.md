@@ -65,6 +65,7 @@ Each needs: a design note in `docs/PORTING.md`, implementation, ported tests/sna
 - [x] Decision: pure native C# for all indexers (no runtime compilers/toolchains; see CLAUDE.md)
 
 ## 5. Quality
+- [ ] Large-project fix pass (docs/VALIDATION.md): Ruby stack overflow (Rails); TypeScript stack overflow + parser gaps (Angular, Playwright); Dart lint (Flutter, Riverpod); PHP (Laravel anon classes, Symfony non-UTF-8 identifiers); Java duplicate relationships (Guava); .NET multi-TFM duplicates (Humanizer, Newtonsoft)
 - [~] (lint errors fixed everywhere; open: relationship-ordering decision) Fix findings from real-project validation (`docs/VALIDATION.md`): dotnet project loading (Serilog) + non-zero exit on failure; SymbolInformation for locals (TS, Ruby); external SymbolInformation (Java); duplicate/dangling SymbolInformation & relationships (Python, Java); make every validation index pass `scip lint`
 - [ ] Cross-check outputs against Go `scip` CLI on shared fixtures (golden files)
 - [ ] Docs: port `docs/DESIGN.md`, `docs/CLI.md`, `docs/Development.md` to the C# project
