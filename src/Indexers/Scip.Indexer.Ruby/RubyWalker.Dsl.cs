@@ -98,6 +98,9 @@ internal sealed partial class RubyWalker
         (singleton ? info.SingletonMethods : info.Methods).Add(name);
         _project.InvalidateAncestors();
         var occ = Emit(tok, _project.MethodSymbol(owner, singleton, name), (int)SymbolRole.Definition, null, kind, startCol: startCol ?? (colon ? tok.Col - 1 : tok.Col), endCol: nameEndCol);
+        var setter = kind == SymbolInformation.Types.Kind.Setter && name.EndsWith('=');
+        var synthMd = PrettyMethod(name, singleton, setter ? [new ParamSpec(name[..^1], ParamKind.Required)] : [], null);
+        WithDocs(occ, _ => synthMd, comment: false);
         occ.Enclosing = [tok.Line, tok.Col, endLine, endCol];
         return occ;
     }
@@ -135,7 +138,7 @@ internal sealed partial class RubyWalker
                     return false;
                 }
 
-            case "it" or "specify" or "xspecify" or "before" or "after":
+            case "it" or "specify" or "xspecify" or "before" or "after" or "test":
                 return CallThen(t, ExampleDsl(t));
             case "describe" or "context" or "shared_examples" or "shared_context":
                 return CallThen(t, DescribeDsl(t));
@@ -191,7 +194,7 @@ internal sealed partial class RubyWalker
     }
 
     /// <summary>Parses <c>(name)</c> / <c>name</c> where name is a plain string or symbol, followed by a block opener.</summary>
-    private bool NameThenBlock(out Token tok, out string text, out int startCol, out int endCol)
+    private bool NameThenBlock(out Token tok, out string text, out int startCol, out int endCol, bool allowConstant = false)
     {
         tok = default;
         text = "";
@@ -218,7 +221,7 @@ internal sealed partial class RubyWalker
             }
 
             text = Unquote(raw);
-            startCol = arg.Col;
+            startCol = NameStart(arg, raw, text);
             endCol = arg.EndCol;
         }
         else if (arg.Kind == Tk.Symbol)
@@ -226,6 +229,15 @@ internal sealed partial class RubyWalker
             text = arg.Text;
             startCol = arg.Col - 1;
             endCol = arg.EndCol;
+        }
+        else if (allowConstant && arg.Kind == Tk.Const && TryReadChain(j, out var chainLast, out var chainSegs, out var chainToks, out var chainAbs) && !chainAbs)
+        {
+            // `describe Rack::MediaType do`: named after the constant, located at its last segment.
+            text = string.Join("::", chainSegs);
+            startCol = chainToks[^1].Col;
+            endCol = chainToks[^1].EndCol;
+            arg = chainToks[^1];
+            j = chainLast;
         }
         else
         {
@@ -241,7 +253,7 @@ internal sealed partial class RubyWalker
                 return false;
             }
 
-            startCol = arg.Kind == Tk.Str ? open.Value.Col : startCol;
+            startCol = arg.Kind == Tk.Str ? (text.Contains("::", StringComparison.Ordinal) ? startCol : open.Value.Col) : startCol;
             endCol = arg.Kind == Tk.Str ? c.EndCol : endCol;
             j++;
         }
@@ -249,9 +261,19 @@ internal sealed partial class RubyWalker
         return Tok(j) is { Kind: Tk.Keyword, Text: "do" } or { Kind: Tk.Punct, Text: "{" };
     }
 
+    /// <summary>
+    /// Upstream locates a spec name that contains `::` after its last `::` (it treats the text as a constant path); otherwise
+    /// the literal starts at its opening quote.
+    /// </summary>
+    private static int NameStart(Token str, string raw, string text)
+    {
+        var at = text.LastIndexOf("::", StringComparison.Ordinal);
+        return at < 0 ? str.Col : str.Col + (raw.Length - text.Length) / 2 + at + 2;
+    }
+
     private bool DescribeDsl(Token t)
     {
-        if (Top.Kind is not (FrameKind.Class or FrameKind.Module or FrameKind.Other) && _stack.Count > 1 || InMethodBody() || !NameThenBlock(out var tok, out var text, out var start, out var end))
+        if (Top.Kind is not (FrameKind.Class or FrameKind.Module or FrameKind.Other) && _stack.Count > 1 || InMethodBody() || !NameThenBlock(out var tok, out var text, out var start, out var end, allowConstant: true))
         {
             return false;
         }
@@ -262,15 +284,28 @@ internal sealed partial class RubyWalker
             return false;
         }
 
+        if (_stack.Count == 1)
+        {
+            // Top-level `describe Foo do`: the group is not nested in anything.
+            parent = [];
+        }
+
         var kind = t.Text is "shared_context" ? "shared_examples" : t.Text;
         string[] path = [.. parent, $"<{kind} '{text}'>"];
         var info = _project.Type(path);
         info.Defined = true;
         info.ProjectDefined = true;
         info.IsSpec = true;
+        if (parent.Length > 0)
+        {
+            // A nested `describe` is a subclass of the enclosing group.
+            info.Super ??= new RefSpec([], parent, true);
+        }
+
         _project.InvalidateAncestors();
         var sym = _project.TypeSymbol(path);
-        AddOcc(new Occ { Line = tok.Line, Col = start, EndCol = end, Symbol = sym, Roles = (int)SymbolRole.Definition, Kind = SymbolInformation.Types.Kind.Class });
+        var describeMd = $"class {RubyProject.Key(path)}" + (parent.Length > 0 ? $" < {RubyProject.Key(parent)}" : "");
+        AddOcc(new Occ { Line = tok.Line, Col = start, EndCol = end, Symbol = sym, Roles = (int)SymbolRole.Definition, Kind = SymbolInformation.Types.Kind.Class, Markdown = _ => describeMd });
         if (parent.Length > 0)
         {
             AddOcc(new Occ { Line = tok.Line, Col = start, EndCol = end, Symbol = _project.TypeSymbol(parent) });
@@ -300,6 +335,8 @@ internal sealed partial class RubyWalker
             Line = tok.Line, Col = start, EndCol = end, Symbol = _project.MethodSymbol(path, false, text), Roles = (int)SymbolRole.Definition,
             Kind = SymbolInformation.Types.Kind.Method,
         };
+        var letMd = PrettyMethod(text, false, [], null);
+        occ.Markdown = _ => letMd;
         AddOcc(occ);
         _exampleBlock = (path, text, occ, t.Line, t.Col);
         _i++;
@@ -369,8 +406,15 @@ internal sealed partial class RubyWalker
             }
 
             name = $"<{t.Text} '{Unquote(raw)}'>";
-            startCol = open?.Col ?? str.Col;
+            startCol = Unquote(raw).Contains("::", StringComparison.Ordinal) ? NameStart(str, raw, Unquote(raw)) : open?.Col ?? str.Col;
             endCol = close?.EndCol ?? str.EndCol;
+            if (t.Text == "test")
+            {
+                // Minitest's `test "does x"` defines `test_does_x`; upstream locates it at the string.
+                name = "test_" + System.Text.RegularExpressions.Regex.Replace(Unquote(raw), @"\s+", "_");
+                startCol = str.Col;
+                endCol = str.EndCol;
+            }
         }
 
         var owner = _project.Type(path);
@@ -381,6 +425,8 @@ internal sealed partial class RubyWalker
             Line = line, Col = startCol, EndCol = endCol, Roles = (int)SymbolRole.Definition, Kind = SymbolInformation.Types.Kind.Method,
             Resolver = p => p.IsSpecGroup(path) ? sym : null,
         };
+        var exampleMd = PrettyMethod(name, false, [], null);
+        occ.Markdown = _ => exampleMd;
         AddOcc(occ);
         _exampleBlock = (path, name, occ, t.Line, t.Col);
         _i++;
@@ -619,6 +665,11 @@ internal sealed partial class RubyWalker
         if (!singleton)
         {
             _project.Type(path).Aliases[newName] = oldName;
+            _project.InvalidateAncestors();
+        }
+        else if (_project.Type(path).SingletonMethods.Add(newName))
+        {
+            // `class << self; alias_method :it, :test; end` makes `it` available on the class itself.
             _project.InvalidateAncestors();
         }
     }

@@ -65,7 +65,14 @@ write references.
   `&:sym` calls, flow typing (types are per-variable, last assignment wins), no RBS comment signatures.
 - RSpec specifics (`described_class`, `RSpec.describe`, `shared_examples` includes, `<before>` of describe classes with
   ivars) are only partly modelled; only string/symbol names are supported.
-- No `relationships` (inheritance/override edges) and no hover documentation.
+- Roles follow upstream: references are `ReadAccess` (none for scope qualifiers, superclasses, `Const(...)` calls, bare
+  `if @x` conditions and method calls), the first assignment on a control-flow path is a definition and later ones (or
+  ones after a read, or compound `+=`) are `WriteAccess`.
+- Hover documentation uses Sorbet's pretty signature (`sig { params(..).returns(..) }` + `def ...`, `class A < B`,
+  `name (Type)`) plus doc comments. Types come from the `sig`, literal constants and (in `typed: true` files) literal
+  assignments; everything else is `T.untyped`, as upstream shows for untyped code.
+- Relationships: only the ones upstream emits (instance variables shared with a superclass / mixin, and constant aliases
+  `A = B`); there are no method override edges.
 - `sorbet/rbi/{gems,annotations,dsl}` are skipped (upstream maps them to external gems; `--gem-map-path` unimplemented).
   Heredoc bodies are not scanned for `#{}` references.
 - The lexer is heuristic (value-vs-operator decisions for `/`, `%`, `<<`, `?`, `{`); pathological input may

@@ -30,6 +30,9 @@ internal sealed class TypeInfo(string[] path)
 
     public RefSpec? Super { get; set; }
 
+    /// <summary>The superclass is a call such as <c>Struct.new(:a)</c> rather than a plain constant.</summary>
+    public bool SuperIsExpression { get; set; }
+
     public List<RefSpec> Includes { get; } = [];
 
     public List<RefSpec> Prepends { get; } = [];
@@ -44,6 +47,9 @@ internal sealed class TypeInfo(string[] path)
     public HashSet<string> SingletonMethods { get; } = [];
 
     public HashSet<string> Constants { get; } = [];
+
+    /// <summary>Instance variables mentioned (read or written) by methods of this type, as Sorbet's <c>unresolvedFields</c>.</summary>
+    public HashSet<string> Fields { get; } = [];
 }
 
 /// <summary>Where a resolved method lives.</summary>
@@ -437,7 +443,8 @@ internal sealed class RubyProject(GemMetadata gem)
 
         foreach (var a in Ancestors(t))
         {
-            if (a.IsSpec || a.SingletonMethods.Contains("it") || a.SingletonMethods.Contains("describe") || a.Super is { Segments: ["Minitest", "Spec"] })
+            if (a.IsSpec || a.SingletonMethods.Contains("it") || a.SingletonMethods.Contains("describe") || a.Super is { Segments: ["Minitest", "Spec"] }
+                || a.Extends.Any(e => e.Segments is ["Minitest", "Spec"] or ["Minitest", "Spec", "DSL"] or ["Spec", "DSL"]))
             {
                 return true;
             }
@@ -516,6 +523,58 @@ internal sealed class RubyProject(GemMetadata gem)
         Format(TypeDescriptors(owner, singleton)
             .Append(D(method, SymbolDescriptor.Types.Suffix.Method))
             .Append(D(param, SymbolDescriptor.Types.Suffix.Parameter)));
+
+    /// <summary>
+    /// Relationships of the instance variable <paramref name="name"/> of <paramref name="owner"/>: a definition relationship
+    /// to the topmost superclass that also uses it and reference relationships to the mixins that do (see scip-ruby's
+    /// <c>FieldResolver</c>). Empty when the variable is only used by <paramref name="owner"/> itself.
+    /// </summary>
+    public List<Relationship> FieldRelationships(string[] owner, string name)
+    {
+        var rels = new List<Relationship>();
+        if (FindType(owner) is not { } start)
+        {
+            return rels;
+        }
+
+        var best = start;
+        var cur = start;
+        var seen = new HashSet<TypeInfo> { start };
+        while (!cur.IsModule && cur.Super is { } spec && ResolveType(spec) is { } next && seen.Add(next))
+        {
+            if (next.Fields.Contains(name))
+            {
+                best = next;
+            }
+
+            cur = next;
+        }
+
+        if (best != start)
+        {
+            rels.Add(new Relationship { Symbol = FieldSymbol(best.Path, false, name), IsDefinition = true });
+        }
+
+        var mixins = new HashSet<TypeInfo>();
+        void Mix(TypeInfo t)
+        {
+            foreach (var spec in t.Prepends.Concat(t.Includes))
+            {
+                if (ResolveType(spec) is { } m && m != start && mixins.Add(m))
+                {
+                    Mix(m);
+                }
+            }
+        }
+
+        Mix(start);
+        foreach (var m in mixins.Where(m => m.Fields.Contains(name)).Select(m => FieldSymbol(m.Path, false, name)).Order(StringComparer.Ordinal))
+        {
+            rels.Add(new Relationship { Symbol = m, IsReference = true });
+        }
+
+        return rels;
+    }
 
     public string FieldSymbol(string[] owner, bool singleton, string name) =>
         Format(TypeDescriptors(owner, singleton).Append(D(name, SymbolDescriptor.Types.Suffix.Term)));
