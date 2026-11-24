@@ -12,11 +12,11 @@ public class IndexerTests
         var dir = Directory.CreateTempSubdirectory("scip-rust-").FullName;
         var path = Path.Combine(dir, "lib.rs");
         File.WriteAllText(path, source);
-        var scanner = new RustCrateScanner(
-            new CargoPackage("main", null, Path.Combine(dir, "Cargo.toml"), []),
-            new CargoTarget("main", "lib", path),
-            new HashSet<string>());
+        var package = new CargoPackage("main", null, Path.Combine(dir, "Cargo.toml"), []);
+        var target = new CargoTarget("main", "lib", path);
+        var scanner = new RustCrateScanner(package, target, new HashSet<string>());
         scanner.Scan();
+        RustAnalysis.Analyze([new ScanUnit(package, target, scanner)]);
         return (scanner.Files.Single(), source);
     }
 
@@ -134,13 +134,21 @@ public class IndexerTests
             return;
         }
 
-        var crate = Path.Combine(dir, ".reference", "rust-analyzer", "crates", "syntax");
+        var crate = Path.Combine(dir, ".reference", "rust-analyzer", "crates", Environment.GetEnvironmentVariable("RUST_SMOKE_CRATE") ?? "syntax");
         var output = Path.Combine(Path.GetTempPath(), $"scip-rust-smoke-{Guid.NewGuid():N}.scip");
         var code = await new RustIndexer().IndexAsync(new IndexerOptions(crate, output, []), CancellationToken.None);
         await Assert.That(code).IsEqualTo(0);
         var index = Index.Parser.ParseFrom(File.ReadAllBytes(output));
         File.Delete(output);
-        Console.WriteLine($"smoke: {index.Documents.Count} documents, {index.Documents.Sum(d => d.Occurrences.Count)} occurrences");
+        var refs = index.Documents.Sum(d => d.Occurrences.Count(o => (o.SymbolRoles & (int)SymbolRole.Definition) == 0));
+        var defs = index.Documents.Sum(d => d.Occurrences.Count) - refs;
+        var idents = 0;
+        foreach (var f in Directory.EnumerateFiles(Path.Combine(crate, "src"), "*.rs", SearchOption.AllDirectories))
+        {
+            idents += RustLexer.Lex(File.ReadAllBytes(f)).Count(t => t.Kind == RustTokenKind.Ident);
+        }
+
+        Console.WriteLine($"smoke: {index.Documents.Count} documents, {defs} defs, {refs} refs, {index.ExternalSymbols.Count} external symbols, {idents} ident tokens");
         await Assert.That(index.Documents.Count).IsGreaterThan(5);
         foreach (var d in index.Documents)
         {

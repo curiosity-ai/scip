@@ -25,6 +25,38 @@ public sealed class SourceFileResult(string path, byte[] bytes, List<RustToken> 
     public HashSet<int> Consumed { get; } = [];
 
     public int LocalCount { get; set; }
+
+    // ---- structural facts recorded for the resolver (token indices) ----
+    public List<(int Start, int End, string Symbol)> ModuleRanges { get; } = [];
+
+    public List<ImplRange> ImplRanges { get; } = [];
+
+    public List<(int Start, int End, string Symbol)> TraitRanges { get; } = [];
+
+    /// <summary>Token range of the type text associated with a definition (field type, return type, alias target).</summary>
+    public Dictionary<string, (int From, int To)> TypeRanges { get; } = [];
+
+    public List<GenericScope> Generics { get; } = [];
+
+    public List<(int Start, int End)> Uses { get; } = [];
+
+    public Dictionary<string, GenericScope> ItemGenerics { get; } = [];
+
+    /// <summary>Resolved crate this file belongs to (set by the scanner owner).</summary>
+    public object? Crate { get; set; }
+}
+
+/// <summary>An <c>impl</c> block: token range of the whole item and of the self type / trait path.</summary>
+public sealed record ImplRange(int Start, int End, string Symbol, int SelfFrom, int SelfTo, int TraitFrom, int TraitTo);
+
+/// <summary>Generic parameters declared by an item, visible in <c>[Start, End)</c>.</summary>
+public sealed class GenericScope(int start, Dictionary<string, string> names)
+{
+    public int Start { get; } = start;
+
+    public int End { get; set; }
+
+    public Dictionary<string, string> Names { get; } = names;
 }
 
 internal enum AssocKind { None, Trait, Impl }
@@ -52,7 +84,6 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
         var prefix = RustMonikers.CrateDescriptors(target.Kind, target.Name).ToArray();
         var ctx = new ScanContext(prefix, prefix, Path.GetDirectoryName(root)!, AssocKind.None);
         ScanFile(root, ctx, rootModule: true);
-        AddReferences();
     }
 
     private void ScanFile(string path, ScanContext moduleCtx, bool rootModule)
@@ -66,44 +97,6 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
         var file = new SourceFileResult(path, bytes, RustLexer.Lex(bytes));
         Files.Add(file);
         new FileScanner(this, file, rootModule).ScanModuleFile(moduleCtx);
-    }
-
-    private static readonly HashSet<string> Keywords =
-    [
-        "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn",
-        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self",
-        "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while",
-    ];
-
-    private void AddReferences()
-    {
-        foreach (var file in Files)
-        {
-            var t = file.Tokens;
-            for (var i = 0; i < t.Count; i++)
-            {
-                if (t[i].Kind != RustTokenKind.Ident || file.Consumed.Contains(i))
-                {
-                    continue;
-                }
-
-                var name = Utf8(file.Bytes, t[i]);
-                if (Keywords.Contains(name) || !_itemsByName.TryGetValue(name, out var defs) || defs.Count != 1)
-                {
-                    continue;
-                }
-
-                var prev = i > 0 ? Utf8(file.Bytes, t[i - 1]) : "";
-                var next = i + 1 < t.Count ? Utf8(file.Bytes, t[i + 1]) : "";
-                if (prev == "." || (next == ":" && prev is "{" or "," or "(") || (next == "!") != defs[0].IsMacro)
-                {
-                    continue;
-                }
-
-                file.Occurrences.Add(new(t[i].Start, t[i].End, defs[0].Symbol, false, null));
-                file.Consumed.Add(i);
-            }
-        }
     }
 
     internal static string Utf8(byte[] bytes, RustToken t) => Encoding.UTF8.GetString(bytes, t.Start, t.End - t.Start);
@@ -293,6 +286,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
         {
             // The module defined by a file has the whole file as its range.
             var d = Descriptor(moduleCtx.Prefix);
+            file.ModuleRanges.Add((0, _t.Count, d.Symbol));
             var end = _b.Length;
             var docs = new List<string>();
             _i = 0;
@@ -317,6 +311,69 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
         }
 
         // ---- items ---------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Declares generic parameters (<c>&lt;T: Bound, 'a, const N: usize&gt;</c>) at <paramref name="lt"/> as local
+        /// symbols enclosed by <paramref name="enclosing"/>; returns the scope (End is set by the caller) and the
+        /// token index after the closing <c>&gt;</c>.
+        /// </summary>
+        private (GenericScope? Scope, int Next) DeclareGenerics(int lt, string enclosing, int scopeStart)
+        {
+            if (!Is(lt, "<"))
+            {
+                return (null, lt);
+            }
+
+            var end = SkipGenerics(lt);
+            Dictionary<string, string> names = [];
+            var depth = 0;
+            var expectName = true;
+            for (var k = lt + 1; k < end - 1; k++)
+            {
+                var s = _t[k].Kind == RustTokenKind.Punct ? Text(k) : "";
+                if (IsOpen(s) || s == "<")
+                {
+                    depth++;
+                    continue;
+                }
+
+                if (IsClose(s) || s == ">")
+                {
+                    depth--;
+                    continue;
+                }
+
+                if (depth == 0 && s == ",")
+                {
+                    expectName = true;
+                    continue;
+                }
+
+                if (!expectName || depth != 0)
+                {
+                    continue;
+                }
+
+                var nameTok = k;
+                if (Is(k, "const") && IsKind(k + 1, RustTokenKind.Ident))
+                {
+                    nameTok = k + 1;
+                    k++;
+                }
+
+                if (_t[nameTok].Kind is RustTokenKind.Ident or RustTokenKind.Lifetime)
+                {
+                    var n = Text(nameTok);
+                    names[n] = DeclareLocal(nameTok, n, Kind.TypeParameter, enclosing);
+                    expectName = false;
+                }
+            }
+
+            var scope = new GenericScope(scopeStart, names);
+            file.Generics.Add(scope);
+            file.ItemGenerics[enclosing] = scope;
+            return (scope, end);
+        }
 
         private void ParseItems(ScanContext ctx, int end, List<string> _)
         {
@@ -432,7 +489,13 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 case "extern" when Is(_i + 1, "crate") || Is(_i + 1, "\"") || IsKind(_i + 1, RustTokenKind.Str) && Is(_i + 2, "{"):
                     ParseExtern(ctx);
                     break;
-                case "use": SkipToSemicolon(); break;
+                case "use":
+                    {
+                        var useStart = _i;
+                        SkipToSemicolon();
+                        file.Uses.Add((useStart, Math.Min(_i, _t.Count)));
+                        break;
+                    }
                 default:
                     if (_t[_i].Kind == RustTokenKind.Punct && IsOpen(Text(_i)))
                     {
@@ -518,6 +581,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
             var close = SkipBalanced(_i);
             var inner = new ScanContext(def.Descriptors, def.Descriptors, Path.Combine(ctx.Dir, name), AssocKind.None);
+            file.ModuleRanges.Add((_i, close, def.Symbol));
             _i++;
             ParseItems(inner, close - 1, []);
             _i = close;
@@ -538,12 +602,28 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
             var name = Text(nameTok);
             var def = BeginDef(ctx, name, Suffix.Method);
-            _i = SkipGenerics(nameTok + 1);
+            var (fnGenerics, afterGenerics) = DeclareGenerics(nameTok + 1, def.Symbol, itemStart);
+            _i = afterGenerics;
             var paramsOpen = _i;
             var paramsEnd = Is(paramsOpen, "(") ? SkipBalanced(paramsOpen) : paramsOpen;
             _i = FindHeaderEnd(paramsEnd);
             var headerEnd = _i;
             var hasBody = Is(headerEnd, "{");
+            if (Is(paramsEnd, "->"))
+            {
+                var retEnd = headerEnd;
+                for (var q = paramsEnd + 1; q < headerEnd; q++)
+                {
+                    if (Is(q, "where"))
+                    {
+                        retEnd = q;
+                        break;
+                    }
+                }
+
+                file.TypeRanges[def.Symbol] = (paramsEnd + 1, retEnd);
+            }
+
             var hasSelf = false;
             for (var k = paramsOpen + 1; k < paramsEnd - 1; k++)
             {
@@ -574,6 +654,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             else
             {
                 _i = Math.Min(_i + 1, _t.Count);
+            }
+
+            if (fnGenerics is not null)
+            {
+                fnGenerics.End = _i;
             }
 
             EndDef(def, nameTok, kind, itemStart, _i, docs, SigText(sigStart, headerEnd), name);
@@ -702,10 +787,12 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
             var name = Text(nameTok);
             var def = BeginDef(ctx, name, Suffix.Type);
-            _i = SkipGenerics(nameTok + 1);
+            var (stGenerics, afterStGenerics) = DeclareGenerics(nameTok + 1, def.Symbol, itemStart);
+            _i = afterStGenerics;
             var headerEnd = _i;
             if (Is(_i, "("))
             {
+                ParseTupleFields(def, _i);
                 _i = SkipBalanced(_i);
                 headerEnd = nameTok + 1;
                 SkipToSemicolon();
@@ -723,8 +810,82 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 }
             }
 
+            if (stGenerics is not null)
+            {
+                stGenerics.End = _i;
+            }
+
             EndDef(def, nameTok, kind, itemStart, _i, docs, SigText(sigStart, headerEnd), name);
             RegisterItem(name, def.Symbol, false);
+        }
+
+        /// <summary>Defines the fields <c>0</c>, <c>1</c>, ... of a tuple struct / tuple variant at <paramref name="open"/>.</summary>
+        private void ParseTupleFields(Def parent, int open)
+        {
+            var close = SkipBalanced(open);
+            var k = open + 1;
+            var index = 0;
+            while (k < close - 1)
+            {
+                var start = k;
+                while (k < close - 1 && (IsKind(k, RustTokenKind.DocOuter) || Is(k, "#")))
+                {
+                    k = IsKind(k, RustTokenKind.DocOuter) ? k + 1 : Is(k + 1, "[") ? SkipBalanced(k + 1) : k + 1;
+                }
+
+                var sigStart = k;
+                if (Is(k, "pub"))
+                {
+                    k++;
+                    if (Is(k, "("))
+                    {
+                        k = SkipBalanced(k);
+                    }
+                }
+
+                var typeStart = k;
+                var angle = 0;
+                var e = k;
+                for (; e < close - 1; e++)
+                {
+                    var s = _t[e].Kind == RustTokenKind.Punct ? Text(e) : "";
+                    if (IsOpen(s))
+                    {
+                        e = SkipBalanced(e) - 1;
+                    }
+                    else if (s == "<")
+                    {
+                        angle++;
+                    }
+                    else if (s == ">")
+                    {
+                        angle--;
+                    }
+                    else if (s == "," && angle <= 0)
+                    {
+                        break;
+                    }
+                }
+
+                if (e > typeStart)
+                {
+                    // The field has no name token; the type is the definition range.
+                    var name = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var fd = Descriptor(parent.Descriptors, new MonikerDescriptor(name, Suffix.Term));
+                    file.Occurrences.Add(new(_t[typeStart].Start, _t[e - 1].End, fd.Symbol, true, (_t[start].Start, _t[e - 1].End)));
+                    file.Symbols.Add(new SymbolInformation
+                    {
+                        Symbol = fd.Symbol,
+                        Kind = Kind.Field,
+                        DisplayName = name,
+                        SignatureDocumentation = new Signature { Language = "rust", Text = SigText(sigStart, e) },
+                    });
+                    file.TypeRanges[fd.Symbol] = (typeStart, e);
+                    index++;
+                }
+
+                k = e + 1;
+            }
         }
 
         /// <summary>Parses <c>{ a: T, b: U }</c> at <paramref name="open"/>; defines fields under <paramref name="parent"/>.</summary>
@@ -788,6 +949,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 {
                     var name = Text(nameTok);
                     var fd = Descriptor(parent.Descriptors, new MonikerDescriptor(name, Suffix.Term));
+                    file.TypeRanges[fd.Symbol] = (typeStart, e);
                     EndDef(fd, nameTok, Kind.Field, start, e, docs, SigText(sigStart, e), name);
                 }
 
@@ -808,7 +970,8 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
             var name = Text(nameTok);
             var def = BeginDef(ctx, name, Suffix.Type);
-            _i = FindHeaderEnd(SkipGenerics(nameTok + 1));
+            var (enGenerics, afterEnGenerics) = DeclareGenerics(nameTok + 1, def.Symbol, itemStart);
+            _i = FindHeaderEnd(afterEnGenerics);
             var headerEnd = _i;
             if (Is(_i, "{"))
             {
@@ -843,6 +1006,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                     k++;
                     if (Is(k, "("))
                     {
+                        ParseTupleFields(vd, k);
                         k = SkipBalanced(k);
                     }
                     else if (Is(k, "{"))
@@ -869,6 +1033,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 _i++;
             }
 
+            if (enGenerics is not null)
+            {
+                enGenerics.End = _i;
+            }
+
             EndDef(def, nameTok, Kind.Enum, itemStart, _i, docs, SigText(sigStart, headerEnd), name);
             RegisterItem(name, def.Symbol, false);
         }
@@ -884,11 +1053,13 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
             var name = Text(nameTok);
             var def = BeginDef(ctx, name, Suffix.Type);
-            _i = FindHeaderEnd(SkipGenerics(nameTok + 1));
+            var (trGenerics, afterTrGenerics) = DeclareGenerics(nameTok + 1, def.Symbol, itemStart);
+            _i = FindHeaderEnd(afterTrGenerics);
             var headerEnd = _i;
             if (Is(_i, "{"))
             {
                 var close = SkipBalanced(_i);
+                file.TraitRanges.Add((itemStart, close, def.Symbol));
                 var inner = new ScanContext(def.Descriptors, ctx.ModulePrefix, ctx.Dir, AssocKind.Trait);
                 _i++;
                 ParseItems(inner, close - 1, []);
@@ -899,6 +1070,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 _i++;
             }
 
+            if (trGenerics is not null)
+            {
+                trGenerics.End = _i;
+            }
+
             EndDef(def, nameTok, Kind.Trait, itemStart, _i, docs, SigText(sigStart, headerEnd), name);
             RegisterItem(name, def.Symbol, false);
         }
@@ -906,6 +1082,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
         private void ParseImpl(ScanContext ctx, int itemStart, int sigStart, List<string> docs)
         {
             var implTok = _i;
+            var implGenericsTok = _i + 1;
             var k = SkipGenerics(_i + 1);
             if (Is(k, "!"))
             {
@@ -942,6 +1119,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             var headerEnd = k;
             var selfText = forTok >= 0 ? TypeText(forTok + 1, headerEnd) : TypeText(headerStart, headerEnd);
             var traitText = forTok >= 0 ? TypeText(headerStart, forTok) : null;
+            if (traitText is not null && RustStd.DefaultSelfArgTraits.Contains(traitText))
+            {
+                traitText += "<Self>"; // rust-analyzer displays the defaulted `Rhs = Self` parameter
+            }
+
             List<MonikerDescriptor> more = [new("impl", Suffix.Type), new(selfText, Suffix.TypeParameter)];
             if (traitText is not null)
             {
@@ -949,10 +1131,15 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             }
 
             var def = Descriptor(ctx.Prefix, [.. more]);
+            var (implGenerics, _) = DeclareGenerics(implGenericsTok, def.Symbol, itemStart);
             _i = FindHeaderEnd(headerEnd);
             if (Is(_i, "{"))
             {
                 var close = SkipBalanced(_i);
+                file.ImplRanges.Add(new ImplRange(
+                    itemStart, close, def.Symbol,
+                    forTok >= 0 ? forTok + 1 : headerStart, headerEnd,
+                    forTok >= 0 ? headerStart : -1, forTok >= 0 ? forTok : -1));
                 var inner = new ScanContext(def.Descriptors, ctx.ModulePrefix, ctx.Dir, AssocKind.Impl);
                 _i++;
                 ParseItems(inner, close - 1, []);
@@ -961,6 +1148,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             else
             {
                 _i++;
+            }
+
+            if (implGenerics is not null)
+            {
+                implGenerics.End = _i;
             }
 
             EndDef(def, implTok, Kind.TypeAlias, itemStart, _i, docs, SigText(sigStart, headerEnd), selfText);
@@ -992,6 +1184,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
             sigEnd = e;
             _i = e;
+            if (Is(k + 1, ":"))
+            {
+                file.TypeRanges[def.Symbol] = (k + 2, e);
+            }
+
             SkipToSemicolon();
             EndDef(def, k, kw == "const" ? Kind.Constant : Kind.StaticVariable, itemStart, _i, docs, SigText(sigStart, sigEnd), name);
             if (ctx.Assoc == AssocKind.None)
@@ -1011,10 +1208,26 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
             var name = Text(nameTok);
             var def = BeginDef(ctx, name, Suffix.Type);
-            var e = SkipGenerics(nameTok + 1);
+            var (taGenerics, e) = DeclareGenerics(nameTok + 1, def.Symbol, itemStart);
             var sigEnd = e;
             _i = e;
+            if (Is(e, "="))
+            {
+                var semi = e + 1;
+                while (semi < _t.Count && !Is(semi, ";"))
+                {
+                    semi = _t[semi].Kind == RustTokenKind.Punct && IsOpen(Text(semi)) ? SkipBalanced(semi) : semi + 1;
+                }
+
+                file.TypeRanges[def.Symbol] = (e + 1, semi);
+            }
+
             SkipToSemicolon();
+            if (taGenerics is not null)
+            {
+                taGenerics.End = _i;
+            }
+
             EndDef(def, nameTok, ctx.Assoc == AssocKind.None ? Kind.TypeAlias : Kind.AssociatedType, itemStart, _i, docs, SigText(sigStart, sigEnd), name);
             if (ctx.Assoc == AssocKind.None)
             {
@@ -1105,6 +1318,8 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 List<(int Depth, List<int> Bindings)> pending = [];
                 HashSet<int> skip = [];
                 var depth = 0;
+                List<(string Name, string Symbol)>? blockBindings = null;
+                var blockDepth = 0;
                 var itemCtx = new ScanContext(modulePrefix, modulePrefix, dir, AssocKind.None);
                 for (var i = open; i < end; i++)
                 {
@@ -1116,6 +1331,82 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                         {
                             depth++;
                             scopes.Add([]);
+                            if (blockBindings is not null && depth - 1 == blockDepth)
+                            {
+                                scopes[^1].AddRange(blockBindings);
+                                blockBindings = null;
+                            }
+                        }
+                        else if (p == "|" && IsClosureStart(i, open))
+                        {
+                            var j = i + 1;
+                            var d = 0;
+                            while (j < end)
+                            {
+                                var q = s._t[j].Kind == RustTokenKind.Punct ? s.Text(j) : "";
+                                if (IsOpenP(q) || q == "<")
+                                {
+                                    d++;
+                                }
+                                else if (IsCloseP(q) || q == ">")
+                                {
+                                    d--;
+                                }
+                                else if (q == "|" && d <= 0)
+                                {
+                                    break;
+                                }
+
+                                j++;
+                            }
+
+                            var partStart = i + 1;
+                            var pd = 0;
+                            for (var k = i + 1; k <= j; k++)
+                            {
+                                var q = s._t[k].Kind == RustTokenKind.Punct ? s.Text(k) : "";
+                                if (IsOpenP(q) || q == "<")
+                                {
+                                    pd++;
+                                }
+                                else if (IsCloseP(q) || q == ">")
+                                {
+                                    pd--;
+                                }
+
+                                if (k == j || (q == "," && pd == 0))
+                                {
+                                    var colon = -1;
+                                    var cd = 0;
+                                    for (var c = partStart; c < k; c++)
+                                    {
+                                        var cq = s._t[c].Kind == RustTokenKind.Punct ? s.Text(c) : "";
+                                        if (IsOpenP(cq))
+                                        {
+                                            cd++;
+                                        }
+                                        else if (IsCloseP(cq))
+                                        {
+                                            cd--;
+                                        }
+                                        else if (cq == ":" && cd == 0)
+                                        {
+                                            colon = c;
+                                            break;
+                                        }
+                                    }
+
+                                    foreach (var b in s.ExtractBindings(partStart, colon < 0 ? k : colon))
+                                    {
+                                        var n = s.Text(b);
+                                        scopes[^1].Add((n, s.DeclareLocal(b, n, Kind.Parameter, enclosing)));
+                                    }
+
+                                    partStart = k + 1;
+                                }
+                            }
+
+                            i = j;
                         }
                         else if (p is "(" or "[")
                         {
@@ -1205,7 +1496,58 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                             skip.Add(b);
                         }
 
-                        pending.Add((depth, bindings));
+                        if (s.Is(i - 1, "if") || s.Is(i - 1, "while") || s.Is(i - 1, "&"))
+                        {
+                            // `if let` / `while let`: bindings are visible in the following block only.
+                            blockBindings = [];
+                            blockDepth = depth;
+                            foreach (var b in bindings)
+                            {
+                                var n = s.Text(b);
+                                blockBindings.Add((n, s.DeclareLocal(b, n, Kind.Variable, enclosing)));
+                            }
+                        }
+                        else
+                        {
+                            pending.Add((depth, bindings));
+                        }
+
+                        continue;
+                    }
+
+                    if (text == "for" && !s.Is(i + 1, "<") && !s.Is(i - 1, ">"))
+                    {
+                        var j = i + 1;
+                        var d = 0;
+                        while (j < end)
+                        {
+                            var q = s._t[j].Kind == RustTokenKind.Punct ? s.Text(j) : "";
+                            if (IsOpenP(q))
+                            {
+                                d++;
+                            }
+                            else if (IsCloseP(q))
+                            {
+                                d--;
+                            }
+
+                            if (d < 0 || (d == 0 && s.Is(j, "in")))
+                            {
+                                break;
+                            }
+
+                            j++;
+                        }
+
+                        blockBindings = [];
+                        blockDepth = depth;
+                        foreach (var b in s.ExtractBindings(i + 1, j))
+                        {
+                            var n = s.Text(b);
+                            blockBindings.Add((n, s.DeclareLocal(b, n, Kind.Variable, enclosing)));
+                        }
+
+                        i = j;
                         continue;
                     }
 
@@ -1230,6 +1572,23 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                         }
                     }
                 }
+            }
+
+            private bool IsClosureStart(int i, int open)
+            {
+                if (i <= open)
+                {
+                    return false;
+                }
+
+                var prev = s._t[i - 1];
+                var pt = s.Text(i - 1);
+                if (prev.Kind == RustTokenKind.Ident)
+                {
+                    return pt is "move" or "return" or "in" or "else" or "break";
+                }
+
+                return prev.Kind == RustTokenKind.Punct && pt is "(" or "," or "=" or "{" or ";" or "=>" or "[" or ":" or "!";
             }
 
             private int RunItem(int i, ScanContext itemCtx)

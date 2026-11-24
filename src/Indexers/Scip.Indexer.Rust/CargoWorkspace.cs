@@ -7,10 +7,16 @@ namespace Scip.Indexer.Rust;
 public sealed record CargoTarget(string Name, string Kind, string SourcePath);
 
 /// <summary>A workspace package.</summary>
-public sealed record CargoPackage(string Name, string? Version, string ManifestPath, IReadOnlyList<CargoTarget> Targets)
+public sealed record CargoPackage(string Name, string? Version, string ManifestPath, IReadOnlyList<CargoTarget> Targets,
+    IReadOnlyList<CargoDependency>? Dependencies = null)
 {
     public PackageInformation Information => new(Name, Version);
+
+    public IReadOnlyList<CargoDependency> Deps => Dependencies ?? [];
 }
+
+/// <summary>A dependency edge: <paramref name="CrateName"/> is the name used in code (<c>-</c> replaced by <c>_</c>).</summary>
+public sealed record CargoDependency(string CrateName, string PackageName, string? Path);
 
 /// <summary>
 /// Native package metadata handling: a minimal <c>Cargo.toml</c> reader (package name/version, workspace members,
@@ -19,7 +25,69 @@ public sealed record CargoPackage(string Name, string? Version, string ManifestP
 public static partial class CargoWorkspace
 {
     /// <summary>Reads <c>Cargo.toml</c> natively (no cargo process) and auto-discovers targets like cargo does.</summary>
-    public static IReadOnlyList<CargoPackage> Load(string root) => ReadManifests(root);
+    public static IReadOnlyList<CargoPackage> Load(string root) => AddPathDependencies(ReadManifests(root));
+
+    /// <summary>Adds packages reachable through <c>path = "..."</c> dependencies that are not workspace members.</summary>
+    private static List<CargoPackage> AddPathDependencies(IReadOnlyList<CargoPackage> members)
+    {
+        List<CargoPackage> all = [.. members];
+        HashSet<string> seen = [.. all.Select(p => Path.GetFullPath(p.ManifestPath))];
+        for (var i = 0; i < all.Count; i++)
+        {
+            foreach (var dep in all[i].Deps)
+            {
+                if (dep.Path is null)
+                {
+                    continue;
+                }
+
+                var manifest = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(all[i].ManifestPath)!, dep.Path, "Cargo.toml"));
+                if (File.Exists(manifest) && seen.Add(manifest) && ReadPackage(manifest, File.ReadAllText(manifest)) is { } package)
+                {
+                    all.Add(package);
+                }
+            }
+        }
+
+        return all;
+    }
+
+    private static List<CargoDependency> ReadDependencies(string toml)
+    {
+        List<CargoDependency> result = [];
+        foreach (var section in new[] { "dependencies", "dev-dependencies", "build-dependencies" })
+        {
+            foreach (var line in Section(toml, section).Split('\n'))
+            {
+                var m = Regex.Match(line, @"^\s*([A-Za-z0-9_\-]+)\s*=\s*(.*)$");
+                if (!m.Success)
+                {
+                    continue;
+                }
+
+                var key = m.Groups[1].Value;
+                var rhs = m.Groups[2].Value;
+                var path = Value(rhs, "path", inline: true);
+                var package = Value(rhs, "package", inline: true) ?? key;
+                result.Add(new(key.Replace('-', '_'), package, path));
+            }
+
+            // [dependencies.foo] tables
+            foreach (Match t in Regex.Matches(toml, $@"^\[{Regex.Escape(section)}\.([A-Za-z0-9_\-]+)\]\s*$", RegexOptions.Multiline))
+            {
+                var body = Section(toml, $"{section}.{t.Groups[1].Value}");
+                result.Add(new(t.Groups[1].Value.Replace('-', '_'), Value(body, "package") ?? t.Groups[1].Value, Value(body, "path")));
+            }
+        }
+
+        return result;
+    }
+
+    private static string? Value(string text, string key, bool inline)
+    {
+        var m = Regex.Match(text, $@"\b{Regex.Escape(key)}\s*=\s*""([^""]*)""");
+        return m.Success ? m.Groups[1].Value : null;
+    }
 
     /// <summary>Fallback without cargo: reads <c>Cargo.toml</c> (and workspace members) and auto-discovers targets.</summary>
     public static IReadOnlyList<CargoPackage> ReadManifests(string root)
@@ -140,7 +208,7 @@ public static partial class CargoWorkspace
         }
 
         // explicit [[bin]] entries may also be auto-discovered; keep the first of each source file
-        return new(name, version, manifestPath, [.. targets.DistinctBy(t => (t.Kind, t.SourcePath))]);
+        return new(name, version, manifestPath, [.. targets.DistinctBy(t => (t.Kind, t.SourcePath))], ReadDependencies(toml));
     }
 
     private static bool IsProcMacro(string libSection) =>
