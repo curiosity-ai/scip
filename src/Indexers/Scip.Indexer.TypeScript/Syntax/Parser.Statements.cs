@@ -493,6 +493,13 @@ public sealed partial class Parser
             {
                 var e = Begin(SK.ExpressionWithTypeArguments);
                 e.Expression = ParseLeftHandSide(noCalls: false);
+                if (e.Expression is { Kind: SK.ExpressionWithTypeArguments } instantiation)
+                {
+                    // `extends Base<X>,` parses as an instantiation expression; hoist it into this node.
+                    e.Expression = instantiation.Expression;
+                    e.TypeArguments.AddRange(instantiation.TypeArguments);
+                }
+
                 if (IsP("<") || IsP("<<")) { ParseTypeArguments(e); }
                 h.Elements.Add(Fin(e));
             }

@@ -52,15 +52,26 @@ properties; object binding patterns; `.d.ts` files; tsconfig `extends`; project 
 
 Not covered / differs from upstream:
 
-* **No real type inference.** Members reached through inferred types (generic instantiation such as `.map<T>(...)`,
-  callback parameter inference, `await`/`Promise<T>` results, union narrowing, control flow, mapped/conditional types)
-  produce no occurrence. Object literals whose contextual type comes from such inference get `name0:` meta symbols
-  instead of references to the interface property (9 snapshot documents differ for this reason).
-* **No `lib.d.ts` / global scripts.** `console`, `Array#map`, `Math`, `Promise`, DOM etc. are not resolved, so upstream's
-  references into `scip-typescript npm typescript <ver> lib/...` are absent. Cross-file global declarations of non-module
-  scripts are not shared.
-* **Signature documentation text is approximate** (`signature_documentation`): types come from annotations or simple
-  literal inference, not the checker (`any` otherwise). Escaping of unusual literal types differs.
+* **A partial type model, not the checker.** `Checker` resolves members through *containers*: a declaration (class,
+  interface, type literal, object literal, namespace, mapped type, function) plus an environment binding its type
+  parameters and `this`. That covers type arguments and inheritance (`class A extends Base<X>`), call and `new` results
+  (construct/call signatures, simple generic inference from arguments and from the contextual return type), `await`,
+  array/index/element types, JSDoc `@type`/`@param` in JavaScript, contextual typing of callbacks and object literals
+  (incl. discriminated unions), homomorphic mapped types (`Partial`, `Pick`, `Omit`, ...), `instanceof`/`typeof`/
+  `Array.isArray` narrowing, CommonJS `require`/`module.exports` aliases, `package.json` `exports` (incl. self reference
+  and `customConditions`), `paths`/`baseUrl` and module augmentations. It does not model control flow beyond those
+  guards, overload resolution, conditional-type evaluation (both branches are kept) or full generic inference.
+* **Built-in globals** come from the embedded `lib.*.d.ts` files (copied from `typescript` 6.0.3, see `Lib/NOTICE.txt`),
+  selected from `lib`/`target`/`noLib` exactly like the compiler's default library, and are named
+  `scip-typescript npm typescript 6.0.3 lib/`lib.es5.d.ts`/Array#`. Cross-file globals of non-module *project* scripts
+  are still not shared.
+* **Hover documentation** is `documentation = ["```ts\n<signature>\n```", <jsdoc>]` like the published scip-typescript
+  (the checked-in reference additionally fills `signature_documentation`; both are written). Type text is derived from
+  annotations, literals and the container model; it is `any` when the type cannot be named (about half of the
+  signature blocks equal the checker's text on zod).
+* Files are indexed in `ts.createProgram` order (roots, dependencies first) so that anonymous type literals and
+  object-literal property counters (`typeLiteral12`, `name3:`) are numbered like upstream; expando members of JS
+  (`this.x = ...`, `exports.x = ...`) are not declared, so references to them are missing.
 * **JSX**: parsed, tag names of components resolve, but intrinsic elements (`<p>`) and attribute names do not (upstream
   maps them to `JSX.IntrinsicElements` / props types). The `react` snapshot therefore does not match.
 * **Svelte** (`svelte2tsx`) is not supported; **JS prototype-assignment members** (`C.prototype.x = ...`,

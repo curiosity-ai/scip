@@ -5,6 +5,8 @@ namespace Scip.Indexer.TypeScript.Tests;
 /// <summary>Tests that need neither Node.js nor npm: the indexer is pure C#.</summary>
 public class NativeIndexerTests
 {
+    private static readonly string[] ExpectedModuleFiles = ["src/index.cts", "src/index.mts", "src/index.ts"];
+
     private static string NewTempDirectory()
     {
         var dir = Path.Combine(Path.GetTempPath(), "scip-ts-native-" + Guid.NewGuid().ToString("N"));
@@ -65,6 +67,154 @@ public class NativeIndexerTests
         {
             Directory.Delete(dir, recursive: true);
         }
+    }
+
+    private static async Task<(Index Index, string Log)> IndexFilesAsync(Dictionary<string, string> files)
+    {
+        var dir = NewTempDirectory();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(dir, "package.json"), """{"name":"demo","version":"1.0.0"}""");
+            foreach (var (name, text) in files)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(dir, name))!);
+                await File.WriteAllTextAsync(Path.Combine(dir, name), text);
+            }
+
+            var (exit, index, log) = await IndexAsync(dir);
+            await Assert.That(exit).IsEqualTo(0).Because(log);
+            return (index, log);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static List<(string Symbol, int Roles)> OccurrencesOf(Index index, string path) =>
+        index.Documents.Single(d => d.RelativePath == path).Occurrences.Select(o => (o.Symbol, o.SymbolRoles)).ToList();
+
+    [Test]
+    public async Task HoverDocumentationHasFencedSignatureThenJsDoc()
+    {
+        var (index, _) = await IndexFilesAsync(new()
+        {
+            ["a.ts"] = """
+                /** Adds numbers. */
+                export function add(a: number, b: number): number { return a + b }
+                export class Box { /** the value */ value: string = "" }
+                """,
+        });
+        var a = index.Documents.Single();
+        var add = a.Symbols.Single(s => s.Symbol.EndsWith("`a.ts`/add().", StringComparison.Ordinal));
+        await Assert.That(add.Documentation[0]).IsEqualTo("```ts\nfunction add(a: number, b: number): number\n```");
+        await Assert.That(add.Documentation[1]).IsEqualTo("Adds numbers.");
+        var value = a.Symbols.Single(s => s.Symbol.EndsWith("Box#value.", StringComparison.Ordinal));
+        await Assert.That(value.Documentation[0]).IsEqualTo("```ts\n(property) value: string\n```");
+        await Assert.That(add.SignatureDocumentation.Text).IsEqualTo("function add(a: number, b: number): number");
+    }
+
+    [Test]
+    public async Task ResolvesLibMembersThroughInferredTypes()
+    {
+        var (index, _) = await IndexFilesAsync(new()
+        {
+            ["a.ts"] = """
+                const words = "a b".split(" ");
+                const n = words.map((w) => w.length).length;
+                const m = new Map<string, number>();
+                m.get("a")?.toFixed();
+                async function f() { const r = await Promise.resolve("x"); return r.trim(); }
+                """,
+        });
+        var symbols = OccurrencesOf(index, "a.ts").Select(o => o.Symbol).ToList();
+        string[] expected =
+        [
+            "String#split().", "Array#map().", "String#length.", "Array#length.", "Map#get().", "Number#toFixed().",
+            "PromiseConstructor#resolve().", "String#trim().",
+        ];
+        foreach (var suffix in expected)
+        {
+            await Assert.That(symbols.Any(s => s.StartsWith("scip-typescript npm typescript ", StringComparison.Ordinal) && s.EndsWith(suffix, StringComparison.Ordinal))).IsTrue().Because(suffix);
+        }
+    }
+
+    [Test]
+    public async Task ObjectLiteralPropertiesOfDeclaredTypesAreReferences()
+    {
+        var (index, _) = await IndexFilesAsync(new()
+        {
+            ["a.ts"] = """
+                interface Options { name: string; size?: number }
+                type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+                declare function make(o: Options): void;
+                make({ name: "x", size: 1 });
+                const s: Shape = { kind: "square", side: 2 };
+                const free = { name: "y", other: 1 };
+                const dict: Record<string, Options> = { a: { name: "z" } };
+                """,
+        });
+        var occurrences = index.Documents.Single().Occurrences.ToList();
+
+        bool Has(int line, string symbolSuffix, bool definition) =>
+            occurrences.Any(o => o.SingleLineRange.Line == line && o.Symbol.EndsWith(symbolSuffix, StringComparison.Ordinal) && ((o.SymbolRoles & 1) != 0) == definition);
+
+        await Assert.That(Has(3, "Options#name.", definition: false)).IsTrue();
+        await Assert.That(Has(3, "Options#size.", definition: false)).IsTrue();
+        // `kind` and `side` are members of the union alternatives (anonymous type literals are local symbols): references
+        await Assert.That(occurrences.Count(o => o.SingleLineRange.Line == 4 && o.Symbol.StartsWith("local ", StringComparison.Ordinal) && (o.SymbolRoles & 1) == 0)).IsEqualTo(2);
+        // an object literal without a contextual type declares its own properties
+        await Assert.That(Has(5, "name0:", definition: true)).IsTrue();
+        // values of Record<string, Options> are contextually typed by Options; the key itself is a new property
+        await Assert.That(Has(6, "Options#name.", definition: false)).IsTrue();
+        await Assert.That(Has(6, "a0:", definition: true)).IsTrue();
+    }
+
+    [Test]
+    public async Task CommonJsRequireAliasesAndExports()
+    {
+        var (index, _) = await IndexFilesAsync(new()
+        {
+            ["tsconfig.json"] = """{"compilerOptions":{"allowJs":true}}""",
+            ["lib/util.js"] = "exports.helper = function () { return 1 }\n",
+            ["main.js"] = "var util = require('./lib/util')\nutil.helper()\n",
+        });
+        var main = OccurrencesOf(index, "main.js");
+        // the definition keeps the global symbol; references resolve to the required module (here: a file symbol)
+        await Assert.That(main.Any(o => o.Symbol.EndsWith("`main.js`/util.", StringComparison.Ordinal) && (o.Roles & 1) != 0)).IsTrue();
+        await Assert.That(main.Any(o => o.Symbol.EndsWith("`util.js`/", StringComparison.Ordinal) && (o.Roles & 1) == 0)).IsTrue();
+    }
+
+    [Test]
+    public async Task InheritedGenericMembersResolveThroughTypeArguments()
+    {
+        var (index, _) = await IndexFilesAsync(new()
+        {
+            ["a.ts"] = """
+                interface Item { id: number }
+                class Base<T> { items: T[] = []; first(): T { return this.items[0]! } }
+                class Derived extends Base<Item> {}
+                const d = new Derived();
+                d.first().id;
+                d.items[0]!.id;
+                """,
+        });
+        var symbols = OccurrencesOf(index, "a.ts").Where(o => (o.Roles & 1) == 0).Select(o => o.Symbol).ToList();
+        await Assert.That(symbols.Count(s => s.EndsWith("Item#id.", StringComparison.Ordinal))).IsEqualTo(2);
+        await Assert.That(symbols.Any(s => s.EndsWith("Base#first().", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task IndexesCtsAndMtsFilesNextToTsFiles()
+    {
+        var (index, _) = await IndexFilesAsync(new()
+        {
+            ["src/index.ts"] = "export const a = 1\n",
+            ["src/index.cts"] = "export const b = 2\n",
+            ["src/index.mts"] = "export const c = 3\n",
+        });
+        var paths = index.Documents.Select(d => d.RelativePath).OrderBy(p => p, StringComparer.Ordinal).ToList();
+        await Assert.That(paths).IsEquivalentTo(ExpectedModuleFiles);
     }
 
     [Test]

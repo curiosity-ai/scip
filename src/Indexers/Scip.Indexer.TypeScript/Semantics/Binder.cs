@@ -203,12 +203,22 @@ public sealed class Binder
                 case SK.ExportAssignment:
                     Add(st.Has(Mods.Default) ? "default" : "export=", st);
                     break;
+                case SK.ExpressionStatement when File.IsJavaScript && st.Expression is { Kind: SK.BinaryExpression, Text: "=" } assignment:
+                    // CommonJS: `module.exports = x` and `exports.name = x` / `module.exports.name = x`.
+                    if (IsModuleExports(assignment.Left!)) { Add("export=", assignment); }
+                    else if (assignment.Left is { Kind: SK.PropertyAccessExpression } target && (IsExportsObject(target.Expression!) || IsModuleExports(target.Expression!))) { Add(target.Name!.Text, assignment); }
+                    break;
                 case SK.ExportDeclaration:
                     exportDecls.Add(st);
                     break;
             }
         }
     }
+
+    private static bool IsExportsObject(Node n) => n is { Kind: SK.Identifier, Text: "exports" };
+
+    private static bool IsModuleExports(Node n) =>
+        n is { Kind: SK.PropertyAccessExpression, Name.Text: "exports", Expression: { Kind: SK.Identifier, Text: "module" } };
 
     private static void AddPattern(Node? name, Node decl, Action<string, Node> add)
     {
@@ -245,10 +255,13 @@ public sealed class Binder
         {
             if (_scopeOf.TryGetValue(n, out var scope) && scope.Table.TryGetValue(name, out var decls) && HasMeaning(decls, meaning))
             {
+                // Top-level lib declarations merge across the lib files (`interface ObjectConstructor` in es5 and es2015.core).
+                if (File.IsLib && ReferenceEquals(scope, FileScope) && File.Libs?.Lookup(name, meaning) is { } merged) { return merged; }
                 return decls;
             }
         }
 
-        return null;
+        // Script files and the lib declare globals; module files only see the lib.
+        return (File.IsLib ? File.Libs : Program.Libs)?.Lookup(name, meaning);
     }
 }

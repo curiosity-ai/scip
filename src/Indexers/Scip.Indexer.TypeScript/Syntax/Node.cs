@@ -48,6 +48,9 @@ public sealed class Node(SK kind, int pos)
 
     public Node? Parent { get; set; }
 
+    /// <summary>True for nodes parsed out of JSDoc type expressions (not part of the file's syntax tree).</summary>
+    public bool Synthetic { get; set; }
+
     public TsSourceFile? File { get; set; }
 
     /// <summary>Identifier name, literal value, operator text, ...</summary>
@@ -148,6 +151,9 @@ public sealed class TsSourceFile
     public Node Root { get; set; } = null!;
     public bool IsExternalModule { get; set; }
     public bool IsJavaScript { get; init; }
+    /// <summary>True for the embedded <c>lib.*.d.ts</c> files.</summary>
+    public bool IsLib { get; set; }
+    public Semantics.LibSet? Libs { get; set; }
     /// <summary>Syntax errors the parser recovered from (position, message).</summary>
     public List<(int Position, string Message)> Diagnostics { get; } = [];
     private int[]? _lineStarts;

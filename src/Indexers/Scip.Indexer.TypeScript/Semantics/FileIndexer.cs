@@ -98,6 +98,7 @@ public sealed class FileIndexer(
             Symbol = symbol.Value,
             SignatureDocumentation = SignatureDocumentation($"module \"{moduleName}\""),
             Kind = SymbolInformation.Types.Kind.File,
+            Documentation = { FencedSignature($"module \"{moduleName}\"") },
         });
     }
 
@@ -192,18 +193,15 @@ public sealed class FileIndexer(
             return null;
         }
 
-        var containers = checker.ContextualContainers(element.Parent);
-        if (containers.Count == 0) { return null; }
         var name = Binder.NameText(node);
-        var found = name is null ? null : checker.MemberDecls(containers, name);
+        var found = name is null ? null : checker.ContextualPropertyDecls(element.Parent, name);
         return found is null || found.Contains(element) ? null : found;
     }
 
     private void HandleObjectBindingPattern(Node node, (int, int, int, int) range)
     {
         if (!(node.Kind == SK.Identifier && node.Parent!.Kind == SK.BindingElement && node.Parent.Parent!.Kind == SK.ObjectBindingPattern)) { return; }
-        var owner = node.Parent.Parent.Parent!;
-        var containers = owner.Kind == SK.BindingElement ? [] : owner.Type is not null ? checker.ContainersOfExpression(MakeTypeProbe(owner), 0) : owner.Initializer is not null ? checker.ContainersOfExpression(owner.Initializer, 0) : [];
+        var containers = checker.ContainersOfBindingParent(node.Parent, 0);
         var members = containers.Count == 0 ? null : checker.MemberDecls(containers, node.Text);
         foreach (var declaration in members ?? [])
         {
@@ -211,13 +209,6 @@ public sealed class FileIndexer(
             if (scipSymbol.IsEmpty) { continue; }
             PushOccurrence(range, scipSymbol.Value, 0, null, null);
         }
-    }
-
-    private static Node MakeTypeProbe(Node owner)
-    {
-        // `const { a }: T = ...`: wrap the annotation as an `as T` expression so the checker resolves T's members.
-        var probe = new Node(SK.AsExpression, owner.Start) { Type = owner.Type, File = owner.File, Parent = owner };
-        return probe;
     }
 
     private void HandleShorthandPropertyValue(Node declaration, (int, int, int, int) range)
@@ -245,17 +236,23 @@ public sealed class FileIndexer(
 
     private void AddSymbolInformation(Node node, List<Node> symbolDecls, Node declaration, ScipSymbol symbol)
     {
+        var signatureText = SanitizeDocumentation(SignatureForDocumentation(node, symbolDecls, declaration));
         var info = new SymbolInformation
         {
             Symbol = symbol.Value,
-            SignatureDocumentation = SignatureDocumentation(SanitizeDocumentation(SignatureForDocumentation(node, symbolDecls, declaration))),
+            SignatureDocumentation = SignatureDocumentation(signatureText),
             Kind = SymbolKindOf(declaration, symbolDecls),
         };
+        // Hover markdown as written by the published scip-typescript releases: a ```ts block, then the JSDoc text.
+        if (signatureText.Length > 0) { info.Documentation.Add(FencedSignature(signatureText)); }
         var doc = DocumentationOf(declaration);
         if (doc.Length > 0) { info.Documentation.Add(doc); }
         info.Relationships.AddRange(Relationships(declaration, symbol));
         PushSymbolInformation(info);
     }
+
+    /// <summary>The markdown code fence that hover consumers read from <c>documentation[0]</c>.</summary>
+    public static string FencedSignature(string text) => "```ts\n" + text + "\n```";
 
     private static Signature? SignatureDocumentation(string text) =>
         text.Length == 0 ? null : new Signature { Language = "typescript", Text = text };
@@ -419,6 +416,7 @@ public sealed class FileIndexer(
         if (node.Kind == SK.Block) { return ScipSymbol.Empty; }
         if (node.Kind == SK.TsSourceFile)
         {
+            if (node.File!.IsLib) { return Cached(node, LibStore.SymbolOf(node.File)); }
             var package = packages.Symbol(node.File!.FileName);
             return Cached(node, package.IsEmpty ? ScipSymbol.AnonymousPackage() : package);
         }
@@ -432,6 +430,7 @@ public sealed class FileIndexer(
             return Cached(node, ScipSymbol.Global(ScipSymbolOf(node.File!.Root), Suffix.Meta, $"{name}{c}"));
         }
 
+        if (node.Synthetic) { return NewLocalSymbol(node); }
         var owner = ScipSymbolOf(node.Parent!);
         if (owner.IsEmpty || owner.IsLocal) { return NewLocalSymbol(node); }
         if (IsAnonymousContainerOfSymbols(node)) { return Cached(node, ScipSymbolOf(node.Parent!)); }
@@ -503,7 +502,9 @@ public sealed class FileIndexer(
     // ------------------------------------------------------------------ signature documentation (approximate types)
     private string SignatureForDocumentation(Node node, List<Node> symbolDecls, Node declaration)
     {
-        var first = symbolDecls.Count > 0 ? symbolDecls[0] : declaration;
+        // The script element kind comes from the merged symbol's flags: type alias, class, interface, enum, ... before variable.
+        var merged = declaration.Parent is not null && node.Kind != SK.Constructor ? checker.MergedDeclarations(declaration) : symbolDecls;
+        var first = merged.Count > 0 ? merged.MinBy(KindPriority)! : declaration;
         var text = node.Kind == SK.Constructor ? "constructor" : node.GetText();
         string Type() => TypeText(declaration);
         string? Signature()
@@ -535,6 +536,21 @@ public sealed class FileIndexer(
 
         return text + ": " + Type();
     }
+
+    private static int KindPriority(Node d) => d.Kind switch
+    {
+        SK.TypeAliasDeclaration => 0,
+        SK.ClassDeclaration or SK.ClassExpression => 1,
+        SK.InterfaceDeclaration => 2,
+        SK.EnumDeclaration => 3,
+        SK.EnumMember => 4,
+        SK.MethodDeclaration or SK.MethodSignature => 5,
+        SK.GetAccessor => 6,
+        SK.SetAccessor => 7,
+        SK.Constructor => 8,
+        SK.FunctionDeclaration => 9,
+        _ => 10,
+    };
 
     private static string EnumValueSuffix(Node member)
     {
@@ -596,7 +612,7 @@ public sealed class FileIndexer(
                     return InferType(d.Initializer, isConst);
                 }
 
-                return "any";
+                return checker.PrintConts(checker.DeclConts(d, null, 0, asValue: true)) ?? "any";
             }
 
             case SK.PropertyAssignment: return d.Initializer is null ? "any" : InferType(d.Initializer, false);
@@ -617,7 +633,7 @@ public sealed class FileIndexer(
         SK.ArrowFunction or SK.FunctionExpression => SignatureText(e).Replace("): ", ") => ", StringComparison.Ordinal),
         SK.ParenthesizedExpression => InferType(e.Expression!, isConst),
         SK.AsExpression when e.Type is { Kind: not SK.KeywordType } => NormalizeType(e.Type.GetText()),
-        _ => "any",
+        _ => checker.PrintConts(checker.ValueConts(e, 0)) ?? "any",
     };
 
     // ------------------------------------------------------------------ kinds
