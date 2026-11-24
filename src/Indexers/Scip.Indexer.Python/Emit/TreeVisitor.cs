@@ -269,11 +269,161 @@ public sealed class TreeVisitor
             var decls = _eval.DeclarationsForName(_module, name);
             if (decls.Count > 0 && decls[0].Node is { } declNode && declNode.Parent?.Id == node.Id)
             {
-                EmitSymbolInformationOnce(declNode, GetScipSymbol(declNode), []);
+                EmitSymbolInformationOnce(declNode, GetScipSymbol(declNode), AssignmentDocumentation(node));
             }
         }
 
         return true;
+    }
+
+    /// <summary>Port of <c>TypeStubExtendedWriter.visitAssignment</c>: the full name of the assigned value's type.</summary>
+    private List<string> AssignmentDocumentation(AssignmentNode node)
+    {
+        var line = "";
+        var isTypeAlias = false;
+        if (IsTypeVarFactoryCall(node.Value))
+        {
+            // getFullNameOfType(TypeVar) is undefined and the TypeVar call is treated like a type alias.
+            line = "undefined";
+            isTypeAlias = true;
+        }
+        else if (ValueTypeFullName(node.Value) is { } full)
+        {
+            line = full;
+        }
+
+        if (line.Length == 0)
+        {
+            return [];
+        }
+
+        if (isTypeAlias)
+        {
+            line += " = " + ExpressionPrinter.Print(node.Value, _module.Text);
+        }
+
+        return ["```python\n" + line + "\n```"];
+    }
+
+    private bool IsTypeVarFactoryCall(Node value) =>
+        value is CallNode call &&
+        _eval.EvalExpression(_module, call.Left) is ExternalEntity { IsClass: true, Module: "typing" or "typing_extensions", Name: "TypeVar" or "TypeVarTuple" or "ParamSpec" or "NewType" };
+
+    private string SourceOf(Node n) =>
+        _module.Text[Math.Clamp(n.Start, 0, _module.Text.Length)..Math.Clamp(n.End, 0, _module.Text.Length)];
+
+    private string? ValueTypeFullName(Node value)
+    {
+        switch (value)
+        {
+            case StringListNode sl:
+            {
+                var prefix = sl.Strings.Count > 0 ? SourceOf(sl.Strings[0]).TakeWhile(char.IsLetter) : [];
+                return prefix.Any(c => c is 'b' or 'B') ? "builtins.bytes" : "builtins.str";
+            }
+
+            case NumberNode n:
+            {
+                var src = SourceOf(n);
+                if (src.EndsWith('j') || src.EndsWith('J'))
+                {
+                    return "builtins.complex";
+                }
+
+                var hex = src.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+                return !hex && (src.Contains('.') || src.Contains('e') || src.Contains('E')) ? "builtins.float" : "builtins.int";
+            }
+
+            case ConstantNode { Text: "True" or "False" }:
+                return "builtins.bool";
+            case SequenceNode { Kind: NodeKind.List }:
+                return "builtins.list";
+            case SequenceNode { Kind: NodeKind.Tuple }:
+                return "builtins.tuple";
+            case SequenceNode { Kind: NodeKind.Set }:
+                return "builtins.set";
+            case DictionaryNode:
+                return "builtins.dict";
+            case CallNode call:
+                switch (_eval.EvalExpression(_module, call.Left))
+                {
+                    case ClassEntity c:
+                        return c.Module.ModuleName + "." + QualifiedClassName(c.Node);
+                    case ExternalEntity { IsClass: true, Module: "builtins" } b:
+                        return "builtins." + b.Name;
+                    case null when IsUnknownExpression(call.Left):
+                        return "typing.Any";
+                }
+
+                return null;
+            case NameNode or MemberAccessNode or IndexNode when IsUnknownExpression(value):
+                return "typing.Any";
+        }
+
+        return null;
+    }
+
+    private static string QualifiedClassName(ClassNode cls)
+    {
+        var name = cls.Name.Value;
+        for (var cur = cls.Parent; cur is not null; cur = cur.Parent)
+        {
+            if (cur is ClassNode outer)
+            {
+                name = outer.Name.Value + "." + name;
+            }
+            else if (cur is FunctionNode)
+            {
+                return name;
+            }
+        }
+
+        return name;
+    }
+
+    /// <summary>True when the expression is rooted in an import that cannot be resolved (pyright evaluates it to Unknown).</summary>
+    private bool IsUnknownExpression(Node node, int depth = 0)
+    {
+        if (depth > 6)
+        {
+            return false;
+        }
+
+        switch (node)
+        {
+            case CallNode c:
+                return IsUnknownExpression(c.Left, depth + 1);
+            case MemberAccessNode m:
+                return IsUnknownExpression(m.Left, depth + 1);
+            case IndexNode i:
+                return IsUnknownExpression(i.Left, depth + 1);
+            case WrapperNode { Kind: NodeKind.Await, Expression: { } inner }:
+                return IsUnknownExpression(inner, depth + 1);
+            case NameNode n:
+            {
+                var decl = _eval.DeclarationsForName(_module, n).FirstOrDefault();
+                if (decl is { Kind: DeclKind.Variable, Node: NameNode { Parent: AssignmentNode a } } && a.Targets.Count == 1 && a.Targets[0] == decl.Node)
+                {
+                    // a local bound once to an Unknown value
+                    return IsUnknownExpression(a.Value, depth + 1);
+                }
+
+                if (decl is { Kind: DeclKind.Parameter, Node: ParameterNode { Annotation: null, Default: null, Category: ParamCategory.Simple, Parent: FunctionNode fn } prm })
+                {
+                    // an unannotated parameter without default is Unknown (except the implicit self/cls of a method)
+                    return !(fn.Parameters.Count > 0 && fn.Parameters[0] == prm && EnclosingClass(fn, false) is not null);
+                }
+
+                return decl?.Kind == DeclKind.Alias && decl.Node switch
+                {
+                    ImportAsNode ia => _state.Modules.Resolve(ia.Module, _module) is null,
+                    ImportFromAsNode { Parent: ImportFromNode f } => _state.Modules.Resolve(f.Module, _module) is null,
+                    _ => false,
+                };
+            }
+        }
+
+        return false;
     }
 
     // ------------------------------------------------------------------ functions
@@ -655,7 +805,9 @@ public sealed class TreeVisitor
         {
             var symbol = _names.Class(Stdlib, "builtins", name);
             Push(node, symbol);
-            EmitExternalSymbolInformation(symbol, []);
+            // A call node shows the constructor signature instead of the plain `(class)` header.
+            var isCall = node.Parent is CallNode c && c.Left == node;
+            EmitExternalSymbolInformation(symbol, isCall || name.StartsWith("__", StringComparison.Ordinal) ? [] : ["```python\n(class) " + name + "\n```"]);
         }
         else if (Hardcoded.OverloadedBuiltinFunctions.Contains(name))
         {
@@ -666,7 +818,12 @@ public sealed class TreeVisitor
         else
         {
             // typeshed declares these as plain functions; scip-python emits a fresh local symbol for each use.
-            Push(node, NextLocal());
+            var local = NextLocal();
+            Push(node, local);
+            if (BuiltinHovers.Functions.TryGetValue(name, out var hover))
+            {
+                EmitSymbolInformationOnce(node, local, ["```python\n" + hover + "\n```"]);
+            }
         }
     }
 
@@ -676,6 +833,15 @@ public sealed class TreeVisitor
         if (package is null)
         {
             Push(node, GetLocalForDeclaration(node));
+            return;
+        }
+
+        if (decl.ExternalModule is "typing" or "typing_extensions" && decl.Name is "overload" or "final" or "type_check_only")
+        {
+            // Functions that typeshed's builtins.pyi imports resolve through the builtins scope: a fresh local per use.
+            var local = NextLocal();
+            Push(node, local);
+            EmitSymbolInformationOnce(node, local, decl.Name == "overload" ? [.. BuiltinHovers.Overload] : []);
             return;
         }
 

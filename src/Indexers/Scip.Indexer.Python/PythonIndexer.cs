@@ -338,12 +338,12 @@ public sealed class PythonIndexer : IIndexer
                 continue;
             }
 
-            foreach (var d in info.Documentation)
+            // Overloads and redefinitions describe one symbol several times; consumers of the upstream index see the last
+            // description (the implementation), so keep that one rather than concatenating them.
+            if (info.Documentation.Count > 0)
             {
-                if (!first.Documentation.Contains(d))
-                {
-                    first.Documentation.Add(d);
-                }
+                first.Documentation.Clear();
+                first.Documentation.AddRange(info.Documentation);
             }
 
             foreach (var r in info.Relationships)
