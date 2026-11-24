@@ -1,0 +1,2 @@
+# The repository ignores tests/**/bin/; the composer fixture has a bin/ directory that must be tracked.
+!/testdata/composer/bin/
