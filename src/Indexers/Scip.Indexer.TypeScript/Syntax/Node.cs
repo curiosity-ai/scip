@@ -148,6 +148,8 @@ public sealed class TsSourceFile
     public Node Root { get; set; } = null!;
     public bool IsExternalModule { get; set; }
     public bool IsJavaScript { get; init; }
+    /// <summary>Syntax errors the parser recovered from (position, message).</summary>
+    public List<(int Position, string Message)> Diagnostics { get; } = [];
     private int[]? _lineStarts;
 
     public int[] LineStarts => _lineStarts ??= ComputeLineStarts();

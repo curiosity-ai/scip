@@ -300,6 +300,73 @@ public sealed class Scanner(string text)
         Pos++;
     }
 
+    /// <summary>Splits a multi-character punctuator (<c>&lt;&lt;</c>) so that only its first character is the current token.</summary>
+    public void SplitFirstChar()
+    {
+        Pos = TokenStart + 1;
+        TokenEnd = Pos;
+        TokenText = Text[TokenStart].ToString();
+    }
+
+    /// <summary>JSX attribute strings have no escapes and may span lines: rescans the current string token that way.</summary>
+    public void RescanJsxString()
+    {
+        var quote = Text[TokenStart];
+        if (quote is not ('"' or '\'')) { return; }
+        var end = Text.IndexOf(quote, TokenStart + 1);
+        if (end < 0) { return; }
+        Pos = end + 1;
+        TokenEnd = Pos;
+        TokenText = Text.Substring(TokenStart + 1, end - TokenStart - 1);
+    }
+
+    /// <summary>Error recovery: skips the template literal whose head is the current token without parsing its substitutions.</summary>
+    public void SkipRawTemplate()
+    {
+        Pos = EndOfTemplate(TokenStart + 1);
+        TokenEnd = Pos;
+        Kind = T.String;
+        Next();
+    }
+
+    private int EndOfTemplate(int i)
+    {
+        while (i < Text.Length)
+        {
+            var c = Text[i];
+            if (c == '\\') { i += 2; continue; }
+            if (c == '`') { return i + 1; }
+            if (c == '$' && i + 1 < Text.Length && Text[i + 1] == '{') { i = EndOfBraces(i + 2); continue; }
+            i++;
+        }
+
+        return Text.Length;
+    }
+
+    private int EndOfBraces(int i)
+    {
+        var depth = 1;
+        while (i < Text.Length)
+        {
+            var c = Text[i];
+            switch (c)
+            {
+                case '`': i = EndOfTemplate(i + 1); continue;
+                case '"' or '\'':
+                    i++;
+                    while (i < Text.Length && Text[i] != c && Text[i] != '\n') { i += Text[i] == '\\' ? 2 : 1; }
+                    i++;
+                    continue;
+                case '{': depth++; break;
+                case '}': if (--depth == 0) { return i + 1; } break;
+            }
+
+            i++;
+        }
+
+        return Text.Length;
+    }
+
     /// <summary>Raw lookahead: characters following the current token, used for merging <c>&gt;</c> operators.</summary>
     public string RawAfterToken(int count) => TokenEnd + count <= Text.Length ? Text.Substring(TokenEnd, count) : Text[TokenEnd..];
 

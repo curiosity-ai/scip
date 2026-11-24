@@ -249,6 +249,7 @@ public sealed partial class Parser
 
     private void ParseTypeArguments(Node owner)
     {
+        if (IsP("<<")) { _s.SplitFirstChar(); }
         ExpectP("<");
         while (!IsP(">") && _s.Kind != T.Eof)
         {
@@ -367,7 +368,7 @@ public sealed partial class Parser
                 ParseArguments(call);
                 e = Fin(call);
             }
-            else if (IsP("<") && !noCalls)
+            else if ((IsP("<") || IsP("<<")) && !noCalls)
             {
                 var snap = Save();
                 var call = new Node(SK.CallExpression, e.Start) { Expression = e };
@@ -380,6 +381,14 @@ public sealed partial class Parser
                         var tt = new Node(SK.TaggedTemplate, e.Start) { Expression = e };
                         tt.Right = ParseTemplate();
                         e = Fin(tt);
+                        continue;
+                    }
+
+                    if (CanFollowInstantiation())
+                    {
+                        var inst = new Node(SK.ExpressionWithTypeArguments, e.Start) { Expression = call.Expression };
+                        inst.TypeArguments.AddRange(call.TypeArguments);
+                        e = Fin(inst);
                         continue;
                     }
                 }
@@ -405,6 +414,12 @@ public sealed partial class Parser
 
         return e;
     }
+
+    // `Foo<T>;` — an instantiation expression is valid when the next token cannot start an operand.
+    private bool CanFollowInstantiation() =>
+        _s.Kind == T.Eof || _s.NewlineBefore
+        || (_s.Kind == T.Punct && _s.TokenText is ";" or ")" or "]" or "}" or "," or ":" or "." or "?." or "=" or "==" or "===" or "!=" or "!==" or "&&" or "||" or "??" or "?" or "=>" or "|" or "&" or "^")
+        || IsK("as") || IsK("satisfies") || IsK("in") || IsK("of") || IsK("instanceof");
 
     private Node ParseNew()
     {
@@ -443,7 +458,7 @@ public sealed partial class Parser
         }
 
         n.Expression = callee;
-        if (IsP("<"))
+        if (IsP("<") || IsP("<<"))
         {
             var snap = Save();
             try

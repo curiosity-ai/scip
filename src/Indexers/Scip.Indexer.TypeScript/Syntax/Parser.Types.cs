@@ -9,6 +9,15 @@ public sealed partial class Parser
 
     private Node ParseReturnType()
     {
+        // A return type may itself be a conditional type even inside the `extends` clause of another one.
+        var savedNoConditional = _noConditional;
+        _noConditional = false;
+        try { return ParseReturnTypeCore(); }
+        finally { _noConditional = savedNoConditional; }
+    }
+
+    private Node ParseReturnTypeCore()
+    {
         // type predicates: `x is T`, `asserts x`, `asserts x is T`, `this is T`
         var snap = Save();
         var start = _s.TokenStart;
@@ -149,7 +158,7 @@ public sealed partial class Parser
                 try
                 {
                     tp.Type = ParseType();
-                    if (IsP("?")) { tp.Type = null; Restore(snap); }
+                    if (IsP("?") && !saved) { tp.Type = null; Restore(snap); }
                 }
                 catch (SyntaxException)
                 {
@@ -280,7 +289,7 @@ public sealed partial class Parser
                 {
                     var tr = new Node(SK.TypeReference, start);
                     tr.Name = ParseEntityName();
-                    if (IsP("<") && !_s.NewlineBefore) { ParseTypeArguments(tr); }
+                    if ((IsP("<") || IsP("<<")) && !_s.NewlineBefore) { ParseTypeArguments(tr); }
                     return Fin(tr);
                 }
         }
@@ -326,10 +335,11 @@ public sealed partial class Parser
             var rest = EatP("...");
             Node element;
             var snap = Save();
-            if (_s.Kind == T.Ident && !Reserved.Contains(_s.TokenText) && (PeekIsPunct(":") || (PeekIsPunct("?") && false)))
+            if (_s.Kind == T.Ident && !Reserved.Contains(_s.TokenText) && (PeekIsPunct(":") || PeekIsOptionalColon()))
             {
                 var m = new Node(SK.NamedTupleMember, start);
                 m.Name = ParseIdentifier();
+                EatP("?");
                 ExpectP(":");
                 m.Type = ParseType();
                 element = Fin(m);

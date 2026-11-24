@@ -94,7 +94,7 @@ public sealed partial class Parser
             if (EatP(":")) { attr.Name = ParseJsxName(); }
             if (EatP("="))
             {
-                if (_s.Kind == T.String) { var lit = Begin(SK.StringLiteral); lit.Text = _s.TokenText; _s.Next(); attr.Initializer = Fin(lit); }
+                if (_s.Kind == T.String) { _s.RescanJsxString(); var lit = Begin(SK.StringLiteral); lit.Text = _s.TokenText; _s.Next(); attr.Initializer = Fin(lit); }
                 else if (IsP("{"))
                 {
                     var expr = Begin(SK.JsxExpression);

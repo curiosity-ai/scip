@@ -16,6 +16,10 @@ public sealed class Checker(TsProgram program)
     private Binder B(Node n) => Program.BinderFor(n.File!);
 
     private const int MaxDepth = 10;
+    private const int MaxNest = 48;
+    [ThreadStatic] private static int _nest;
+    [ThreadStatic] private static HashSet<(Node, int)>? _activeSet;
+    private static HashSet<(Node, int)> Active => _activeSet ??= [];
 
     private readonly Dictionary<Node, Node> _staticSides = [];
 
@@ -215,6 +219,14 @@ public sealed class Checker(TsProgram program)
 
     private List<Node>? ResolveEntityExpression(Node entity, int depth)
     {
+        if (_nest >= MaxNest || !Active.Add((entity, 1))) { return null; }
+        _nest++;
+        try { return ResolveEntityExpressionCore(entity, depth); }
+        finally { _nest--; Active.Remove((entity, 1)); }
+    }
+
+    private List<Node>? ResolveEntityExpressionCore(Node entity, int depth)
+    {
         if (entity.Kind == SK.Identifier)
         {
             var d = B(entity).Lookup(entity, entity.Text, Meaning.Any);
@@ -312,6 +324,13 @@ public sealed class Checker(TsProgram program)
     public List<Node>? MemberDecls(List<Node> containers, string name) => MemberDecls(containers, name, [], 0);
 
     private List<Node>? MemberDecls(List<Node> containers, string name, HashSet<Node> visited, int depth)
+    {
+        if (++_nest > MaxNest) { _nest--; return null; }
+        try { return MemberDeclsCore(containers, name, visited, depth); }
+        finally { _nest--; }
+    }
+
+    private List<Node>? MemberDeclsCore(List<Node> containers, string name, HashSet<Node> visited, int depth)
     {
         if (depth > MaxDepth) { return null; }
         foreach (var c in containers)
@@ -445,6 +464,14 @@ public sealed class Checker(TsProgram program)
 
     private List<Node> ContainersOfDecl(Node d, int depth, bool asValue = false)
     {
+        if (_nest >= MaxNest || !Active.Add((d, 2))) { return []; }
+        _nest++;
+        try { return ContainersOfDeclCore(d, depth, asValue); }
+        finally { _nest--; Active.Remove((d, 2)); }
+    }
+
+    private List<Node> ContainersOfDeclCore(Node d, int depth, bool asValue = false)
+    {
         if (depth > MaxDepth) { return []; }
         switch (d.Kind)
         {
@@ -508,6 +535,14 @@ public sealed class Checker(TsProgram program)
 
     private List<Node> ContainersOfType(Node t, int depth)
     {
+        if (_nest >= MaxNest || !Active.Add((t, 3))) { return []; }
+        _nest++;
+        try { return ContainersOfTypeCore(t, depth); }
+        finally { _nest--; Active.Remove((t, 3)); }
+    }
+
+    private List<Node> ContainersOfTypeCore(Node t, int depth)
+    {
         if (depth > MaxDepth) { return []; }
         switch (t.Kind)
         {
@@ -553,6 +588,14 @@ public sealed class Checker(TsProgram program)
     }
 
     public List<Node> ContainersOfExpression(Node e, int depth)
+    {
+        if (_nest >= MaxNest || !Active.Add((e, 4))) { return []; }
+        _nest++;
+        try { return ContainersOfExpressionCore(e, depth); }
+        finally { _nest--; Active.Remove((e, 4)); }
+    }
+
+    public List<Node> ContainersOfExpressionCore(Node e, int depth)
     {
         if (depth > MaxDepth) { return []; }
         switch (e.Kind)

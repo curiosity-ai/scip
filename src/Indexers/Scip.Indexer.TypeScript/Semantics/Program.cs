@@ -24,7 +24,13 @@ public sealed class TsProgram
         {
             if (File.Exists(fileName))
             {
-                parsed = Parser.Parse(fileName, File.ReadAllText(fileName));
+                var source = File.ReadAllText(fileName);
+                parsed = Parser.Parse(fileName, source);
+                foreach (var (pos, message) in parsed.Diagnostics)
+                {
+                    var (l, c) = parsed.LineAndCharacter(Math.Min(pos, source.Length));
+                    Warn?.Invoke($"warning: syntax error in {fileName}:{l + 1}:{c + 1}: {message}");
+                }
             }
         }
         catch (SyntaxException e)
@@ -55,6 +61,8 @@ public sealed class TsProgram
 
     private static readonly string[] Extensions = [".ts", ".tsx", ".d.ts", ".mts", ".cts", ".d.mts", ".d.cts", ".js", ".jsx", ".mjs", ".cjs"];
 
+    private static bool IsSourceFile(string path) => Array.Exists(Extensions, e => path.EndsWith(e, StringComparison.OrdinalIgnoreCase));
+
     private static string? TryFile(string basePath)
     {
         foreach (var ext in Extensions)
@@ -67,7 +75,7 @@ public sealed class TsProgram
 
     private static string? TryResolveFileOrDirectory(string path)
     {
-        if (File.Exists(path) && !path.EndsWith(".json", StringComparison.Ordinal))
+        if (File.Exists(path) && IsSourceFile(path))
         {
             return path;
         }
@@ -100,7 +108,7 @@ public sealed class TsProgram
                         if (doc.RootElement.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
                         {
                             var target = Path.GetFullPath(Path.Combine(path, v.GetString()!));
-                            var r = (File.Exists(target) ? target : null) ?? TryFile(target) ?? TryFile(Path.Combine(target, "index"));
+                            var r = (File.Exists(target) && IsSourceFile(target) ? target : null) ?? TryFile(target) ?? TryFile(Path.Combine(target, "index"));
                             if (r is not null && !r.EndsWith(".json", StringComparison.Ordinal)) { return r; }
                         }
                     }

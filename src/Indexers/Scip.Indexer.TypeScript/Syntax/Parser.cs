@@ -24,7 +24,9 @@ public sealed partial class Parser
         var root = new Node(SK.TsSourceFile, 0) { File = file };
         while (parser._s.Kind != T.Eof)
         {
-            root.Elements.Add(parser.ParseStatement());
+            var before = parser._s.TokenStart;
+            parser.ParseStatementRecovering(root.Elements);
+            if (parser._s.TokenStart == before && parser._s.Kind != T.Eof) { parser._s.Next(); }
         }
 
         root.Start = root.Elements.Count > 0 ? root.Elements[0].Start : text.Length;
@@ -33,6 +35,59 @@ public sealed partial class Parser
         file.IsExternalModule = root.Elements.Any(IsModuleIndicator);
         SetParents(root, file);
         return file;
+    }
+
+    /// <summary>
+    /// Parses one statement into <paramref name="into"/>; on a syntax error records a diagnostic, skips the offending
+    /// statement (balanced over brackets) and returns so that the rest of the file is still parsed.
+    /// </summary>
+    private void ParseStatementRecovering(List<Node> into)
+    {
+        var snap = Save();
+        try
+        {
+            into.Add(ParseStatement());
+        }
+        catch (SyntaxException e)
+        {
+            _file.Diagnostics.Add((e.Position, e.Message));
+            Restore(snap);
+            SkipStatement();
+        }
+    }
+
+    private void SkipStatement()
+    {
+        var depth = 0;
+        var consumed = false;
+        while (_s.Kind != T.Eof)
+        {
+            if (consumed && depth == 0 && _s.NewlineBefore) { return; }
+            if (_s.Kind == T.Punct)
+            {
+                var t = _s.TokenText;
+                if (t is "(" or "[" or "{") { depth++; }
+                else if (t is ")" or "]" or "}")
+                {
+                    if (depth == 0) { if (consumed) { return; } _s.Next(); return; }
+                    depth--;
+                    _s.Next();
+                    consumed = true;
+                    if (depth == 0 && t == "}") { return; }
+                    continue;
+                }
+                else if (t == ";" && depth == 0) { _s.Next(); return; }
+            }
+            else if (_s.Kind == T.TemplateHead)
+            {
+                var snap = Save();
+                try { ParseTemplate(); consumed = true; continue; }
+                catch (SyntaxException) { Restore(snap); _s.SkipRawTemplate(); consumed = true; continue; }
+            }
+
+            _s.Next();
+            consumed = true;
+        }
     }
 
     private static bool IsModuleIndicator(Node n) =>
