@@ -80,7 +80,7 @@ public sealed class DartIndexer : IIndexer
     {
         using var writer = new IndexWriter(output, leaveOpen: true);
         writer.WriteMetadata(index.Metadata);
-        foreach (var document in index.Documents)
+        foreach (var document in DocumentOrdering.ByRelationshipDependencies(index.Documents))
         {
             writer.WriteDocument(document);
         }
