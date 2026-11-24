@@ -7,6 +7,9 @@
     <InternalsVisibleTo Include="Scip.Indexer.Dart.Tests" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="sdk-symbols.tsv.gz" LogicalName="sdk-symbols.tsv.gz" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
   </ItemGroup>
 </Project>

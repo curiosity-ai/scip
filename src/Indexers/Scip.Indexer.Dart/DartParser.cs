@@ -30,11 +30,14 @@ internal sealed partial class DartParser
         _m = model;
     }
 
-    public static FileModel Parse(string relativePath, string source)
+    public static FileModel Parse(string relativePath, string source, ExternalPackage? external = null)
     {
-        var (tokens, docs) = DartLexer.Lex(source);
-        var model = new FileModel(relativePath) { Tokens = tokens };
-        new DartParser(source, tokens, docs, model).ParseFile();
+        var (tokens, docs, docRefs, docStarts) = DartLexer.LexFull(source);
+        var model = new FileModel(relativePath) { Tokens = tokens, DocRefs = docRefs, External = external };
+        model.DocStarts = docStarts;
+        var parser = new DartParser(source, tokens, docs, model);
+        parser.ParseFile();
+        parser.ScanLocals();
         DemoteDuplicates(model);
         return model;
     }
@@ -55,7 +58,7 @@ internal sealed partial class DartParser
             }
 
             var key = string.Join('\u0001', d.Path.Select(x => x.Name + (int)x.Suffix));
-            if (!seen.Add(key) || (d.Kind is DeclKind.Parameter or DeclKind.TypeParameter && d.Parent is { IsLocal: true, Kind: DeclKind.Function or DeclKind.Method }))
+            if (!seen.Add(key) || (d.Kind is DeclKind.Parameter or DeclKind.TypeParameter && d.Parent is { IsLocal: true, Kind: DeclKind.Function } && !model.TopLevel.Contains(d.Parent)))
             {
                 d.IsLocal = true;
             }
@@ -168,20 +171,55 @@ internal sealed partial class DartParser
             _i++;
         }
 
+        DirectiveRef? directive = null;
         if (Cur.Kind == TokenKind.String)
         {
-            _m.Directives.Add(new DirectiveRef(Cur, kw));
+            directive = new DirectiveRef(Cur, kw);
+            _m.Directives.Add(directive);
         }
 
+        List<string>? combinator = null;
         while (_i < _t.Count && !Cur.Is(";"))
         {
             if (Cur.Is("as") && IsIdent(_i + 1))
             {
                 var prefix = At(_i + 1);
+                if (directive is not null)
+                {
+                    directive.Prefix = prefix.Text;
+                }
+
                 _m.ImportPrefixes.Add(prefix.Text);
                 var pd = NewDecl(DeclKind.ImportPrefix, prefix.Text, null, prefix, [(prefix.Text, SymbolDescriptor.Types.Suffix.Term)], prefix.Offset, null);
                 _m.TopLevel.Remove(pd);
                 _m.PrefixDecls[prefix.Text] = pd;
+                combinator = null;
+            }
+            else if (directive is not null && (Cur.Is("show") || Cur.Is("hide")) && IsIdent(_i + 1))
+            {
+                combinator = [];
+                if (Cur.Is("show"))
+                {
+                    directive.Show = combinator;
+                }
+                else
+                {
+                    directive.Hide = combinator;
+                }
+            }
+            else if (combinator is not null && Cur.Kind == TokenKind.Identifier)
+            {
+                combinator.Add(Cur.Text);
+            }
+            else if (Cur.Is("if") && At(_i + 1).Is("("))
+            {
+                _i = SkipBalanced(_i + 1);
+                if (At(_i).Kind == TokenKind.String)
+                {
+                    _i++;
+                }
+
+                continue;
             }
 
             _i++;
@@ -426,6 +464,7 @@ internal sealed partial class DartParser
                 var d = NewDecl(DeclKind.Field, nameTok.Text, owner, nameTok, [.. owner.Path, (nameTok.Text, SymbolDescriptor.Types.Suffix.Term)],
                     _t[start].Offset, DocOf(start));
                 d.IsStatic = true;
+                d.TypeName = owner.Name;
                 d.EnclosingEnd = At(_i - 1).End;
                 d.Signature = Collapse(d.EnclosingStart, d.EnclosingEnd);
             }
@@ -518,6 +557,12 @@ internal sealed partial class DartParser
         }
 
         var core = header.Where(h => h.Kind == TokenKind.Identifier && !Modifiers.Contains(h.Text)).ToList();
+        if (term is "=" or ";" or "," && header.Count >= 2 && header[^1].Kind == TokenKind.Identifier && Modifiers.Contains(header[^1].Text)
+            && ((header[^2].Kind == TokenKind.Identifier && !Modifiers.Contains(header[^2].Text)) || header[^2].Is(">") || header[^2].Is("?")))
+        {
+            core.Add(header[^1]); // a variable named like a modifier: `const Object factory = ...;`
+        }
+
         var isStatic = header.Any(h => h.Is("static"));
         var accessorIdx = core.FindIndex(h => h.Is("get") || h.Is("set"));
         if (accessorIdx >= core.Count - 1)
@@ -547,6 +592,7 @@ internal sealed partial class DartParser
             var nameTok = core[accessorIdx + 1];
             _i = j;
             var d = NewAccessor(parent, nameTok, core[accessorIdx].Is("get"), startOffset, doc, isStatic);
+            d.TypeName = TypeNameBefore(header, header.IndexOf(core[accessorIdx]));
             SkipBody();
             d.EnclosingEnd = At(_i - 1).End;
             d.Signature = Collapse(startOffset, SignatureEnd(d.EnclosingEnd, j));
@@ -577,6 +623,12 @@ internal sealed partial class DartParser
                 : [.. parent.Path, (name, SymbolDescriptor.Types.Suffix.Term)];
             var d = NewDecl(kind, name, parent, nt, path, nt.Offset, doc);
             d.IsStatic = isStatic;
+            d.TypeName = TypeNameBefore(header, header.LastIndexOf(nt));
+            if (d.TypeName is null && At(j).Is("="))
+            {
+                d.TypeName = InferType(j + 1);
+            }
+
             d.EnclosingEnd = end;
             d.Signature = Collapse(startOffset, nt.End);
             if (At(p).Is(",") && IsIdent(p + 1))
@@ -657,6 +709,16 @@ internal sealed partial class DartParser
         }
 
         decl.IsStatic = isStatic;
+        if (decl.Kind == DeclKind.Constructor)
+        {
+            decl.TypeName = parent?.Name;
+        }
+        else if (opName is null)
+        {
+            var nameIdx = header.IndexOf(decl.NameToken);
+            decl.TypeName = accessorIdx >= 0 ? TypeNameBefore(header, header.IndexOf(core[accessorIdx])) : nameIdx > 0 ? TypeNameBefore(header, nameIdx) : null;
+        }
+
         foreach (var a in angles)
         {
             if (At(a - 1).Offset == decl.NameToken.Offset)
@@ -772,6 +834,12 @@ internal sealed partial class DartParser
 
             // statement start: the previous-previous token must end a statement or open a block
             var before = At(k - 2);
+            if (prev.Is(">") || prev.Is("?"))
+            {
+                var typeStart = TypeStart(k - 1);
+                before = At(typeStart - 1);
+            }
+
             if (before.Kind == TokenKind.Identifier && before.Text is not ("static" or "final" or "external"))
             {
                 continue;
@@ -780,8 +848,13 @@ internal sealed partial class DartParser
             var d = NewDecl(DeclKind.Function, name.Text, null, name, [(name.Text, SymbolDescriptor.Types.Suffix.Method)], At(k - 1).Offset, null);
             _m.TopLevel.Remove(d);
             ParseParams(k + 1, d);
-            d.EnclosingEnd = At(after - 1).End;
-            d.Signature = Collapse(d.EnclosingStart, d.EnclosingEnd);
+            var savedI = _i;
+            _i = after;
+            SkipBody();
+            var bodyEnd = _i;
+            _i = savedI;
+            d.EnclosingEnd = Math.Max(At(after - 1).End, At(bodyEnd - 1).End);
+            d.Signature = Collapse(d.EnclosingStart, At(after - 1).End);
         }
 
         _ = owner;
@@ -903,6 +976,17 @@ internal sealed partial class DartParser
                     _m.ThisFieldRefs.Add(new ThisFieldRef(nameTok.Value, cls));
                     if (!named)
                     {
+                        // a positional field formal parameter is a `local` parameter that is referenced, never defined
+                        var synthetic = new Decl(DeclKind.Parameter, nameTok.Value.Text, owner, nameTok.Value, _m.RelativePath)
+                        {
+                            External = _m.External,
+                            IsLocal = true,
+                            IsSynthetic = true,
+                            EnclosingStart = slice[idx].Offset,
+                            EnclosingEnd = slice[^1].End,
+                        };
+                        owner.Parameters.Add(synthetic);
+                        _m.SyntheticParams.Add(synthetic);
                         return;
                     }
                 }
@@ -957,6 +1041,7 @@ internal sealed partial class DartParser
             slice[idx].Offset, null, isLocal: !named || nt.Text.StartsWith('_'));
         p.EnclosingEnd = slice[^1].End;
         p.Signature = Collapse(p.EnclosingStart, slice[end - 1].End);
+        p.TypeName = TypeNameBefore(slice, slice.IndexOf(nt));
         owner.Parameters.Add(p);
     }
 
@@ -1125,6 +1210,7 @@ internal sealed partial class DartParser
     {
         var d = new Decl(kind, name, parent, nameTok, _m.RelativePath)
         {
+            External = _m.External,
             Path = path,
             IsLocal = isLocal ?? name.StartsWith('_'),
             EnclosingStart = enclosingStart,
