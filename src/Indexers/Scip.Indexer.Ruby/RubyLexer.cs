@@ -25,6 +25,9 @@ internal sealed class RubyLexer
         "+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "=~", "!~", "=>", "->", "..",
     ];
 
+    private static readonly string[] SymbolOperators =
+        ["[]=", "[]", "<=>", "===", "==", "=~", "!=", "!~", "<<", ">>", "<=", ">=", "**", "+@", "-@", "+", "-", "*", "/", "%", "<", ">", "!", "&", "|", "^", "~"];
+
     private readonly string _s;
     private readonly List<Token> _toks = [];
     private readonly List<(string Id, bool Indented, bool Interp)> _heredocs = [];
@@ -362,6 +365,19 @@ internal sealed class RubyLexer
                     // Symbol tokens exclude the colon so that attr_* definitions can be ranged on the name.
                     Add(Tk.Symbol, _s[nameStart.._pos], nameStart, _pos, space);
                     return;
+                }
+
+                if (!(PrevIsValue() && !space) && At(1) != ':')
+                {
+                    foreach (var op in SymbolOperators)
+                    {
+                        if (string.CompareOrdinal(_s, _pos + 1, op, 0, op.Length) == 0)
+                        {
+                            _pos += 1 + op.Length;
+                            Add(Tk.Symbol, op, start + 1, _pos, space);
+                            return;
+                        }
+                    }
                 }
 
                 _pos++;

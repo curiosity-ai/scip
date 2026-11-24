@@ -82,6 +82,16 @@ internal sealed partial class RubyWalker
     private Arg? LabelArg(List<Arg> args, string label) =>
         args.Cast<Arg?>().FirstOrDefault(a => _t[a!.Value.Start] is { Kind: Tk.Label } l && l.Text == label);
 
+    private string[]? _lines;
+
+    private string RawText(Token t)
+    {
+        _lines ??= _doc.Text.Split('\n');
+        return t.Line < _lines.Length && t.EndCol <= _lines[t.Line].Length && t.EndCol > t.Col ? _lines[t.Line][t.Col..t.EndCol] : t.Text;
+    }
+
+    private string NameOf(Token t) => t.Kind == Tk.Str ? Unquote(RawText(t)) : t.Text;
+
     private static string Unquote(string raw) => raw.Length >= 2 && raw[0] is '"' or '\'' ? raw[1..^1] : raw;
 
     private Occ DefineMethodOcc(Token tok, string[] owner, bool singleton, string name, SymbolInformation.Types.Kind kind, int endLine, int endCol, bool colon = false)
@@ -103,12 +113,25 @@ internal sealed partial class RubyWalker
             case "mattr_reader" or "mattr_writer" or "mattr_accessor" or "cattr_reader" or "cattr_writer" or "cattr_accessor"
                 or "class_attribute":
                 return AttrDsl(t);
+            case "module_function":
+                {
+                    var (args, last) = ReadArgs(_i + 1);
+                    var (path, _) = DefOwner();
+                    var end = _t[Math.Max(last, args.Count > 0 ? args[^1].End : last)];
+                    foreach (var a in args.Where(IsSymbolArg))
+                    {
+                        DefineMethodOcc(_t[a.Start], path, true, _t[a.Start].Text, SymbolInformation.Types.Kind.Method, end.Line, end.EndCol, true);
+                    }
+
+                    return false;
+                }
+
             case "alias_method":
                 {
                     var (args, _) = ReadArgs(_i + 1);
                     if (args.Count >= 2 && _t[args[0].Start].Kind is Tk.Symbol or Tk.Str && _t[args[1].Start].Kind is Tk.Symbol or Tk.Str)
                     {
-                        RegisterAlias(Unquote(_t[args[0].Start].Text), Unquote(_t[args[1].Start].Text));
+                        RegisterAlias(NameOf(_t[args[0].Start]), NameOf(_t[args[1].Start]));
                     }
 
                     return false;
@@ -215,7 +238,7 @@ internal sealed partial class RubyWalker
             prefix = v.Kind switch
             {
                 Tk.Symbol => v.Text,
-                Tk.Str => Unquote(v.Text),
+                Tk.Str => Unquote(RawText(v)),
                 Tk.Keyword when v.Text == "true" => _t[Math.Min(to.End, to.Start + 1)] is var tv ? Unquote(tv.Text) : "",
                 _ => "",
             };
@@ -262,6 +285,44 @@ internal sealed partial class RubyWalker
 
         _i++;
         return true;
+    }
+
+    private void BeginBranches(Frame f)
+    {
+        f.BranchBase = [.. FieldScopeFrame().AssignedFields];
+        f.BranchUnion = [];
+    }
+
+    private void NextBranch()
+    {
+        if (Top is { BranchBase: { } b, BranchUnion: { } u })
+        {
+            var cur = FieldScopeFrame().AssignedFields;
+            u.UnionWith(cur);
+            cur.Clear();
+            cur.UnionWith(b);
+        }
+    }
+
+    private void EndBranches()
+    {
+        if (Top is { BranchUnion: { } u })
+        {
+            FieldScopeFrame().AssignedFields.UnionWith(u);
+        }
+    }
+
+    private Frame FieldScopeFrame()
+    {
+        for (var k = _stack.Count - 1; k >= 0; k--)
+        {
+            if (_stack[k].Kind is FrameKind.Def or FrameKind.Class or FrameKind.Module or FrameKind.Singleton)
+            {
+                return _stack[k];
+            }
+        }
+
+        return _stack[0];
     }
 
     private void RegisterAlias(string newName, string oldName)

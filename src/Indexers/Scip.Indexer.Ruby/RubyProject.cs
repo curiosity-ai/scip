@@ -378,7 +378,9 @@ internal sealed class RubyProject(GemMetadata gem)
 
         if (!t.Core)
         {
-            return MethodRets.TryGetValue(RetKey(t.Owner, t.Singleton, t.Name), out var fn) ? fn(this) : null;
+            return MethodRets.TryGetValue(RetKey(t.Owner, t.Singleton, t.Name), out var fn)
+                ? (ReferenceEquals(fn, RubyWalker.AttachedClass) ? (recv is { } ar ? new RType(ar.Path, false) : null) : fn(this))
+                : null;
         }
 
         var core = FindType(t.Owner)?.Core;

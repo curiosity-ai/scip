@@ -63,6 +63,14 @@ internal sealed class Frame(FrameKind kind, LocalScope locals)
 
     public bool Endless { get; set; }
 
+    /// <summary>Fields already assigned in this method/body: later assignments are write references, not definitions.</summary>
+    public HashSet<string> AssignedFields { get; } = [];
+
+    /// <summary>For conditionals: fields assigned before the branch point, and the union over finished branches.</summary>
+    public HashSet<string>? BranchBase { get; set; }
+
+    public HashSet<string>? BranchUnion { get; set; }
+
     public int ParenAtStart { get; set; }
 
     public bool AwaitDo { get; set; }
@@ -600,14 +608,27 @@ internal sealed partial class RubyWalker
                 break;
             case "begin" or "case":
                 _stack.Add(new Frame(FrameKind.Other, Scope));
+                if (t.Text == "case")
+                {
+                    BeginBranches(Top);
+                }
+
                 _i++;
                 break;
             case "if" or "unless" or "while" or "until":
                 if (ExprStartBefore(_i))
                 {
                     _stack.Add(new Frame(FrameKind.Other, Scope) { AwaitDo = t.Text is "while" or "until" });
+                    if (t.Text is "if" or "unless")
+                    {
+                        BeginBranches(Top);
+                    }
                 }
 
+                _i++;
+                break;
+            case "else" or "elsif" or "when":
+                NextBranch();
                 _i++;
                 break;
             case "for":
@@ -618,6 +639,8 @@ internal sealed partial class RubyWalker
                 {
                     ReturnedAssignment();
                 }
+
+                EndBranches();
 
                 CloseTopKeywordFrame(t);
                 _i++;
@@ -1262,7 +1285,16 @@ internal sealed partial class RubyWalker
         }
 
         var symbol = _project.FieldSymbol(path, singleton, t.Text);
-        Emit(t, symbol, assign ? (int)SymbolRole.Definition : 0, null, assign ? SymbolInformation.Types.Kind.Field : SymbolInformation.Types.Kind.UnspecifiedKind);
+        var again = assign && !FieldScopeFrame().AssignedFields.Add(t.Text);
+        if (again)
+        {
+            Emit(t, symbol, (int)SymbolRole.WriteAccess);
+        }
+        else
+        {
+            Emit(t, symbol, assign ? (int)SymbolRole.Definition : 0, null, assign ? SymbolInformation.Types.Kind.Field : SymbolInformation.Types.Kind.UnspecifiedKind);
+        }
+
         var fieldKey = RubyProject.RetKey(path, singleton, t.Text);
         if (next is { Kind: Tk.Punct, Text: "=" or "||=" })
         {

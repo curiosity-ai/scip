@@ -48,6 +48,9 @@ internal sealed partial class RubyWalker
 
     private string LocalSym(int id) => id < 0 ? _kwSymbols[id] : $"local {id}";
 
+    /// <summary>Marker return type for <c>T.attached_class</c>/<c>T.self_type</c>: resolved against the receiver at the call.</summary>
+    internal static readonly TypeFn AttachedClass = _ => null;
+
     private static TypeFn CoreInstance(string name) => _ => new RType([name], false);
 
     private static TypeFn InstanceOf(RefSpec spec) =>
@@ -93,9 +96,25 @@ internal sealed partial class RubyWalker
 
     // ---- brackets -----------------------------------------------------------------------------------------
 
+    /// <summary>An index expression <c>recv[...]</c> is a call of <c>[]</c> (or <c>[]=</c> when assigned) on the receiver.</summary>
+    private TypeFn? IndexCall(Token t)
+    {
+        if (_exprEnd != _i - 1 || t.SpaceBefore || _exprType is not { } recvFn)
+        {
+            return null;
+        }
+
+        var close = SkipBalanced(_i);
+        var name = Tok(close) is { Kind: Tk.Punct, Text: "=" } ? "[]=" : "[]";
+        Func<RubyProject, MethodTarget?> target = p => recvFn(p) is { } r ? p.LookupMethod(r, name) : null;
+        Emit(t, null, 0, p => MethodSymbol(p, target(p)));
+        return p => recvFn(p) is { } r ? p.ReturnOf(target(p), r, name) : null;
+    }
+
     private void OpenParen(Token t)
     {
         var after = _exprEnd == _i - 1 && !t.SpaceBefore;
+        var indexResult = t.Text == "[" ? IndexCall(t) : null;
         TypeFn? tArg = null;
         var passthrough = false;
         if (_pendingTCall is { } tc)
@@ -112,10 +131,15 @@ internal sealed partial class RubyWalker
             }
         }
 
+        if (t.Text == "(" && !after && ExprStartBefore(_i))
+        {
+            passthrough = true;
+        }
+
         _parens.Push(new ParenEntry
         {
-            Call = after ? _exprType : null,
-            Target = after ? _lastCall : null,
+            Call = t.Text == "[" ? indexResult : after ? _exprType : null,
+            Target = after && t.Text == "(" ? _lastCall : null,
             TypeArg = tArg,
             Passthrough = passthrough,
             ArrayLiteral = t.Text == "[" && !after && IsArrayStart(),
@@ -238,7 +262,7 @@ internal sealed partial class RubyWalker
                 return (null, close);
             }
 
-            return (null, next + 2);
+            return (m is "attached_class" or "self_type" ? AttachedClass : null, next + 2);
         }
 
         TypeFn fn = segs is ["T", var gen] && GenericCore.Contains(gen) ? CoreInstance(gen) : InstanceOf(new RefSpec(CurCref, segs, abs));

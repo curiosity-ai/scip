@@ -9,15 +9,16 @@ public class UpstreamSnapshotTests
     /// <summary>Fixtures whose definitions and in-file references match upstream exactly.</summary>
     public static IEnumerable<string> PassingFixtures() =>
     [
-        "abstract_bodies","abstract_interface","args","arrays","binary_hover","blocks_lambdas_procs","cattr","classes",
-        "constructor_navigation","field_inheritance","fields_and_attrs","for","freeze_constants","functions","gem_metadata",
-        "globals","hashes","hoverdocs","implicit_super_arg","inheritance","keyword_argument_errors","keyword_parameter_returns",
-        "legacy_single_argument_union","literal_receiver","loops_and_conditionals","mattr","metaprog","method_inheritance",
-        "method_redefinitions","missing_dsl_instance_methods","nested_constants","nilable_shape_union_intersection",
-        "non_existent","opus","rbs_errors","rbs_keyword_arguments","rbs_signatures","requires","requires_ancestor","rescue",
-        "retained_receiver_types","return_operands","safe_navigation_hover","shape_union_intersection","singleton",
-        "singleton_class","super_call","t_helpers","tuple_comparison_blocks","tuple_shape_merge","type_docs","typed_false",
-        "typed_ignore","typed_strong","unresolved_constant_scopes","upstream_anonymous_forwarding","upstream_block_locals",
+        "abstract_bodies","abstract_interface","args","arrays","attached_class_recovery","binary_hover","blocks_lambdas_procs",
+        "cattr","classes","constructor_navigation","def_delegator","delegate","field_inheritance","fields_and_attrs","for",
+        "freeze_constants","functions","gem_metadata","globals","hashes","hoverdocs","implicit_super_arg","indexed_assignment",
+        "inheritance","keyword_argument_errors","keyword_parameter_returns","legacy_single_argument_union","literal_receiver",
+        "loops_and_conditionals","mattr","metaprog","method_inheritance","method_redefinitions","missing_dsl_instance_methods",
+        "module_function","nested_constants","nilable_shape_union_intersection","non_existent","opus","rbs_errors",
+        "rbs_keyword_arguments","rbs_signatures","requires","requires_ancestor","rescue","retained_receiver_types",
+        "return_operands","safe_navigation","safe_navigation_hover","shape_union_intersection","singleton","singleton_class",
+        "super_call","t_helpers","tuple_comparison_blocks","tuple_shape_merge","type_docs","typed_false","typed_ignore",
+        "typed_strong","unresolved_constant_scopes","upstream_anonymous_forwarding","upstream_block_locals",
         "upstream_destructuring","upstream_implicit_it","upstream_local_scopes","upstream_punned_kwargs","upstream_wrapped_calls",
         "yield_block",
     ];
