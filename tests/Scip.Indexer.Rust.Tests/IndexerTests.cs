@@ -85,7 +85,7 @@ public class IndexerTests
         var log = new StringWriter();
         RustIndexAssembler.Write(ms, new Metadata(), [doc], [], log);
         var index = Index.Parser.ParseFrom(ms.ToArray());
-        await Assert.That(index.Documents.Single().Symbols.Count(s => s.Symbol.EndsWith("impl#[S]", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(index.Documents.Single().Symbols.Count(s => s.Symbol.EndsWith("impl#[S]", StringComparison.Ordinal))).IsEqualTo(0); // impl blocks have no occurrence of their own, so no SymbolInformation either
         await Assert.That(log.ToString()).IsEmpty();
     }
 
@@ -114,8 +114,8 @@ public class IndexerTests
         var index = Index.Parser.ParseFrom(File.ReadAllBytes(output));
         await Assert.That(index.Documents.Select(d => d.RelativePath).Order()).IsEquivalentTo(["src/lib.rs", "src/util.rs"]);
         var lib = index.Documents.Single(d => d.RelativePath == "src/lib.rs");
-        await Assert.That(lib.Symbols.Select(s => s.Symbol)).Contains("rust-analyzer cargo demo 0.2.0 lib/run().");
-        await Assert.That(lib.Occurrences.Any(o => o.Symbol == "rust-analyzer cargo demo 0.2.0 lib/util/help()." && o.SymbolRoles == 0)).IsTrue();
+        await Assert.That(lib.Symbols.Select(s => s.Symbol)).Contains("rust-analyzer cargo demo 0.2.0 run().");
+        await Assert.That(lib.Occurrences.Any(o => o.Symbol == "rust-analyzer cargo demo 0.2.0 util/help()." && o.SymbolRoles == 0)).IsTrue();
         await Assert.That(index.Metadata.ProjectRoot).StartsWith("file://");
     }
 

@@ -40,18 +40,29 @@ public static class RustMonikers
     /// Descriptors naming the crate root of a cargo target (the crate-root branch of
     /// <c>def_to_non_local_moniker</c>). <paramref name="targetKind"/> is a value from <see cref="NormalizeTargetKind"/>.
     /// </summary>
-    public static IReadOnlyList<MonikerDescriptor> CrateDescriptors(string targetKind, string targetName)
+    public static IReadOnlyList<MonikerDescriptor> CrateDescriptors(string targetKind, string targetName) =>
+        [new("crate", Suffix.Namespace)];
+
+    /// <summary>
+    /// Internally every descriptor chain starts with a crate-root descriptor (the crate name for sysroot crates,
+    /// <c>crate</c> for cargo targets). The shipped rust-analyzer keeps it only on the root module itself (<c>crate/</c>);
+    /// all other symbols start at the first item below the root.
+    /// </summary>
+    private static Moniker Normalize(Moniker m)
     {
-        // There can be only one lib, proc-macro or build script per package: no display name needed.
-        if (targetKind is "lib" or "proc-macro" or "custom-build")
+        var d = m.Descriptors;
+        if (d.Count == 0 || d[0].Kind != Suffix.Namespace)
         {
-            return [new(targetKind, Suffix.Namespace)];
+            return m;
         }
 
-        // "other" has no cargo target name, only the display name.
-        return targetKind is "other"
-            ? [new(targetName, Suffix.Namespace)]
-            : [new(targetKind, Suffix.Namespace), new(targetName, Suffix.Namespace)];
+        var isStd = m.Package.Version is { } v && v.StartsWith("https://github.com/rust-lang/rust/library/", StringComparison.Ordinal);
+        if (d[0].Name != "crate" && !(isStd && d[0].Name == m.Package.Name))
+        {
+            return m;
+        }
+
+        return d.Count == 1 ? new Moniker(m.Package, [new("crate", Suffix.Namespace)]) : new Moniker(m.Package, [.. d.Skip(1)]);
     }
 
     /// <summary>Maps cargo's <c>kind</c> array of a target to the kinds rust-analyzer distinguishes.</summary>
@@ -90,7 +101,7 @@ public static class RustMonikers
         return symbol;
     }
 
-    public static string Format(Moniker moniker) => SymbolFormatter.Verbose.Format(ToSymbol(moniker));
+    public static string Format(Moniker moniker) => SymbolFormatter.Verbose.Format(ToSymbol(Normalize(moniker)));
 
     public static string LocalSymbol(int index) => $"local {index}";
 

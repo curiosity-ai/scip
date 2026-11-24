@@ -231,7 +231,9 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
                 var p = Text(i);
                 if (p == "#" && (Is(i + 1, "[") || (Is(i + 1, "!") && Is(i + 2, "["))))
                 {
-                    i = SkipBalanced(Is(i + 1, "[") ? i + 1 : i + 2) - 1;
+                    var open = Is(i + 1, "[") ? i + 1 : i + 2;
+                    ProcessAttribute(open);
+                    i = SkipBalanced(open) - 1;
                 }
 
                 continue;
@@ -259,6 +261,17 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
             }
 
             var name = Text(i);
+            if (name is "crate" or "super" or "self" && Is(i - 1, "(") && Is(i - 2, "pub"))
+            {
+                // visibility `pub(crate)` / `pub(super)` refer to the module
+                if (world.ResolveSegments(At(i), [name], NameSpaces.Type, null) is { } vis)
+                {
+                    Emit(i, vis);
+                }
+
+                continue;
+            }
+
             if (name == "macro_rules" && Is(i + 1, "!"))
             {
                 i = SkipBalanced(i + 3) - 1;
@@ -281,7 +294,8 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
                 continue;
             }
 
-            if (_t[i].Kind == RustTokenKind.Ident && i > 0 && IsIdent(i - 1) && Text(i - 1) is "fn" or "struct" or "enum" or "trait" or "mod" or "let" or "mut" or "ref")
+            if (_t[i].Kind == RustTokenKind.Ident && i > 0 && IsIdent(i - 1) && Text(i - 1) is "fn" or "struct" or "enum" or "trait" or "mod" or "let" or "mut" or "ref"
+                && !(Text(i - 1) is "let" or "ref" or "mut" && (char.IsUpper(name[0]) || Is(i + 1, "::") || Is(i + 1, "("))))
             {
                 continue;
             }
@@ -294,6 +308,40 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
             }
 
             EvalExpr(i, emit: true, out _);
+        }
+    }
+
+    /// <summary>
+    /// <c>#[test]</c>, <c>#[bench]</c> and <c>#[derive(Debug, ..)]</c> refer to the built-in attribute macros of core
+    /// (rust-analyzer emits an occurrence for the attribute and for every derived std macro).
+    /// </summary>
+    private void ProcessAttribute(int open)
+    {
+        var nameTok = open + 1;
+        if (!IsIdent(nameTok) || Text(nameTok) is not ("test" or "bench" or "derive" or "global_allocator"))
+        {
+            return;
+        }
+
+        if (world.StdAttr(Text(nameTok)) is not { } attr || world.ResolveSegments(At(nameTok), [Text(nameTok)], NameSpaces.Macro, null) is { IsExternal: false, Kind: Kind.Macro })
+        {
+            return;
+        }
+
+        Emit(nameTok, attr);
+        if (Text(nameTok) != "derive" || !Is(nameTok + 1, "("))
+        {
+            return;
+        }
+
+        var close = SkipBalanced(nameTok + 1) - 1;
+        for (var k = nameTok + 2; k < close; k++)
+        {
+            if (IsIdent(k) && !Is(k - 1, "::") && !Is(k + 1, "::") && world.StdAttr(Text(k)) is { } derive
+                && world.ResolveSegments(At(k), [Text(k)], NameSpaces.Macro, null) is not { IsExternal: false, Kind: Kind.Macro })
+            {
+                Emit(k, derive);
+            }
         }
     }
 
@@ -365,6 +413,55 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
     /// <paramref name="emit"/>), then its postfix chain. Returns the type if known.
     /// </summary>
     private RType? EvalExpr(int i, bool emit, out int next)
+    {
+        var ty = EvalExprInner(i, emit, out next);
+        if (emit && ty?.Def is { } d && d == world.Primitive("bool"))
+        {
+            var j = i;
+            var bang = -1;
+            while (j < _t.Count && (Is(j, "&") || Is(j, "*") || Is(j, "!") || Is(j, "-") || Is(j, "mut")))
+            {
+                if (Is(j, "!"))
+                {
+                    bang = j;
+                }
+
+                j++;
+            }
+
+            if (bang < 0 && Is(i - 1, "!") && IsUnaryPosition(i - 1))
+            {
+                bang = i - 1;
+            }
+
+            if (bang >= 0 && IsUnaryPosition(bang))
+            {
+                EmitImplMember(bang, ty, "not");
+            }
+        }
+
+        return ty;
+    }
+
+    /// <summary>True when the operator token at <paramref name="i"/> has no left operand (so it is a prefix operator).</summary>
+    private bool IsUnaryPosition(int i)
+    {
+        if (i == 0)
+        {
+            return true;
+        }
+
+        var p = _t[i - 1];
+        return p.Kind switch
+        {
+            RustTokenKind.Ident => Keywords.Contains(Text(i - 1)) && Text(i - 1) is not ("true" or "false"),
+            RustTokenKind.Number or RustTokenKind.Str => false,
+            RustTokenKind.Punct => Text(i - 1) is not (")" or "]"),
+            _ => true,
+        };
+    }
+
+    private RType? EvalExprInner(int i, bool emit, out int next)
     {
         next = i + 1;
         // unary prefixes
@@ -596,6 +693,11 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
         {
             if (Is(k, "?"))
             {
+                if (emit && ty?.Def is { Crate.IsStd: true, Name: "Option" or "Result" })
+                {
+                    EmitImplMember(k, ty, "branch");
+                }
+
                 ty = ty?.Def?.Name is "Option" or "Result" ? ty.Args.FirstOrDefault() : null;
                 k++;
                 continue;
@@ -603,8 +705,21 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
 
             if (Is(k, "[") && ty is not null)
             {
+                var close = SkipBalanced(k) - 1;
+                if (emit && ty.Def is { Crate.IsStd: true, Name: "Vec" })
+                {
+                    var after = close + 1;
+                    var mutating = Is(after, "=") && !Is(after + 1, "=")
+                        || (Is(after, "+") || Is(after, "-") || Is(after, "*") || Is(after, "/") || Is(after, "|") || Is(after, "&")) && Is(after + 1, "=") && !Is(after + 2, "=");
+                    var member = mutating ? "index_mut" : "index";
+                    if (EmitImplMember(k, ty, member) && _t[close].Kind == RustTokenKind.Punct)
+                    {
+                        EmitImplMember(close, ty, member);
+                    }
+                }
+
                 ty = RustWorld.ElementType(ty);
-                k = SkipBalanced(k);
+                k = close + 1;
                 continue;
             }
 
@@ -655,7 +770,12 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
                         }
                         else
                         {
-                            ty = null;
+                            if (emit && name is "to_string" or "into" && world.Blanket(name) is { } blanket)
+                            {
+                                Emit(k + 1, blanket);
+                            }
+
+                            ty = name == "to_string" && world.StdNamed("String") is { } str ? RType.Of(str) : null;
                         }
 
                         k = SkipBalanced(after);
@@ -745,49 +865,100 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
         return RustWorld.Subst(declared, map);
     }
 
-    /// <summary>Resolves a binary operator after an expression of known type to the operator trait impl.</summary>
+    private const string OperatorChars = "+-*/%&|^<>=!";
+
+    /// <summary>
+    /// Resolves a binary operator after an expression of known type to the operator trait impl. Like rust-analyzer the
+    /// reference covers the operator token and the whitespace on each side of it.
+    /// </summary>
     private void Operator(int k, RType ty)
     {
-        if (ty.Def is null || k >= _t.Count || _t[k].Kind != RustTokenKind.Punct)
+        if (ty.Def is null || k >= _t.Count || _t[k].Kind != RustTokenKind.Punct || Text(k).Length != 1 || !OperatorChars.Contains(Text(k)[0], StringComparison.Ordinal))
         {
             return;
         }
 
-        var op = Text(k);
+        // maximal run of adjacent operator characters
+        var run = Text(k);
         var end = k + 1;
-        while (end < _t.Count && end - k < 3 && _t[end].Kind == RustTokenKind.Punct && _t[end].Start == _t[end - 1].End && Text(end) is "=" or "<" or ">")
+        while (end < _t.Count && _t[end].Kind == RustTokenKind.Punct && _t[end].Start == _t[end - 1].End && Text(end).Length == 1
+            && OperatorChars.Contains(Text(end)[0], StringComparison.Ordinal))
         {
-            op += Text(end);
+            run += Text(end);
             end++;
         }
 
-        // `a + b` / `a += b`; do not mistake `==`, `=>` etc.
-        if (!RustStd.Operators.TryGetValue(op, out var info))
+        if (!RustStd.Operators.TryGetValue(run, out var info))
         {
-            if (op.Length > 1 && RustStd.Operators.TryGetValue(op[..1], out info) && op[1..] != "=")
-            {
-                end = k + 1;
-            }
-            else
-            {
-                return;
-            }
+            return;
         }
 
         foreach (var impl in ty.Def.Impls)
         {
             if (impl.TraitDef?.Name == info.Trait && impl.Members.TryGetValue(info.Method, out var m))
             {
-                var start = _t[k].Start;
-                var stop = _t[end - 1].End;
                 if (_emitted.Add(k))
                 {
+                    var start = _t[k].Start;
+                    var stop = _t[end - 1].End;
+                    AddWhitespace(k - 1, start, m[0].Symbol, before: true);
                     _file.Occurrences.Add(new OccurrenceRecord(start, stop, m[0].Symbol, false, null));
+                    AddWhitespace(end, stop, m[0].Symbol, before: false);
+                    if (m[0].IsExternal)
+                    {
+                        externals.TryAdd(m[0].Symbol, m[0]);
+                    }
                 }
 
                 return;
             }
         }
+    }
+
+    /// <summary>The blank run (spaces/tabs, one line) right before/after an operator is part of its reference.</summary>
+    private void AddWhitespace(int neighbour, int edge, string symbol, bool before)
+    {
+        if (neighbour < 0 || neighbour >= _t.Count)
+        {
+            return;
+        }
+
+        var from = before ? _t[neighbour].End : edge;
+        var to = before ? edge : _t[neighbour].Start;
+        if (to <= from)
+        {
+            return;
+        }
+
+        for (var q = from; q < to; q++)
+        {
+            if (_b[q] is not ((byte)' ' or (byte)'\t'))
+            {
+                return;
+            }
+        }
+
+        _file.Occurrences.Add(new OccurrenceRecord(from, to, symbol, false, null));
+    }
+
+    /// <summary>Emits a reference at <paramref name="tok"/> to the member <paramref name="member"/> of a trait impl of <paramref name="ty"/>.</summary>
+    private bool EmitImplMember(int tok, RType? ty, string member)
+    {
+        if (ty?.Def is null)
+        {
+            return false;
+        }
+
+        foreach (var impl in ty.Def.Impls)
+        {
+            if (impl.Members.TryGetValue(member, out var m))
+            {
+                Emit(tok, m[0]);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // ---- locals --------------------------------------------------------------------------------------

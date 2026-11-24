@@ -180,27 +180,49 @@ public static partial class CargoWorkspace
             targets.Add(new(libName, IsProcMacro(explicitLib) ? "proc-macro" : "lib", Path.GetFullPath(Path.Combine(dir, libPath))));
         }
 
-        foreach (var bin in Regex.Split(toml, @"^\[\[bin\]\]\s*$", RegexOptions.Multiline).Skip(1))
+        var pkgSection = Section(toml, "package");
+        bool Auto(string key) => !Regex.IsMatch(pkgSection, $@"^\s*{key}\s*=\s*false", RegexOptions.Multiline);
+        foreach (var (table, kind, dirName) in new[] { ("bin", "bin", "src/bin"), ("example", "example", "examples"), ("test", "test", "tests"), ("bench", "bench", "benches") })
         {
-            var body = bin.Split("\n[", 2)[0];
-            var binName = Value(body, "name");
-            var binPath = Value(body, "path") ?? (binName is null ? null : $"src/bin/{binName}.rs");
-            if (binName is not null && binPath is not null && File.Exists(Path.Combine(dir, binPath)))
+            foreach (var bin in Regex.Split(toml, $@"^\[\[{table}\]\]\s*$", RegexOptions.Multiline).Skip(1))
             {
-                targets.Add(new(binName, "bin", Path.GetFullPath(Path.Combine(dir, binPath))));
+                var body = bin.Split("\n[", 2)[0];
+                var binName = Value(body, "name");
+                var binPath = Value(body, "path") ?? (binName is null ? null
+                    : table == "bin" ? $"src/bin/{binName}.rs" : $"{dirName}/{binName}.rs");
+                if (binName is not null && binPath is not null && File.Exists(Path.Combine(dir, binPath)))
+                {
+                    targets.Add(new(binName, kind, Path.GetFullPath(Path.Combine(dir, binPath))));
+                }
             }
         }
 
         var mainRs = Path.Combine(dir, "src", "main.rs");
-        if (File.Exists(mainRs))
+        if (Auto("autobins") && File.Exists(mainRs))
         {
             targets.Add(new(name, "bin", mainRs));
         }
 
-        AddDiscovered(targets, dir, Path.Combine("src", "bin"), "bin");
-        AddDiscovered(targets, dir, "examples", "example");
-        AddDiscovered(targets, dir, "tests", "test");
-        AddDiscovered(targets, dir, "benches", "bench");
+        if (Auto("autobins"))
+        {
+            AddDiscovered(targets, dir, Path.Combine("src", "bin"), "bin");
+        }
+
+        if (Auto("autoexamples"))
+        {
+            AddDiscovered(targets, dir, "examples", "example");
+        }
+
+        if (Auto("autotests"))
+        {
+            AddDiscovered(targets, dir, "tests", "test");
+        }
+
+        if (Auto("autobenches"))
+        {
+            AddDiscovered(targets, dir, "benches", "bench");
+        }
+
         var buildRs = Path.Combine(dir, "build.rs");
         if (File.Exists(buildRs))
         {

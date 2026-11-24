@@ -35,11 +35,9 @@ internal sealed class RustWorld
 {
     public List<CrateData> Crates { get; } = [];
 
-    public Dictionary<string, Item> BySymbol { get; } = [];
 
     public Dictionary<SourceFileResult, FileInfo> Files { get; } = [];
 
-    private readonly Dictionary<string, ImplData> _implBySymbol = [];
 
     private readonly List<ImplData> _allImpls = [];
 
@@ -56,6 +54,16 @@ internal sealed class RustWorld
     public CrateData Alloc { get; }
 
     public CrateData Std { get; }
+
+    private readonly Dictionary<string, Item> _blanket = [];
+
+    /// <summary>Blanket trait impls (<c>impl&lt;T: Display&gt; ToString for T</c>) used when the receiver type is unknown.</summary>
+    public Item? Blanket(string method) => _blanket.GetValueOrDefault(method);
+
+    private readonly Dictionary<string, Item> _stdAttrs = [];
+
+    /// <summary>Built-in attribute (<c>test</c>, <c>derive</c>) or derive macro (<c>Debug</c>) of the std model.</summary>
+    public Item? StdAttr(string name) => _stdAttrs.GetValueOrDefault(name);
 
     public Item? StdNamed(string name) => _stdTypeNames.GetValueOrDefault(name);
 
@@ -83,11 +91,14 @@ internal sealed class RustWorld
         return crate;
     }
 
+    private int _stdItemCount;
+
     private Item NewItem(CrateData crate, MonikerDescriptor[] descriptors, Kind kind)
     {
+        _stdItemCount++;
         var symbol = RustMonikers.Format(new Moniker(crate.Package, descriptors));
         var item = new Item(descriptors[^1].Name, symbol, kind, crate);
-        BySymbol[symbol] = item;
+        crate.BySymbol[symbol] = item;
         return item;
     }
 
@@ -156,9 +167,36 @@ internal sealed class RustWorld
                         var type = WalkStd(f[1]);
                         if (type is not null)
                         {
-                            AddStdImpl(type, f[2], EnsureModule(f[3].Split('/'), f[3].Split('/').Length), f[4], trait: null);
+                            AddStdImpl(type, f[2], EnsureModule(f[3].Split('/'), f[3].Split('/').Length), f[4], trait: null, f.Length > 5 ? f[5] : null);
                         }
 
+                        break;
+                    }
+
+                case "mod":
+                    {
+                        var parts = f[1].Split('/');
+                        EnsureModule(parts, parts.Length);
+                        break;
+                    }
+
+                case "modre":
+                    {
+                        var parts = f[1].Split('/');
+                        _reexports.Add((EnsureModule(parts, parts.Length), f[2]));
+                        break;
+                    }
+
+                case "fn":
+                    {
+                        var parts = f[1].Split('/');
+                        var module = EnsureModule(parts, parts.Length - 1);
+                        var d = parts.Take(parts.Length - 1).Select(p => new MonikerDescriptor(p, Suffix.Namespace))
+                            .Append(new MonikerDescriptor(parts[^1], Suffix.Method)).ToArray();
+                        var fn = NewItem(module.Crate, d, Kind.Function);
+                        fn.StdTy = f[2];
+                        fn.Parent = module;
+                        module.AddMember(fn);
                         break;
                     }
 
@@ -172,6 +210,17 @@ internal sealed class RustWorld
                         var it = NewItem(crate, d, Kind.Macro);
                         it.Parent = module;
                         module.AddMember(it);
+                        break;
+                    }
+
+                case "attr":
+                    {
+                        // attribute / derive macros live in their own namespace (`:` suffix) and are not nameable members
+                        var parts = f[1].Split('/');
+                        var module = EnsureModule(parts, parts.Length - 1);
+                        var d = parts.Take(parts.Length - 1).Select(p => new MonikerDescriptor(p, Suffix.Namespace))
+                            .Append(new MonikerDescriptor(parts[^1], Suffix.Meta)).ToArray();
+                        _stdAttrs[parts[^1]] = NewItem(module.Crate, d, Kind.Attribute);
                         break;
                     }
 
@@ -201,10 +250,100 @@ internal sealed class RustWorld
             }
         }
 
+        foreach (var (module, from) in _reexports)
+        {
+            if (WalkStd(from) is { } source)
+            {
+                foreach (var (name, list) in source.Members.ToList())
+                {
+                    if (!module.Members.ContainsKey(name))
+                    {
+                        foreach (var m in list)
+                        {
+                            module.AddMemberAs(name, m);
+                        }
+                    }
+                }
+            }
+        }
+
+        AddPrimitives();
+        AddBlanket("alloc/string", "ToString", "to_string", "String", "T");
+        AddBlanket("core/convert", "Into<U>", "into", "()", "T");
         StrItem = MakeBuiltin("str");
         SliceItem = MakeBuiltin("slice");
         _stdTypeNames["str"] = StrItem;
         _stdTypeNames["slice"] = SliceItem;
+    }
+
+    private void AddBlanket(string modulePath, string traitText, string method, string ret, string selfText)
+    {
+        var parts = modulePath.Split('/');
+        var module = EnsureModule(parts, parts.Length);
+        var holder = NewItem(module.Crate, [.. SymbolPrefix(module), new("blanket " + method, Suffix.Type)], Kind.Struct);
+        AddStdImpl(holder, selfText, module, method + "(s)->" + ret, null, traitText);
+        _blanket[method] = holder.Impls[^1].Members[method][0];
+    }
+
+    private readonly Dictionary<string, Item> _prims = [];
+
+    public Item? Primitive(string name) => _prims.GetValueOrDefault(name);
+
+    /// <summary>
+    /// Primitive types with their operator trait impls (<c>core ops/arith/impl#[usize][`Add&lt;Self&gt;`]add()</c> ...);
+    /// they only exist to resolve operators, never as referenced symbols themselves.
+    /// </summary>
+    private void AddPrimitives()
+    {
+        string[] ints = ["u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize"];
+        string[] floats = ["f32", "f64"];
+        (string Trait, string Method)[] arith = [("Add", "add"), ("Sub", "sub"), ("Mul", "mul"), ("Div", "div"), ("Rem", "rem")];
+        (string Trait, string Method)[] bits = [("BitAnd", "bitand"), ("BitOr", "bitor"), ("BitXor", "bitxor")];
+        foreach (var name in ints.Concat(floats).Append("bool").Append("char"))
+        {
+            var d = new[] { new MonikerDescriptor("core", Suffix.Namespace), new MonikerDescriptor(name, Suffix.Type) };
+            var item = NewItem(Core, d, Kind.Struct);
+            _prims[name] = item;
+            var numeric = name is not ("bool" or "char");
+            if (numeric)
+            {
+                AddOps(item, name, "core/ops/arith", arith, name, assign: true);
+            }
+
+            if (ints.Contains(name) || name == "bool")
+            {
+                AddOps(item, name, "core/ops/bit", bits, name, assign: true);
+                AddOps(item, name, "core/ops/bit", [("Not", "not")], name, assign: false, selfArg: false);
+            }
+
+            AddOps(item, name, "core/cmp/impls", [("PartialEq", "eq"), ("PartialEq", "ne"), ("PartialOrd", "lt"), ("PartialOrd", "le"), ("PartialOrd", "gt"), ("PartialOrd", "ge")], "bool", assign: false);
+        }
+    }
+
+    private void AddOps(Item prim, string name, string modulePath, (string Trait, string Method)[] ops, string ret, bool assign, bool selfArg = true)
+    {
+        var parts = modulePath.Split('/');
+        var module = EnsureModule(parts, parts.Length);
+        List<(string Trait, string Method)> all = [.. ops];
+        if (assign)
+        {
+            all.AddRange(ops.Select(o => (o.Trait + "Assign", o.Method + "_assign")));
+        }
+
+        // one impl block per trait (`impl#[usize][`Add<Self>`]`), members grouped by trait
+        foreach (var group in all.GroupBy(o => o.Trait))
+        {
+            var traitPath = modulePath == "core/cmp/impls" ? "core/cmp/" + group.Key : modulePath + "/" + group.Key;
+            var trait = WalkStd(traitPath);
+            if (trait is null)
+            {
+                continue;
+            }
+
+            var isAssign = group.Key.EndsWith("Assign", StringComparison.Ordinal);
+            var members = string.Join(';', group.Select(g => g.Method + "(s)->" + (isAssign ? "()" : ret)));
+            AddStdImpl(prim, name, module, members, trait, selfArg && group.Key is not "Not" ? group.Key + "<Self>" : group.Key);
+        }
     }
 
     private Item MakeBuiltin(string name)
@@ -224,7 +363,7 @@ internal sealed class RustWorld
         var item = NewItem(crate, d, kind);
         item.Parent = module;
         module.AddMember(item);
-        _stdTypeNames[item.Name] = item;
+        _stdTypeNames.TryAdd(item.Name, item);
         if (f[0] == "trait")
         {
             AddStdMembers(item, d, f[3], inTrait: true);
@@ -248,11 +387,19 @@ internal sealed class RustWorld
         }
     }
 
-    private void AddStdImpl(Item type, string selfText, Item module, string members, Item? trait)
+    private readonly List<(Item Module, string From)> _reexports = [];
+
+    private void AddStdImpl(Item type, string selfText, Item module, string members, Item? trait, string? traitText = null)
     {
         var crate = module.Crate;
         var prefix = SymbolPrefix(module);
-        MonikerDescriptor[] d = [.. prefix, new("impl", Suffix.Type), new(selfText, Suffix.TypeParameter)];
+        List<MonikerDescriptor> dl = [.. prefix, new("impl", Suffix.Type), new(selfText, Suffix.TypeParameter)];
+        if (traitText is not null)
+        {
+            dl.Add(new(traitText, Suffix.TypeParameter));
+        }
+
+        var d = dl.ToArray();
         var impl = new ImplData(RustMonikers.Format(new Moniker(crate.Package, d)), crate)
         {
             Module = module,
@@ -315,7 +462,7 @@ internal sealed class RustWorld
             Files[f] = new FileInfo { File = f, Crate = crate };
             foreach (var info in f.Symbols)
             {
-                if (info.Symbol.StartsWith("local ", StringComparison.Ordinal) || BySymbol.ContainsKey(info.Symbol)
+                if (info.Symbol.StartsWith("local ", StringComparison.Ordinal) || crate.BySymbol.ContainsKey(info.Symbol)
                     || !SymbolParser.TryParse(info.Symbol, out var parsed, out _) || parsed.Descriptors.Count == 0)
                 {
                     continue;
@@ -324,14 +471,14 @@ internal sealed class RustWorld
                 var last = parsed.Descriptors[^1];
                 if (info.Kind == Kind.TypeAlias && last.Suffix == Suffix.TypeParameter)
                 {
-                    if (!_implBySymbol.ContainsKey(info.Symbol))
+                    if (!crate.ImplBySymbol.ContainsKey(info.Symbol))
                     {
                         var impl = new ImplData(info.Symbol, crate)
                         {
                             File = f,
                             Range = f.ImplRanges.FirstOrDefault(r => r.Symbol == info.Symbol),
                         };
-                        _implBySymbol[info.Symbol] = impl;
+                        crate.ImplBySymbol[info.Symbol] = impl;
                         _allImpls.Add(impl);
                         impls.Add((impl, parsed));
                     }
@@ -339,7 +486,7 @@ internal sealed class RustWorld
                     continue;
                 }
 
-                var item = new Item(last.Name, info.Symbol, info.Kind, crate) { File = f };
+                var item = new Item(last.Name, info.Symbol, info.Kind, crate) { File = f, BodyLocal = f.BodyItems.Contains(info.Symbol) };
                 if (f.TypeRanges.TryGetValue(info.Symbol, out var tr))
                 {
                     item.TyFrom = tr.From;
@@ -351,7 +498,7 @@ internal sealed class RustWorld
                     item.Generics = g;
                 }
 
-                BySymbol[info.Symbol] = item;
+                crate.BySymbol[info.Symbol] = item;
                 created.Add((item, parsed));
                 if (info.Kind == Kind.Macro)
                 {
@@ -371,7 +518,7 @@ internal sealed class RustWorld
                 }
             }
 
-            if (idx > 0 && BySymbol.TryGetValue(FormatPrefix(parsed, idx), out var module))
+            if (idx >= 0 && crate.BySymbol.TryGetValue(FormatPrefix(parsed, idx), out var module))
             {
                 impl.Module = module;
             }
@@ -379,19 +526,19 @@ internal sealed class RustWorld
 
         foreach (var (item, parsed) in created)
         {
-            if (parsed.Descriptors.Count == CrateDescriptorCount(crate) && item.Kind == Kind.Module && crate.Root is null)
+            if (parsed.Descriptors is [{ Name: "crate", Suffix: Suffix.Namespace }] && item.Kind == Kind.Module && crate.Root is null)
             {
                 crate.Root = item;
                 continue;
             }
 
             var parentSym = FormatPrefix(parsed, parsed.Descriptors.Count - 1);
-            if (_implBySymbol.TryGetValue(parentSym, out var impl))
+            if (crate.ImplBySymbol.TryGetValue(parentSym, out var impl))
             {
                 item.ParentImpl = impl;
                 impl.AddMember(item);
             }
-            else if (BySymbol.TryGetValue(parentSym, out var parent))
+            else if (crate.BySymbol.TryGetValue(parentSym, out var parent))
             {
                 item.Parent = parent;
                 parent.AddMember(item);
@@ -412,11 +559,14 @@ internal sealed class RustWorld
         return crate;
     }
 
-    private static int CrateDescriptorCount(CrateData crate) => RustMonikers.CrateDescriptors(crate.TargetKind, crate.Name).Count;
-
     private static string FormatPrefix(Symbol parsed, int count)
     {
         var s = new Symbol { Scheme = parsed.Scheme, Package = parsed.Package };
+        if (count == 0)
+        {
+            s.Descriptors.Add(new SymbolDescriptor { Name = "crate", Suffix = Suffix.Namespace });
+        }
+
         for (var i = 0; i < count; i++)
         {
             s.Descriptors.Add(parsed.Descriptors[i]);
@@ -436,7 +586,7 @@ internal sealed class RustWorld
             fi.TraitAt = new Item?[n];
             foreach (var (s, e, sym) in file.ModuleRanges.OrderByDescending(r => r.End - r.Start))
             {
-                if (BySymbol.TryGetValue(sym, out var m))
+                if (fi.Crate.BySymbol.TryGetValue(sym, out var m))
                 {
                     Array.Fill(fi.ModuleAt, m, s, Math.Min(e, n) - s);
                 }
@@ -444,7 +594,7 @@ internal sealed class RustWorld
 
             foreach (var r in file.ImplRanges.OrderByDescending(r => r.End - r.Start))
             {
-                if (_implBySymbol.TryGetValue(r.Symbol, out var impl))
+                if (fi.Crate.ImplBySymbol.TryGetValue(r.Symbol, out var impl))
                 {
                     var copy = impl.Range == r ? impl : impl;
                     Array.Fill(fi.ImplAt, copy, r.Start, Math.Min(r.End, n) - r.Start);
@@ -453,7 +603,7 @@ internal sealed class RustWorld
 
             foreach (var (s, e, sym) in file.TraitRanges)
             {
-                if (BySymbol.TryGetValue(sym, out var t))
+                if (fi.Crate.BySymbol.TryGetValue(sym, out var t))
                 {
                     Array.Fill(fi.TraitAt, t, s, Math.Min(e, n) - s);
                 }
@@ -514,6 +664,8 @@ internal sealed class RustWorld
             LinkImpl(impl);
         }
     }
+
+    public IEnumerable<ImplData> AllImpls => _allImpls;
 
     public IEnumerable<UseBinding> ImportsOf(Item module) => _imports.TryGetValue(module, out var l) ? l : [];
 
@@ -599,13 +751,16 @@ internal sealed class RustWorld
             return null;
         }
 
+        Item? deferred = null;
         if (module.Members.TryGetValue(name, out var direct))
         {
-            var hit = direct.FirstOrDefault(i => Matches(i, want));
+            var hit = direct.FirstOrDefault(i => Matches(i, want) && !i.BodyLocal);
             if (hit is not null)
             {
                 return hit;
             }
+
+            deferred = direct.FirstOrDefault(i => Matches(i, want));
         }
 
         if (module.Kind == Kind.Module)
@@ -622,6 +777,11 @@ internal sealed class RustWorld
                 {
                     return target;
                 }
+            }
+
+            if (deferred is not null)
+            {
+                return deferred;
             }
 
             foreach (var u in ImportsOf(module))
@@ -645,7 +805,7 @@ internal sealed class RustWorld
             }
         }
 
-        return null;
+        return deferred;
     }
 
     private Item? ResolveUse(UseBinding u, NameSpaces want, HashSet<(Item, string)> visited)
@@ -711,7 +871,17 @@ internal sealed class RustWorld
 
         if ((want & NameSpaces.Macro) != 0 && cx.Crate.Macros.TryGetValue(name, out var mac))
         {
-            return mac;
+            // a module-local macro that shadows a std macro (`write!`) is only in scope inside its own module tree
+            var local = false;
+            for (var m = module; m is not null && !local; m = m.Parent)
+            {
+                local = m == mac.Parent;
+            }
+
+            if (local || mac.Parent == cx.Crate.Root || !_prelude.TryGetValue(name, out var stdMacro) || stdMacro.Kind != Kind.Macro)
+            {
+                return mac;
+            }
         }
 
         if (_prelude.TryGetValue(name, out var pre) && Matches(pre, want))
@@ -792,11 +962,11 @@ internal sealed class RustWorld
     }
 
     /// <summary>Associated item lookup: enum variants, inherent impl items, trait impl items, trait items.</summary>
-    public Item? FindAssoc(Item type, string name)
+    public Item? FindAssoc(Item type, string name, bool methodsOnly = false)
     {
-        if (type.Members.TryGetValue(name, out var direct))
+        if (type.Members.TryGetValue(name, out var direct) && direct.FirstOrDefault(x => !methodsOnly || x.Kind != Kind.Field) is { } directHit)
         {
-            return direct[0];
+            return directHit;
         }
 
         Item? viaTrait = null;
@@ -981,6 +1151,11 @@ internal sealed class RustWorld
         if (single is "str")
         {
             return RType.Of(StrItem);
+        }
+
+        if (single is not null && _prims.TryGetValue(single, out var prim))
+        {
+            return RType.Of(prim);
         }
 
         var item = ResolveSegments(new Ctx(cx.File, first), names, NameSpaces.Type, null);
@@ -1215,6 +1390,8 @@ internal sealed class RustWorld
         {
             "String" => RType.Of(StrItem),
             "Vec" => RType.Of(SliceItem, t.Args.FirstOrDefault()),
+            "PathBuf" when _stdTypeNames.GetValueOrDefault("Path") is { } path => RType.Of(path),
+            "OsString" when _stdTypeNames.GetValueOrDefault("OsStr") is { } os => RType.Of(os),
             _ => null,
         };
     }
@@ -1223,7 +1400,7 @@ internal sealed class RustWorld
     {
         for (var hops = 0; receiver?.Def is not null && hops < 4; hops++)
         {
-            var found = FindAssoc(receiver.Def, name);
+            var found = FindAssoc(receiver.Def, name, methodsOnly: true);
             if (found is not null)
             {
                 return found;
@@ -1239,7 +1416,7 @@ internal sealed class RustWorld
     {
         for (var hops = 0; receiver?.Def is not null && hops < 4; hops++)
         {
-            if (FindAssoc(receiver.Def, name) is not null)
+            if (FindAssoc(receiver.Def, name, methodsOnly: true) is not null)
             {
                 return receiver;
             }

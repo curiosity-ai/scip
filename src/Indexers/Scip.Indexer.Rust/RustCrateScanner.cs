@@ -29,6 +29,9 @@ public sealed class SourceFileResult(string path, byte[] bytes, List<RustToken> 
     // ---- structural facts recorded for the resolver (token indices) ----
     public List<(int Start, int End, string Symbol)> ModuleRanges { get; } = [];
 
+    /// <summary>Symbols of items declared inside function bodies.</summary>
+    public HashSet<string> BodyItems { get; } = [];
+
     public List<ImplRange> ImplRanges { get; } = [];
 
     public List<(int Start, int End, string Symbol)> TraitRanges { get; } = [];
@@ -75,6 +78,12 @@ internal sealed record ScanContext(
 public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, ISet<string> seenFiles)
 {
     private readonly Dictionary<string, List<(string Symbol, bool IsMacro)>> _itemsByName = [];
+
+    /// <summary>Macros whose expansion defines <c>fn $name</c>: macro name to the index of the name argument.</summary>
+    private readonly Dictionary<string, int> _fnMacros = [];
+
+    /// <summary>Signature text (<c>pub(crate) mod x</c>) of file modules, recorded at their <c>mod x;</c> declaration.</summary>
+    private readonly Dictionary<string, string> _moduleSigs = [];
 
     public List<SourceFileResult> Files { get; } = [];
 
@@ -188,19 +197,59 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
         private string TypeText(int from, int to)
         {
+            // Mirrors the spacing of rust-analyzer's HIR display: `Foo<'a, T>`, `fn f(a: u8) -> bool`, `A + B`, `[T; N]`.
             var sb = new StringBuilder();
+            var prev = "";
             for (var i = from; i < to; i++)
             {
                 var s = Text(i);
-                if (sb.Length > 0 && IsWordChar(sb[^1]) && s.Length > 0 && IsWordChar(s[0]))
+                if (s.Length == 0)
+                {
+                    continue;
+                }
+
+                if (prev == "," && s is ")" or "]" or ">" or ">>")
+                {
+                    sb.Length--; // trailing comma
+                    prev = "";
+                }
+
+                if (sb.Length > 0 && NeedsSpace(prev, s, sb[^1]))
                 {
                     sb.Append(' ');
                 }
 
                 sb.Append(s);
+                prev = s;
             }
 
             return sb.ToString();
+        }
+
+        /// <summary>The trait of an impl is displayed by name only (<c>std::hash::Hasher</c> becomes <c>Hasher</c>); arguments stay as written.</summary>
+        private static string StripTraitPath(string text)
+        {
+            var lt = text.IndexOf('<', StringComparison.Ordinal);
+            var head = lt < 0 ? text : text[..lt];
+            var sep = head.LastIndexOf("::", StringComparison.Ordinal);
+            return sep < 0 ? text : text[(sep + 2)..];
+        }
+
+        private static bool NeedsSpace(string prev, string s, char last)
+        {
+            if (IsWordChar(last) && IsWordChar(s[0]))
+            {
+                return true;
+            }
+
+            if (s is "::" or ":" or "," or ";" or ")" or "]" || prev is "::" or "&" or "(" or "[" or "<")
+            {
+                return false;
+            }
+
+            return prev is "," or ";" or ":" or "->" or "=" or "+" or "=>"
+                || s is "->" or "=" or "+" or "=>"
+                || (prev is ")" or "]" or ">" or ">>" && (IsWordChar(s[0]) || s is "&" or "*"));
         }
 
         private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '\'';
@@ -220,7 +269,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 body = body[..^2];
             }
 
-            return string.Join('\n', body.Split('\n').Select(l => l.Trim().TrimStart('*').Trim())).Trim();
+            return string.Join('\n', body.Split('\n').Select(l => l.Trim().TrimStart('*').Trim()));
         }
 
         // ---- symbol helpers ------------------------------------------------------------------------------
@@ -246,11 +295,15 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             return new Def(FormatSymbol(all), all);
         }
 
-        private void EndDef(Def d, int nameTok, Kind kind, int startTok, int endTokExclusive, List<string> docs, string? signature, string displayName)
+        private void EndDef(Def d, int nameTok, Kind kind, int startTok, int endTokExclusive, List<string> docs, string? signature, string displayName, bool occurrence = true)
         {
             var nt = _t[nameTok];
             (int, int)? enclosing = (_t[startTok].Start, _t[Math.Max(startTok, endTokExclusive - 1)].End);
-            file.Occurrences.Add(new(nt.Start, nt.End, d.Symbol, true, enclosing));
+            if (occurrence)
+            {
+                file.Occurrences.Add(new(nt.Start, nt.End, d.Symbol, true, enclosing));
+            }
+
             file.Consumed.Add(nameTok);
             var info = new SymbolInformation { Symbol = d.Symbol, Kind = kind, DisplayName = displayName };
             if (docs.Count > 0)
@@ -301,6 +354,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             if (_moduleDocs.Count > 0)
             {
                 info.Documentation.Add(string.Join('\n', _moduleDocs));
+            }
+
+            if (owner._moduleSigs.TryGetValue(d.Symbol, out var moduleSig))
+            {
+                info.SignatureDocumentation = new Signature { Language = "rust", Text = moduleSig };
             }
 
             file.Symbols.Add(info);
@@ -473,6 +531,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             }
 
             var kw = _t[_i].Kind == RustTokenKind.Ident ? Text(_i) : "";
+            if (kw.Length > 0 && Is(_i + 1, "!") && IsOpen(Text(_i + 2)) && owner._fnMacros.TryGetValue(kw, out var nameArg) && ParseFnMacro(ctx, itemStart, docs, nameArg))
+            {
+                return;
+            }
+
             switch (kw)
             {
                 case "mod": ParseMod(ctx, itemStart, sigStart, docs, pathAttr); break;
@@ -567,6 +630,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
                 file.Occurrences.Add(new(_t[nameTok].Start, _t[nameTok].End, def.Symbol, false, null));
                 file.Consumed.Add(nameTok);
+                owner._moduleSigs[def.Symbol] = SigText(sigStart, nameTok + 1);
                 var stem = Path.GetFileNameWithoutExtension(found);
                 var childDir = stem == "mod" ? Path.GetDirectoryName(found)! : Path.Combine(Path.GetDirectoryName(found)!, stem);
                 var childCtx = new ScanContext(def.Descriptors, def.Descriptors, childDir, AssocKind.None);
@@ -872,7 +936,6 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                     // The field has no name token; the type is the definition range.
                     var name = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
                     var fd = Descriptor(parent.Descriptors, new MonikerDescriptor(name, Suffix.Term));
-                    file.Occurrences.Add(new(_t[typeStart].Start, _t[e - 1].End, fd.Symbol, true, (_t[start].Start, _t[e - 1].End)));
                     file.Symbols.Add(new SymbolInformation
                     {
                         Symbol = fd.Symbol,
@@ -1118,7 +1181,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
             var headerEnd = k;
             var selfText = forTok >= 0 ? TypeText(forTok + 1, headerEnd) : TypeText(headerStart, headerEnd);
-            var traitText = forTok >= 0 ? TypeText(headerStart, forTok) : null;
+            var traitText = forTok >= 0 ? StripTraitPath(TypeText(headerStart, forTok)) : null;
             if (traitText is not null && RustStd.DefaultSelfArgTraits.Contains(traitText))
             {
                 traitText += "<Self>"; // rust-analyzer displays the defaulted `Rhs = Self` parameter
@@ -1155,7 +1218,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 implGenerics.End = _i;
             }
 
-            EndDef(def, implTok, Kind.TypeAlias, itemStart, _i, docs, SigText(sigStart, headerEnd), selfText);
+            EndDef(def, implTok, Kind.TypeAlias, itemStart, _i, docs, SigText(sigStart, headerEnd), selfText, occurrence: false);
         }
 
         private void ParseConstStatic(ScanContext ctx, int itemStart, int sigStart, List<string> docs, string kw)
@@ -1235,6 +1298,106 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             }
         }
 
+        /// <summary>
+        /// Item-level invocation of a <c>macro_rules!</c> macro that expands to <c>fn $name() { .. }</c> (test-generating
+        /// macros such as ripgrep's <c>rgtest!</c>): defines the generated function and scans the arguments as its body.
+        /// </summary>
+        private bool ParseFnMacro(ScanContext ctx, int itemStart, List<string> docs, int nameArg)
+        {
+            var open = _i + 2;
+            var close = SkipBalanced(open);
+            var argStart = open + 1;
+            var arg = 0;
+            var depth = 0;
+            var nameTok = -1;
+            for (var k = open + 1; k < close - 1; k++)
+            {
+                var q = _t[k].Kind == RustTokenKind.Punct ? Text(k) : "";
+                if (IsOpen(q))
+                {
+                    depth++;
+                }
+                else if (IsClose(q))
+                {
+                    depth--;
+                }
+                else if (depth == 0 && q == ",")
+                {
+                    arg++;
+                    argStart = k + 1;
+                    continue;
+                }
+
+                if (arg == nameArg && depth == 0 && k == argStart && IsKind(k, RustTokenKind.Ident) && (Is(k + 1, ",") || k + 1 == close - 1))
+                {
+                    nameTok = k;
+                }
+            }
+
+            if (nameTok < 0)
+            {
+                return false;
+            }
+
+            var def = BeginDef(ctx, Text(nameTok), Suffix.Method);
+            new BodyScanner(this, def.Symbol, ctx.ModulePrefix, ctx.Dir, []).Run(open, close - 1);
+            _i = close;
+            if (Is(_i, ";"))
+            {
+                _i++;
+            }
+
+            EndDef(def, nameTok, Kind.Function, itemStart, _i, docs, null, Text(nameTok));
+            return true;
+        }
+
+        /// <summary>Position of the <c>$name:ident</c> matcher argument that a macro body turns into <c>fn $name</c>, or -1.</summary>
+        private int FnMacroNameArg(int bodyOpen, int bodyEnd)
+        {
+            var fnName = "";
+            for (var j = bodyOpen + 1; j + 2 < bodyEnd; j++)
+            {
+                if (Is(j, "fn") && Is(j + 1, "$") && IsKind(j + 2, RustTokenKind.Ident))
+                {
+                    fnName = Text(j + 2);
+                    break;
+                }
+            }
+
+            if (fnName.Length == 0 || !IsOpen(Text(bodyOpen + 1)))
+            {
+                return -1;
+            }
+
+            var m0 = bodyOpen + 1;
+            var mEnd = SkipBalanced(m0) - 1;
+            var arg = 0;
+            var depth = 0;
+            for (var k = m0 + 1; k < mEnd; k++)
+            {
+                var q = _t[k].Kind == RustTokenKind.Punct ? Text(k) : "";
+                if (depth == 0 && Is(k, "$") && Is(k + 1, fnName) && Is(k + 2, ":") && Is(k + 3, "ident"))
+                {
+                    return arg;
+                }
+
+                if (IsOpen(q))
+                {
+                    depth++;
+                }
+                else if (IsClose(q))
+                {
+                    depth--;
+                }
+                else if (depth == 0 && q == ",")
+                {
+                    arg++;
+                }
+            }
+
+            return -1;
+        }
+
         private void ParseMacroRules(ScanContext ctx, int itemStart, List<string> docs)
         {
             var nameTok = _i + 2;
@@ -1249,6 +1412,12 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             _i = nameTok + 1;
             if (_i < _t.Count && IsOpen(Text(_i)))
             {
+                var nameArg = FnMacroNameArg(_i, SkipBalanced(_i) - 1);
+                if (nameArg >= 0)
+                {
+                    owner._fnMacros[name] = nameArg;
+                }
+
                 _i = SkipBalanced(_i);
             }
 
@@ -1321,9 +1490,31 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 List<(string Name, string Symbol)>? blockBindings = null;
                 var blockDepth = 0;
                 var itemCtx = new ScanContext(modulePrefix, modulePrefix, dir, AssocKind.None);
+                List<(int From, int To, List<(string Name, string Symbol)> Bindings)> regions = [];
+                List<int> active = [];
                 for (var i = open; i < end; i++)
                 {
+                    while (active.Count > 0 && i >= active[^1])
+                    {
+                        active.RemoveAt(active.Count - 1);
+                        scopes.RemoveAt(scopes.Count - 1);
+                    }
+
+                    for (var r = 0; r < regions.Count; r++)
+                    {
+                        if (regions[r].From == i)
+                        {
+                            scopes.Add([.. regions[r].Bindings]);
+                            active.Add(regions[r].To);
+                        }
+                    }
+
                     var t = s._t[i];
+                    if (t.Kind == RustTokenKind.Ident && s.Text(i) == "match" && !s.Is(i - 1, ".") && !s.Is(i - 1, "::"))
+                    {
+                        ScanMatchArms(i, end, regions, skip);
+                    }
+
                     if (t.Kind == RustTokenKind.Punct)
                     {
                         var p = s.Text(i);
@@ -1574,6 +1765,140 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 }
             }
 
+            /// <summary>
+            /// Declares the bindings of every arm pattern of the <c>match</c> at <paramref name="matchTok"/>; each arm's
+            /// bindings are visible from the start of its pattern (guards) to the end of its body.
+            /// </summary>
+            private void ScanMatchArms(int matchTok, int end, List<(int From, int To, List<(string Name, string Symbol)> Bindings)> regions, HashSet<int> skip)
+            {
+                var depth = 0;
+                var open = -1;
+                for (var k = matchTok + 1; k < end; k++)
+                {
+                    var q = s._t[k].Kind == RustTokenKind.Punct ? s.Text(k) : "";
+                    if (q == "{" && depth == 0)
+                    {
+                        open = k;
+                        break;
+                    }
+
+                    if (IsOpenP(q))
+                    {
+                        depth++;
+                    }
+                    else if (IsCloseP(q))
+                    {
+                        depth--;
+                        if (depth < 0)
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                if (open < 0)
+                {
+                    return;
+                }
+
+                var closeIdx = s.SkipBalanced(open) - 1;
+                var pos = open + 1;
+                while (pos < closeIdx)
+                {
+                    var patStart = pos;
+                    while (s.Is(pos, "#") && s.Is(pos + 1, "["))
+                    {
+                        pos = s.SkipBalanced(pos + 1);
+                    }
+
+                    var arrow = -1;
+                    var guard = -1;
+                    var d = 0;
+                    for (var k = pos; k < closeIdx; k++)
+                    {
+                        var q = s._t[k].Kind == RustTokenKind.Punct ? s.Text(k) : "";
+                        if (IsOpenP(q))
+                        {
+                            d++;
+                        }
+                        else if (IsCloseP(q))
+                        {
+                            d--;
+                        }
+                        else if (d == 0 && q == "=>")
+                        {
+                            arrow = k;
+                            break;
+                        }
+                        else if (d == 0 && guard < 0 && s._t[k].Kind == RustTokenKind.Ident && s.Text(k) == "if")
+                        {
+                            guard = k;
+                        }
+                    }
+
+                    if (arrow < 0)
+                    {
+                        return;
+                    }
+
+                    var bodyEnd = arrow + 1;
+                    if (s.Is(bodyEnd, "{"))
+                    {
+                        bodyEnd = s.SkipBalanced(bodyEnd);
+                        if (s.Is(bodyEnd, ","))
+                        {
+                            bodyEnd++;
+                        }
+                    }
+                    else
+                    {
+                        d = 0;
+                        while (bodyEnd < closeIdx)
+                        {
+                            var q = s._t[bodyEnd].Kind == RustTokenKind.Punct ? s.Text(bodyEnd) : "";
+                            if (IsOpenP(q))
+                            {
+                                d++;
+                            }
+                            else if (IsCloseP(q))
+                            {
+                                d--;
+                            }
+                            else if (d == 0 && q == ",")
+                            {
+                                bodyEnd++;
+                                break;
+                            }
+
+                            bodyEnd++;
+                        }
+                    }
+
+                    List<(string Name, string Symbol)> bindings = [];
+                    HashSet<string> seen = [];
+                    foreach (var b in s.ExtractBindings(pos, guard < 0 ? arrow : guard))
+                    {
+                        var n = s.Text(b);
+                        skip.Add(b);
+                        // or-patterns bind the same name in every alternative: one symbol, several definitions
+                        var sym = bindings.FirstOrDefault(x => x.Name == n).Symbol;
+                        if (sym is null)
+                        {
+                            sym = s.DeclareLocal(b, n, Kind.Variable, enclosing);
+                            bindings.Add((n, sym));
+                        }
+                        else
+                        {
+                            s.Out.Occurrences.Add(new(s._t[b].Start, s._t[b].End, sym, true, null));
+                            s.Out.Consumed.Add(b);
+                        }
+                    }
+
+                    regions.Add((patStart, Math.Min(bodyEnd, closeIdx), bindings));
+                    pos = bodyEnd;
+                }
+            }
+
             private bool IsClosureStart(int i, int open)
             {
                 if (i <= open)
@@ -1595,7 +1920,13 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
             {
                 var saved = s._i;
                 s._i = i;
+                var before = s.Out.Symbols.Count;
                 s.ParseItem(itemCtx);
+                for (var q = before; q < s.Out.Symbols.Count; q++)
+                {
+                    s.Out.BodyItems.Add(s.Out.Symbols[q].Symbol);
+                }
+
                 var next = Math.Max(s._i, i + 1);
                 s._i = saved;
                 return next;

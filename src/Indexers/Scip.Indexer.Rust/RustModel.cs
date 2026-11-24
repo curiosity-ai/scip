@@ -26,6 +26,11 @@ internal sealed class CrateData(string name, PackageInformation package, string 
 
     public Item? Root { get; set; }
 
+    /// <summary>Items by symbol. Symbols are only unique within one cargo target (every target's root is <c>crate/</c>).</summary>
+    public Dictionary<string, Item> BySymbol { get; } = [];
+
+    public Dictionary<string, ImplData> ImplBySymbol { get; } = [];
+
     /// <summary>True for crates whose sources lie outside the indexed project (path dependencies elsewhere).</summary>
     public bool External { get; set; }
 
@@ -67,6 +72,9 @@ internal sealed class Item(string name, string symbol, Kind kind, CrateData crat
     public int TyTo { get; set; }
 
     public string? StdTy { get; set; }
+
+    /// <summary>Defined inside a function body: only visible there, so imports of the module take precedence.</summary>
+    public bool BodyLocal { get; set; }
 
     public GenericScope? Generics { get; set; }
 

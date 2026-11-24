@@ -14,11 +14,12 @@ solving, type inference) is out of scope, so the port is two native layers:
    needed because only workspace packages are indexed.
 2. **Token-level item scanner** (`RustLexer`, `RustCrateScanner`): walks each target's module tree (`mod x;` ->
    `x.rs` / `x/mod.rs` / `#[path]`, inline modules) and emits definitions and references.
-3. **Symbol scheme** (`RustMonikers`): faithful port of `moniker.rs`/`scip.rs` naming:
-   `rust-analyzer cargo <package> <version|.> <target namespace>/<module>/Type#member().`, crate root namespaces
-   (`lib`, `proc-macro`, `custom-build`, `bin/<name>`, `example/<name>`, `test/<name>`, `bench/<name>`, `<name>`),
-   impl descriptors (`impl#[SelfType][Trait]`), locals as `local N` with `enclosing_symbol`, and the descriptor-kind
-   mapping.
+3. **Symbol scheme** (`RustMonikers`): follows what the *shipped* `rust-analyzer scip` binary emits (verified against
+   `rust-analyzer 1.97` on ripgrep): `rust-analyzer cargo <package> <version|.> <module>/Type#member().` where the crate root
+   module is `crate/` and every other symbol starts at its first module below the root (no `lib/`/`bin/<name>`
+   prefix, so lib/bin/test targets of one package share a namespace and symbols link across indexes); std crates use the
+   repository URL as version and the real defining crate (`core option/Option#`, `alloc vec/Vec#`, `std path/Path#`);
+   impl descriptors `impl#[SelfType][Trait]` (trait shown by name only), locals as `local N` with `enclosing_symbol`.
 4. **Emission** (`RustIndexAssembler`): UTF-8 byte column positions, single-line ranges as typed `SingleLineRange`,
    `enclosing_range` including leading doc comments/attributes but not plain comments, signature and documentation,
    streamed through `Scip.IndexWriter`. Ports upstream's duplicate-symbol report and the "only the first inherent impl

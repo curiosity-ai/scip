@@ -9,6 +9,40 @@ public sealed record ScanUnit(CargoPackage Package, CargoTarget Target, RustCrat
 /// </summary>
 public static class RustAnalysis
 {
+    /// <summary>Members of trait impls without their own documentation show the documentation of the trait item.</summary>
+    private static void InheritTraitDocs(RustWorld world, IEnumerable<CrateData> crates)
+    {
+        Dictionary<string, SymbolInformation> infos = [];
+        foreach (var crate in crates)
+        {
+            foreach (var file in crate.Files)
+            {
+                foreach (var info in file.Symbols)
+                {
+                    infos.TryAdd(info.Symbol, info);
+                }
+            }
+        }
+
+        foreach (var impl in world.AllImpls)
+        {
+            if (impl.TraitDef is not { IsExternal: false } trait)
+            {
+                continue;
+            }
+
+            foreach (var (name, members) in impl.Members)
+            {
+                if (infos.TryGetValue(members[0].Symbol, out var info) && info.Documentation.Count == 0
+                    && trait.Members.TryGetValue(name, out var traitMembers)
+                    && infos.TryGetValue(traitMembers[0].Symbol, out var traitInfo) && traitInfo.Documentation.Count > 0)
+                {
+                    info.Documentation.AddRange(traitInfo.Documentation);
+                }
+            }
+        }
+    }
+
     /// <param name="units">All scanned targets.</param>
     /// <param name="isExternalPackage">Packages whose sources are outside the project (their documents are not emitted).</param>
     /// <returns>SymbolInformation of referenced symbols defined outside the index (std, external path deps).</returns>
@@ -48,6 +82,7 @@ public static class RustAnalysis
         }
 
         world.Prepare();
+        InheritTraitDocs(world, crates.Values);
         Dictionary<string, Item> externals = [];
         foreach (var crate in crates.Values)
         {

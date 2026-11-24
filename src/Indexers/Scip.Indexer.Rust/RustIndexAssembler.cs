@@ -66,6 +66,11 @@ public static class RustIndexAssembler
         }
     }
 
+    private static bool IsImplSymbol(string symbol) =>
+        SymbolParser.TryParse(symbol, out var parsed, out _)
+        && parsed.Descriptors.Any(d => d is { Suffix: SymbolDescriptor.Types.Suffix.Type, Name: "impl" })
+        && parsed.Descriptors[^1].Suffix == SymbolDescriptor.Types.Suffix.TypeParameter;
+
     public static Document ToDocument(SourceFileResult file, string relativePath)
     {
         var lines = LineStarts(file.Bytes);
@@ -126,14 +131,21 @@ public static class RustIndexAssembler
         writer.WriteMetadata(metadata);
         HashSet<string> paths = [];
         List<Document> kept = [];
-        foreach (var document in documents)
+        var docList = documents.ToList();
+        // rust-analyzer only reports SymbolInformation for symbols that occur; impl blocks have no definition occurrence
+        // of their own (only `Self` references), so an impl's information is kept only when it is referenced.
+        HashSet<string> occurring = [.. docList.SelectMany(d => d.Occurrences).Select(o => o.Symbol)];
+        foreach (var document in docList)
         {
             if (document.Occurrences.Count == 0 || !paths.Add(document.RelativePath))
             {
                 continue;
             }
 
-            var keep = document.Symbols.Where(s => ShouldEmit(s.Symbol, document.RelativePath)).ToList();
+            var keep = document.Symbols
+                .Where(s => (!(s.Kind == SymbolInformation.Types.Kind.TypeAlias && IsImplSymbol(s.Symbol) || s.Kind == SymbolInformation.Types.Kind.Field && s.DisplayName.Length > 0 && char.IsAsciiDigit(s.DisplayName[0])) || occurring.Contains(s.Symbol))
+                    && ShouldEmit(s.Symbol, document.RelativePath))
+                .ToList();
             document.Symbols.Clear();
             document.Symbols.AddRange(keep);
             kept.Add(document);
