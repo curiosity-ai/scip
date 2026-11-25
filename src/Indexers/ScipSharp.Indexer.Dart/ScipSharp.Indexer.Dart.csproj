@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ScipSharp.Indexer.Dart</RootNamespace>
+    <Description>SCIP indexer for Dart (port of scip-dart).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ScipSharp.Indexer.Dart.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="sdk-symbols.tsv.gz" LogicalName="sdk-symbols.tsv.gz" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\ScipSharp.Indexing\ScipSharp.Indexing.csproj" />
+  </ItemGroup>
+</Project>

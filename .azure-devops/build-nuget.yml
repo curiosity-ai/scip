@@ -1,12 +1,12 @@
 # Builds and packs the SCIP .NET port, and publishes to NuGet from main. Runs on a Windows agent, as
 # curiosity-ai/hnsw-sharp and curiosity-ai/tesserae do. Tests are not run here (run `dotnet test` locally / elsewhere);
-# it builds Scip.Packages.slnx (the packable src projects only), not Scip.slnx (which also has tests and Reprolang).
+# it builds ScipSharp.Packages.slnx (the packable src projects only), not ScipSharp.slnx (which also has tests and Reprolang).
 #
 # Produces (artifacts\package\release):
-#   Scip                      core library
-#   Scip.Indexing             indexer abstractions
-#   Scip.Indexer.<Language>   one package per language indexer (DotNet, Java, TypeScript, Python, Ruby, Rust, Clang, Dart, Php)
-#   Scip.Cli                  the `scip` .NET tool  (dotnet tool install -g Scip.Cli)
+#   ScipSharp                 core library (namespace `ScipSharp`; the plain `Scip` NuGet id is taken)
+#   ScipSharp.Indexing        indexer abstractions
+#   ScipSharp.Indexer.<Language>  one package per language indexer (DotNet, Java, TypeScript, Python, Ruby, Rust, Clang, Dart, Php)
+#   ScipSharp.Cli             the `scip` .NET tool  (dotnet tool install -g ScipSharp.Cli)
 #
 # Conventions follow curiosity-ai/tesserae (.reference/tesserae/.azure-devops/build-nuget-h5.yml.disabled) and
 # curiosity-ai/hnsw-sharp: yy.M.<buildId mod 65535> versions and the `nuget-curiosity-org` service connection.
@@ -72,17 +72,17 @@ steps:
 - task: CmdLine@2
   displayName: 'Restore'
   inputs:
-    script: 'dotnet restore Scip.Packages.slnx'
+    script: 'dotnet restore ScipSharp.Packages.slnx'
 
 - task: CmdLine@2
   displayName: 'Build'
   inputs:
-    script: 'dotnet build Scip.Packages.slnx -c $(buildConfiguration) --no-restore /p:Version=$(buildVersion)'
+    script: 'dotnet build ScipSharp.Packages.slnx -c $(buildConfiguration) --no-restore /p:Version=$(buildVersion)'
 
 - task: CmdLine@2
   displayName: 'Pack (libraries, indexers and the scip tool)'
   inputs:
-    script: 'dotnet pack Scip.Packages.slnx -c $(buildConfiguration) --no-build /p:Version=$(buildVersion)'
+    script: 'dotnet pack ScipSharp.Packages.slnx -c $(buildConfiguration) --no-build /p:Version=$(buildVersion)'
 
 - task: PublishPipelineArtifact@1
   displayName: 'Publish packages as pipeline artifact'

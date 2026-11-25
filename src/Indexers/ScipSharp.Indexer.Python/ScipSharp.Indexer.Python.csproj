@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ScipSharp.Indexer.Python</RootNamespace>
+    <Description>SCIP indexer for Python (native C# port of scip-python).</Description>
+    <NoWarn>$(NoWarn);CA1859;CA1822;CA1720;CA1826;CS0612;CS0618;CA1861;CA1860;CA1851;CA1865;CA1866;CA1867</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ScipSharp.Indexer.Python.Tests" />
+    <ProjectReference Include="..\..\ScipSharp.Indexing\ScipSharp.Indexing.csproj" />
+  </ItemGroup>
+</Project>

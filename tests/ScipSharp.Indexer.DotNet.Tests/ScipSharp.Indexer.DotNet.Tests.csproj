@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ScipSharp.Indexer.DotNet.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\Indexers\ScipSharp.Indexer.DotNet\ScipSharp.Indexer.DotNet.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Fixtures\**" />
+    <None Remove="Fixtures\**" />
+    <EmbeddedResource Remove="Fixtures\**" />
+  </ItemGroup>
+</Project>

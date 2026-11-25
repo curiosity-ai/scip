@@ -1,9 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <RootNamespace>Scip.Indexer.Rust</RootNamespace>
-    <Description>SCIP indexer for Rust (port of rust-analyzer).</Description>
-  </PropertyGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
-  </ItemGroup>
-</Project>

@@ -1,9 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <RootNamespace>Scip.Indexer.Clang</RootNamespace>
-    <Description>SCIP indexer for C, C++ (port of scip-clang).</Description>
-  </PropertyGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\Scip.Indexing\Scip.Indexing.csproj" />
-  </ItemGroup>
-</Project>

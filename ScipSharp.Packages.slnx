@@ -1,0 +1,19 @@
+<!-- The packable projects only (what the Azure pipeline builds and packs). ScipSharp.slnx also contains tests and Reprolang. -->
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ScipSharp/ScipSharp.csproj" />
+    <Project Path="src/ScipSharp.Indexing/ScipSharp.Indexing.csproj" />
+    <Project Path="src/ScipSharp.Cli/ScipSharp.Cli.csproj" />
+  </Folder>
+  <Folder Name="/src/Indexers/">
+    <Project Path="src/Indexers/ScipSharp.Indexer.Clang/ScipSharp.Indexer.Clang.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Dart/ScipSharp.Indexer.Dart.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.DotNet/ScipSharp.Indexer.DotNet.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Java/ScipSharp.Indexer.Java.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Php/ScipSharp.Indexer.Php.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Python/ScipSharp.Indexer.Python.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Ruby/ScipSharp.Indexer.Ruby.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Rust/ScipSharp.Indexer.Rust.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.TypeScript/ScipSharp.Indexer.TypeScript.csproj" />
+  </Folder>
+</Solution>

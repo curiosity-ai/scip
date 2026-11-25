@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA1861</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\ScipSharp\ScipSharp.csproj" />
+    <ProjectReference Include="..\..\src\Indexers\ScipSharp.Indexer.Clang\ScipSharp.Indexer.Clang.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Data\**" CopyToOutputDirectory="PreserveNewest" LinkBase="Data" />
+  </ItemGroup>
+</Project>

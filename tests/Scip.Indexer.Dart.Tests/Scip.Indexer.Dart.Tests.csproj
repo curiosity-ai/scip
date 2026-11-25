@@ -1,6 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <ItemGroup>
-    <PackageReference Include="TUnit" />
-    <ProjectReference Include="..\..\src\Indexers\Scip.Indexer.Dart\Scip.Indexer.Dart.csproj" />
-  </ItemGroup>
-</Project>

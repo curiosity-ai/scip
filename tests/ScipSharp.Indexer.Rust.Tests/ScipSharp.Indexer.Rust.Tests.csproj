@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\Indexers\ScipSharp.Indexer.Rust\ScipSharp.Indexer.Rust.csproj" />
+  </ItemGroup>
+</Project>
