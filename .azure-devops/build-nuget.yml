@@ -103,8 +103,10 @@ steps:
     ArtifactName: 'nuget-packages'
 
 # Only publish from main, never from PR validation builds.
-# nuget push also uploads the adjacent .snupkg symbol package of each .nupkg.
-- task: NuGetCommand@2
+# `dotnet nuget push` (DotNetCoreCLI@2) instead of NuGetCommand@2: that task runs nuget.exe, which needs mono, and
+# Ubuntu 24.04 hosted agents no longer ship it ("you are using Ubuntu 24.04 or later without mono installed").
+# Pushing a .nupkg to nuget.org also uploads the adjacent .snupkg symbol package.
+- task: DotNetCoreCLI@2
   displayName: 'Push packages to NuGet'
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
   inputs:
