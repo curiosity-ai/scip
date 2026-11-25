@@ -3,10 +3,10 @@
 # it builds Scip.Packages.slnx (the packable src projects only), not Scip.slnx (which also has tests and Reprolang).
 #
 # Produces (artifacts\package\release):
-#   Scip                      core library
-#   Scip.Indexing             indexer abstractions
-#   Scip.Indexer.<Language>   one package per language indexer (DotNet, Java, TypeScript, Python, Ruby, Rust, Clang, Dart, Php)
-#   Scip.Cli                  the `scip` .NET tool  (dotnet tool install -g Scip.Cli)
+#   ScipSharp                 core library (assembly/namespace `Scip`; the NuGet id `Scip` is taken)
+#   ScipSharp.Indexing        indexer abstractions
+#   ScipSharp.Indexer.<Language>  one package per language indexer (DotNet, Java, TypeScript, Python, Ruby, Rust, Clang, Dart, Php)
+#   ScipSharp.Cli             the `scip` .NET tool  (dotnet tool install -g ScipSharp.Cli)
 #
 # Conventions follow curiosity-ai/tesserae (.reference/tesserae/.azure-devops/build-nuget-h5.yml.disabled) and
 # curiosity-ai/hnsw-sharp: yy.M.<buildId mod 65535> versions and the `nuget-curiosity-org` service connection.

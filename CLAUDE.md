@@ -59,7 +59,8 @@ Build output goes to `artifacts/` (via `ArtifactsPath`), not next to the project
   toolchains are allowed only in tests (cross-checks), which must skip gracefully when the tool is unavailable.
 - CI/CD is the Azure DevOps pipeline `.azure-devops/build-nuget.yml` (modelled on `.reference/tesserae` and hnsw-sharp): a single Windows job that
   builds/packs `Scip.Packages.slnx` (packable `src` projects only) and pushes from `main`; it does **not** run tests (run `dotnet test` locally). Packages:
-  `Scip`, `Scip.Indexing`, `Scip.Indexer.<Lang>` (one per language), `Scip.Cli` (dotnet tool `scip`). Package metadata lives
+  `ScipSharp`, `ScipSharp.Indexing`, `ScipSharp.Indexer.<Lang>` (one per language), `ScipSharp.Cli` (dotnet tool `scip`); the NuGet ids use the
+  `ScipSharp` prefix because the `Scip` id is taken, while project/assembly/namespace names stay `Scip.*` (derived in `Directory.Build.props`). Package metadata lives
   in `Directory.Build.props`; version comes from the pipeline (`/p:Version=yy.M.<buildId mod 65535>`, since assembly version parts must fit in 16 bits). `Scip.Reprolang` and tests
   are not packable. Don't add GitHub workflows without being asked.
 

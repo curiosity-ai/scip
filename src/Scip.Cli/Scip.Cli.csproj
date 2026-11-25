@@ -5,7 +5,6 @@
     <AssemblyName>Scip.Cli</AssemblyName>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>scip</ToolCommandName>
-    <PackageId>Scip.Cli</PackageId>
     <Description>The scip command-line tool (print, lint, stats, snapshot, test, expt-convert, index) with built-in pure-.NET indexers for C#/VB, Java, TypeScript/JavaScript, Python, Ruby, Rust, C/C++, Dart and PHP.</Description>
     <PackageTags>$(PackageTags);dotnet-tool</PackageTags>
   </PropertyGroup>

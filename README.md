@@ -21,7 +21,7 @@ tests/Scip.Tests      TUnit tests
 ## Install
 
 ```bash
-dotnet tool install -g Scip.Cli      # the `scip` command
+dotnet tool install -g ScipSharp.Cli  # the `scip` command
 scip index python --project-root .   # also: dotnet, java, typescript, rust, clang, ruby, dart, php
 scip print index.scip
 ```
@@ -30,10 +30,10 @@ NuGet packages (all published from `main` by `.azure-devops/build-nuget.yml`):
 
 | Package | Contents |
 |---|---|
-| `Scip.Cli` | the `scip` .NET tool, bundling every indexer |
-| `Scip` | core library: protobuf types, symbols, positions, index writer |
-| `Scip.Indexing` | indexer abstractions (`IIndexer`) |
-| `Scip.Indexer.DotNet` / `.Java` / `.TypeScript` / `.Python` / `.Ruby` / `.Rust` / `.Clang` / `.Dart` / `.Php` | one package per language indexer |
+| `ScipSharp.Cli` | the `scip` .NET tool, bundling every indexer |
+| `ScipSharp` | core library: protobuf types, symbols, positions, index writer (namespace `Scip`) |
+| `ScipSharp.Indexing` | indexer abstractions (`IIndexer`) |
+| `ScipSharp.Indexer.DotNet` / `.Java` / `.TypeScript` / `.Python` / `.Ruby` / `.Rust` / `.Clang` / `.Dart` / `.Php` | one package per language indexer |
 
 ## Build & test
 

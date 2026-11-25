@@ -3,7 +3,6 @@
     <RootNamespace>Scip</RootNamespace>
     <AssemblyName>Scip</AssemblyName>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <PackageId>Scip</PackageId>
     <Description>.NET library for the SCIP Code Intelligence Protocol: protobuf types, symbol parsing/formatting, positions and ranges.</Description>
     <!-- Generated protobuf code is not documented / style-clean. -->
     <NoWarn>$(NoWarn);CS1591;CS8981</NoWarn>

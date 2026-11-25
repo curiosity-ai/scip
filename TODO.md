@@ -9,9 +9,9 @@ Legend: `[x]` done · `[ ]` open. Upstream paths are relative to `.reference/`.
 - [x] Protobuf generation from `scip.proto` (`tools/sync-proto.sh`, Grpc.Tools)
 - [x] CLAUDE.md, README.md, TODO.md, docs/PORTING.md
 - [x] Azure DevOps pipeline (`.azure-devops/build-nuget.yml`): build, test, pack, publish to NuGet from main
-- [ ] Create the `nuget-curiosity-org` service connection / confirm NuGet package-id ownership (`Scip`, `Scip.Cli`, `Scip.Indexer.*`)
+- [ ] Create the `nuget-curiosity-org` service connection / confirm NuGet package-id ownership (`ScipSharp`, `ScipSharp.Cli`, `ScipSharp.Indexer.*`; the plain `Scip` id was already taken)
 - [ ] `scip --version` should report the packaged build version (currently the embedded upstream `version.txt`)
-- [x] NuGet packaging: one package per library/indexer + `Scip.Cli` tool (verified: pack + local tool install + run)
+- [x] NuGet packaging: one package per library/indexer + `ScipSharp.Cli` tool (verified: pack + local tool install + run)
 - [ ] Package icon; per-package READMEs
 - [ ] Decide on AOT / trimming for the `scip` CLI
 
