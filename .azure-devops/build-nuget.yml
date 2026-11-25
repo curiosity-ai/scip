@@ -1,6 +1,8 @@
-# Builds, tests and packs the SCIP .NET port, and publishes to NuGet from main.
+# Builds and packs the SCIP .NET port, and publishes to NuGet from main. Runs on a Windows agent, as
+# curiosity-ai/hnsw-sharp and curiosity-ai/tesserae do. Tests are not run here (run `dotnet test` locally / elsewhere);
+# it builds Scip.Packages.slnx (the packable src projects only), not Scip.slnx (which also has tests and Reprolang).
 #
-# Produces (artifacts/package/release):
+# Produces (artifacts\package\release):
 #   Scip                      core library
 #   Scip.Indexing             indexer abstractions
 #   Scip.Indexer.<Language>   one package per language indexer (DotNet, Java, TypeScript, Python, Ruby, Rust, Clang, Dart, Php)
@@ -8,6 +10,9 @@
 #
 # Conventions follow curiosity-ai/tesserae (.reference/tesserae/.azure-devops/build-nuget-h5.yml.disabled) and
 # curiosity-ai/hnsw-sharp: yy.M.<buildId mod 65535> versions and the `nuget-curiosity-org` service connection.
+#
+# Why Windows: NuGetCommand@2 runs nuget.exe, which needs mono on Linux (not on Ubuntu 24.04 agents), and
+# DotNetCoreCLI@2 push cannot use the encrypted API key stored in the service connection.
 
 variables:
   buildConfiguration: 'Release'
@@ -31,10 +36,16 @@ pr:
     - main
 
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: 'windows-latest'
 
 steps:
 - checkout: self
+
+- task: NuGetToolInstaller@1
+  displayName: 'Install NuGet 7.6 or later (API key service connections need it)'
+  inputs:
+    versionSpec: '>=7.6.0'
+    checkLatest: true
 
 - task: PowerShell@2
   displayName: 'Create CalVer Version'
@@ -56,61 +67,36 @@ steps:
     packageType: sdk
     version: 11.x
     includePreviewVersions: true
-    installationPath: $(Agent.ToolsDirectory)/dotnet
+    installationPath: $(Agent.ToolsDirectory)\dotnet
 
 - task: CmdLine@2
   displayName: 'Restore'
   inputs:
-    script: 'dotnet restore Scip.slnx'
+    script: 'dotnet restore Scip.Packages.slnx'
 
 - task: CmdLine@2
   displayName: 'Build'
   inputs:
-    script: 'dotnet build Scip.slnx -c $(buildConfiguration) --no-restore /p:Version=$(buildVersion)'
-
-- task: CmdLine@2
-  displayName: 'Test'
-  inputs:
-    # TUnit runs on Microsoft.Testing.Platform (see global.json); TRX is produced per test project.
-    script: 'dotnet test --solution Scip.slnx -c $(buildConfiguration) --no-build --report-trx --results-directory $(Agent.TempDirectory)/test-results'
-
-- task: PublishTestResults@2
-  displayName: 'Publish test results'
-  condition: succeededOrFailed()
-  inputs:
-    testResultsFormat: 'VSTest'
-    testResultsFiles: '**/*.trx'
-    searchFolder: '$(Agent.TempDirectory)/test-results'
-    failTaskOnFailedTests: true
+    script: 'dotnet build Scip.Packages.slnx -c $(buildConfiguration) --no-restore /p:Version=$(buildVersion)'
 
 - task: CmdLine@2
   displayName: 'Pack (libraries, indexers and the scip tool)'
   inputs:
-    script: 'dotnet pack Scip.slnx -c $(buildConfiguration) --no-build /p:Version=$(buildVersion)'
+    script: 'dotnet pack Scip.Packages.slnx -c $(buildConfiguration) --no-build /p:Version=$(buildVersion)'
 
-- task: CmdLine@2
-  displayName: 'Smoke test: install the scip tool from the freshly built package'
+- task: PublishPipelineArtifact@1
+  displayName: 'Publish packages as pipeline artifact'
   inputs:
-    script: |
-      dotnet tool install Scip.Cli --tool-path $(Agent.TempDirectory)/scip-tool --add-source $(Build.SourcesDirectory)/artifacts/package/release --version $(buildVersion)
-      $(Agent.TempDirectory)/scip-tool/scip --version
-      $(Agent.TempDirectory)/scip-tool/scip index --help
-
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish packages as build artifact'
-  inputs:
-    PathtoPublish: '$(Build.SourcesDirectory)/artifacts/package/release'
-    ArtifactName: 'nuget-packages'
+    targetPath: '$(Build.SourcesDirectory)\artifacts\package\release'
+    artifact: 'nuget-packages'
 
 # Only publish from main, never from PR validation builds.
-# `dotnet nuget push` (DotNetCoreCLI@2) instead of NuGetCommand@2: that task runs nuget.exe, which needs mono, and
-# Ubuntu 24.04 hosted agents no longer ship it ("you are using Ubuntu 24.04 or later without mono installed").
 # Pushing a .nupkg to nuget.org also uploads the adjacent .snupkg symbol package.
-- task: DotNetCoreCLI@2
+- task: NuGetCommand@2
   displayName: 'Push packages to NuGet'
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
   inputs:
     command: 'push'
-    packagesToPush: '$(Build.SourcesDirectory)/artifacts/package/release/*.nupkg'
+    packagesToPush: '$(Build.SourcesDirectory)\artifacts\package\release\*.nupkg'
     nuGetFeedType: 'external'
     publishFeedCredentials: 'nuget-curiosity-org'
