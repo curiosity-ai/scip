@@ -1,6 +1,6 @@
 # Real-project validation (2026-11-24)
 
-The `scip` tool (Release build of `Scip.Cli`) was run via `scip index <lang>` against shallow clones of open-source
+The `scip` tool (Release build of `ScipSharp.Cli`) was run via `scip index <lang>` against shallow clones of open-source
 projects (Linux, .NET 11.0.100 SDK, no other language toolchains installed). Each index was then checked with
 `scip lint` (the Go lint rules, ported) and a cross-reference sanity check: the share of non-local reference
 occurrences whose symbol has a definition occurrence (`defined`) or at least a `SymbolInformation`/external symbol (`known`).

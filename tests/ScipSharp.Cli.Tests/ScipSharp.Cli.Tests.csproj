@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA1861;CS0612</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="ZstdSharp.Port" />
+    <ProjectReference Include="..\..\src\ScipSharp\ScipSharp.csproj" />
+    <ProjectReference Include="..\..\src\ScipSharp.Cli\ScipSharp.Cli.csproj" />
+  </ItemGroup>
+</Project>

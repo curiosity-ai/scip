@@ -11,9 +11,8 @@
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>true</InvariantGlobalization>
     <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
-    <!-- NuGet package ids use the ScipSharp prefix (the `Scip` id is taken): Scip -> ScipSharp, Scip.Indexing -> ScipSharp.Indexing,
-         Scip.Indexer.Java -> ScipSharp.Indexer.Java, Scip.Cli -> ScipSharp.Cli. Assembly names and namespaces stay `Scip.*`. -->
-    <PackageId>$(MSBuildProjectName.Replace('Scip', 'ScipSharp'))</PackageId>
+    <!-- Project, assembly, namespace and NuGet package ids all use the ScipSharp prefix (the plain `Scip` NuGet id is taken);
+         PackageId defaults to the project name, e.g. ScipSharp, ScipSharp.Indexing, ScipSharp.Indexer.Java, ScipSharp.Cli. -->
     <Authors>SCIP Maintainers</Authors>
     <Company>Curiosity GmbH</Company>
     <Copyright>Copyright (c) SCIP Maintainers (Apache-2.0); .NET port by Curiosity GmbH</Copyright>

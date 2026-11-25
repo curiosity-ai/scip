@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ScipSharp</RootNamespace>
+    <AssemblyName>ScipSharp</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>.NET library for the SCIP Code Intelligence Protocol: protobuf types, symbol parsing/formatting, positions and ranges.</Description>
+    <!-- Generated protobuf code is not documented / style-clean. -->
+    <NoWarn>$(NoWarn);CS1591;CS8981</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ScipSharp.Cli.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="All" />
+    <Protobuf Include="Protos\scip.proto" GrpcServices="None" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ScipSharp.Indexer.TypeScript.Tests</RootNamespace>
+    <NoWarn>$(NoWarn);CA2016;CA1822;CA1707;CA1036;CA2026</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\ScipSharp\ScipSharp.csproj" />
+    <ProjectReference Include="..\..\src\Indexers\ScipSharp.Indexer.TypeScript\ScipSharp.Indexer.TypeScript.csproj" />
+  </ItemGroup>
+</Project>

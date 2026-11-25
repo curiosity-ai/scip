@@ -15,7 +15,7 @@ Legend: `[x]` done · `[ ]` open. Upstream paths are relative to `.reference/`.
 - [ ] Package icon; per-package READMEs
 - [ ] Decide on AOT / trimming for the `scip` CLI
 
-## 1. Core library `src/Scip` (from `scip/bindings/go/scip`)
+## 1. Core library `src/ScipSharp` (from `scip/bindings/go/scip`)
 - [x] Protobuf types
 - [x] `SymbolParser` (`symbol_parser.go`, `symbol.go`) + tests
 - [x] `SymbolFormatter` (`symbol_formatter.go`) + tests
@@ -25,27 +25,27 @@ Legend: `[x]` done · `[ ]` open. Upstream paths are relative to `.reference/`.
 - [x] Position encodings (UTF-8/UTF-16/UTF-32) and `SourceFile` helpers (`source_file.go`)
 - [x] Sorting & canonicalization (`sort.go`, `canonicalize.go`)
 - [x] Sanitize (`sanitize.go`), flatten (`flatten.go`), symbol table (`symbol_table.go`)
-- [x] `testutil`: `SnapshotFormatter`, `Scip.Testing.TestRunner` (`test_runner.go`), `Scip.Testing.SnapshotTesting` (`snapshot_testing.go`); `memtest` (Go memory test) intentionally not ported
+- [x] `testutil`: `SnapshotFormatter`, `ScipSharp.Testing.TestRunner` (`test_runner.go`), `ScipSharp.Testing.SnapshotTesting` (`snapshot_testing.go`); `memtest` (Go memory test) intentionally not ported
 - [ ] Invalid UTF-16 (lone surrogate) rejection in `SymbolParser` to match Go's UTF-8 validation
 - [ ] Benchmarks (BenchmarkDotNet) for symbol parsing vs. Go `parseSymbolV2`
 - [ ] Decide fate of upstream `bindings/{java,kotlin,rust,typescript,haskell,dotnet}` (likely: not ported; protobuf covers them)
 
-## 2. CLI `src/Scip.Cli` (from `scip/cmd/scip`, `scip/docs/CLI.md`)
+## 2. CLI `src/ScipSharp.Cli` (from `scip/cmd/scip`, `scip/docs/CLI.md`)
 - [x] Skeleton with `print` (JSON only) and `index <lang>`
 - [x] `print` — text output (pp-style, ANSI `--color`), `--json` (proto field names), `-` for stdin
-- [x] `lint` (`lint.go`) — `Scip.Cli.Linting.IndexLinter`
+- [x] `lint` (`lint.go`) — `ScipSharp.Cli.Linting.IndexLinter`
 - [x] `stats` (`stats.go`) — LOC counting is a simple stand-in for `gocloc` (extension-based comment rules)
 - [x] `snapshot` (`snapshot.go`)
-- [x] `test` (`test.go`) — runner in `Scip.Testing.TestRunner` (`src/Scip`); no reprolang dependency (works on any index + test files)
+- [x] `test` (`test.go`) — runner in `ScipSharp.Testing.TestRunner` (`src/ScipSharp`); no reprolang dependency (works on any index + test files)
 - [x] `expt-convert` (`convert.go`) — SCIP -> SQLite (Microsoft.Data.Sqlite + zstd), not LSIF; `--cpu-profile` is accepted but ignored
 - [x] `--version` from `version.txt` (embedded); per-command `--from`, `--comment-syntax`, `--project-root` (as in Go; there are no truly global flags)
 - [x] Port `main_test.go` (help/version; the `docs/CLI.md` byte-for-byte sync check is not ported: System.CommandLine help text differs from urfave/cli), `print_test.go`, `lint_test.go`, `convert_test.go`
 - [ ] Regenerate `docs/CLI.md` from the C# help output
-- [ ] Assembly is `Scip.Cli` (not `scip`): assembly names are case-insensitive and would clash with `Scip.dll`; the tool command is still `scip`
+- [x] CLI assembly is `ScipSharp.Cli` (the tool command is still `scip`); projects, assemblies, namespaces and NuGet ids were all renamed from `Scip.*` to `ScipSharp.*`
 
 ## 3. `reprolang` (test language, `scip/reprolang`)
-- [x] Port grammar/parser (hand-written parser in `src/Scip.Reprolang`, no native tree-sitter) + `ReproIndexer.Index(directory)`
-- [x] Port `testdata` and snapshot tests (`tests/Scip.Reprolang.Tests`)
+- [x] Port grammar/parser (hand-written parser in `src/ScipSharp.Reprolang`, no native tree-sitter) + `ReproIndexer.Index(directory)`
+- [x] Port `testdata` and snapshot tests (`tests/ScipSharp.Reprolang.Tests`)
 - [ ] Port `test_cmd` pass/fail output expectations once the CLI `test` runner (`test_runner.go`) exists; wire `snapshot`/`test` to `ReproIndexer`
 
 ## 4. Language indexers
@@ -61,7 +61,7 @@ Each needs: a design note in `docs/PORTING.md`, implementation, ported tests/sna
 - [~] **dart** ← `scip-dart`: native syntactic indexer. Defs match upstream snapshots; refs precision >90%/recall >50%. Open: type resolution, SDK/3rd-party symbols, instance members, locals
 - [x] **php** ← `scip-php`: native lexer/parser/resolver, Composer. 10/10 upstream goldens exact. Open: phpstorm-stubs for built-ins, parse error recovery, property hooks
 - [x] Forward indexer-specific CLI options from `scip index <lang>` to indexers (unmatched tokens pass through)
-- [ ] Shared indexing helpers in `Scip.Indexing` (document builder, package metadata) — extract duplication across the nine indexers
+- [ ] Shared indexing helpers in `ScipSharp.Indexing` (document builder, package metadata) — extract duplication across the nine indexers
 - [x] Decision: pure native C# for all indexers (no runtime compilers/toolchains; see CLAUDE.md)
 
 ## 5. Quality

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ScipSharp.Cli</RootNamespace>
+    <AssemblyName>ScipSharp.Cli</AssemblyName>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>scip</ToolCommandName>
+    <Description>The scip command-line tool (print, lint, stats, snapshot, test, expt-convert, index) with built-in pure-.NET indexers for C#/VB, Java, TypeScript/JavaScript, Python, Ruby, Rust, C/C++, Dart and PHP.</Description>
+    <PackageTags>$(PackageTags);dotnet-tool</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="ZstdSharp.Port" />
+    <EmbeddedResource Include="version.txt" LogicalName="version.txt" />
+    <ProjectReference Include="..\ScipSharp\ScipSharp.csproj" />
+    <ProjectReference Include="..\ScipSharp.Indexing\ScipSharp.Indexing.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Clang\ScipSharp.Indexer.Clang.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Dart\ScipSharp.Indexer.Dart.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.DotNet\ScipSharp.Indexer.DotNet.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Java\ScipSharp.Indexer.Java.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Php\ScipSharp.Indexer.Php.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Python\ScipSharp.Indexer.Python.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Ruby\ScipSharp.Indexer.Ruby.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Rust\ScipSharp.Indexer.Rust.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.TypeScript\ScipSharp.Indexer.TypeScript.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ScipSharp.Cli.Tests" />
+  </ItemGroup>
+</Project>

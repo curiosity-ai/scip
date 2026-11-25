@@ -1,0 +1,33 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ScipSharp/ScipSharp.csproj" />
+    <Project Path="src/ScipSharp.Indexing/ScipSharp.Indexing.csproj" />
+    <Project Path="src/ScipSharp.Cli/ScipSharp.Cli.csproj" />
+    <Project Path="src/ScipSharp.Reprolang/ScipSharp.Reprolang.csproj" />
+  </Folder>
+  <Folder Name="/src/Indexers/">
+    <Project Path="src/Indexers/ScipSharp.Indexer.Clang/ScipSharp.Indexer.Clang.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Dart/ScipSharp.Indexer.Dart.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.DotNet/ScipSharp.Indexer.DotNet.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Java/ScipSharp.Indexer.Java.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Php/ScipSharp.Indexer.Php.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Python/ScipSharp.Indexer.Python.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Ruby/ScipSharp.Indexer.Ruby.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Rust/ScipSharp.Indexer.Rust.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.TypeScript/ScipSharp.Indexer.TypeScript.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ScipSharp.Tests/ScipSharp.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Cli.Tests/ScipSharp.Cli.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Reprolang.Tests/ScipSharp.Reprolang.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Dart.Tests/ScipSharp.Indexer.Dart.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.DotNet.Tests/ScipSharp.Indexer.DotNet.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Ruby.Tests/ScipSharp.Indexer.Ruby.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Rust.Tests/ScipSharp.Indexer.Rust.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Clang.Tests/ScipSharp.Indexer.Clang.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Php.Tests/ScipSharp.Indexer.Php.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Python.Tests/ScipSharp.Indexer.Python.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.TypeScript.Tests/ScipSharp.Indexer.TypeScript.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Java.Tests/ScipSharp.Indexer.Java.Tests.csproj" />
+  </Folder>
+</Solution>

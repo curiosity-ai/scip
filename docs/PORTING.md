@@ -4,19 +4,19 @@
 
 | Upstream (`.reference/…`) | C# destination | Status |
 |---|---|---|
-| `scip/scip.proto` | `src/Scip/Protos/scip.proto` (via `tools/sync-proto.sh`) | done |
-| `scip/bindings/go/scip` | `src/Scip` | symbols + index writer done |
-| `scip/cmd/scip` | `src/Scip.Cli` | done |
-| `scip/reprolang` | (planned) `src/Scip.Reprolang` | done |
-| `scip-dotnet` | `src/Indexers/Scip.Indexer.DotNet` | ported (see TODO.md for gaps) |
-| `scip-typescript` | `src/Indexers/Scip.Indexer.TypeScript` | ported (see TODO.md for gaps) |
-| `scip-java` | `src/Indexers/Scip.Indexer.Java` | ported (see TODO.md for gaps) |
-| `rust-analyzer` (SCIP emitter only) | `src/Indexers/Scip.Indexer.Rust` | ported (see TODO.md for gaps) |
-| `scip-clang` | `src/Indexers/Scip.Indexer.Clang` | ported (see TODO.md for gaps) |
-| `scip-ruby` | `src/Indexers/Scip.Indexer.Ruby` | ported (see TODO.md for gaps) |
-| `scip-python` | `src/Indexers/Scip.Indexer.Python` | ported (see TODO.md for gaps) |
-| `scip-dart` | `src/Indexers/Scip.Indexer.Dart` | ported (see TODO.md for gaps) |
-| `scip-php` | `src/Indexers/Scip.Indexer.Php` | ported (see TODO.md for gaps) |
+| `scip/scip.proto` | `src/ScipSharp/Protos/scip.proto` (via `tools/sync-proto.sh`) | done |
+| `scip/bindings/go/scip` | `src/ScipSharp` | symbols + index writer done |
+| `scip/cmd/scip` | `src/ScipSharp.Cli` | done |
+| `scip/reprolang` | (planned) `src/ScipSharp.Reprolang` | done |
+| `scip-dotnet` | `src/Indexers/ScipSharp.Indexer.DotNet` | ported (see TODO.md for gaps) |
+| `scip-typescript` | `src/Indexers/ScipSharp.Indexer.TypeScript` | ported (see TODO.md for gaps) |
+| `scip-java` | `src/Indexers/ScipSharp.Indexer.Java` | ported (see TODO.md for gaps) |
+| `rust-analyzer` (SCIP emitter only) | `src/Indexers/ScipSharp.Indexer.Rust` | ported (see TODO.md for gaps) |
+| `scip-clang` | `src/Indexers/ScipSharp.Indexer.Clang` | ported (see TODO.md for gaps) |
+| `scip-ruby` | `src/Indexers/ScipSharp.Indexer.Ruby` | ported (see TODO.md for gaps) |
+| `scip-python` | `src/Indexers/ScipSharp.Indexer.Python` | ported (see TODO.md for gaps) |
+| `scip-dart` | `src/Indexers/ScipSharp.Indexer.Dart` | ported (see TODO.md for gaps) |
+| `scip-php` | `src/Indexers/ScipSharp.Indexer.Php` | ported (see TODO.md for gaps) |
 
 ## Key differences from the Go implementation
 
