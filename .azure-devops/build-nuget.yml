@@ -6,8 +6,8 @@
 #   Scip.Indexer.<Language>   one package per language indexer (DotNet, Java, TypeScript, Python, Ruby, Rust, Clang, Dart, Php)
 #   Scip.Cli                  the `scip` .NET tool  (dotnet tool install -g Scip.Cli)
 #
-# Conventions follow curiosity-ai/tesserae (.reference/tesserae/.azure-devops/build-nuget-h5.yml.disabled):
-# yyyy.M.<buildId> versions and the `nuget-curiosity-org` service connection.
+# Conventions follow curiosity-ai/tesserae (.reference/tesserae/.azure-devops/build-nuget-h5.yml.disabled) and
+# curiosity-ai/hnsw-sharp: yy.M.<buildId mod 65535> versions and the `nuget-curiosity-org` service connection.
 
 variables:
   buildConfiguration: 'Release'
@@ -37,12 +37,18 @@ steps:
 - checkout: self
 
 - task: PowerShell@2
-  displayName: 'Set Version'
+  displayName: 'Create CalVer Version'
   inputs:
     targetType: 'inline'
     script: |
-      $date = Get-Date -Format yyyy.M
-      Write-Host "##vso[task.setvariable variable=buildVersion]$date.$(Build.BuildId)"
+      # yy.M.<build id mod 65535>, as in curiosity-ai/hnsw-sharp. Every part of an assembly version must fit in
+      # 16 bits (65535 itself is rejected too: error CS7034), and the Azure build id grows past that, so wrap it.
+      $dottedDate = (Get-Date).ToString("yy.M")
+      $buildId = [int]$env:BUILD_BUILDID
+      $modBuildId = $buildId % 65535
+      $newBuildVersion = "$dottedDate.$modBuildId"
+      Write-Host "##vso[task.setvariable variable=buildVersion]$newBuildVersion"
+      Write-Host "Updated buildVersion to '$newBuildVersion'"
 
 - task: UseDotNet@2
   displayName: 'Use .NET 11 SDK'
