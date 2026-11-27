@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ScipSharp.Indexer.Fortran</RootNamespace>
+    <Description>Native C# SCIP indexer for Fortran (FORTRAN 66/77, Fortran 90-2023).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ScipSharp.Indexer.Fortran.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\ScipSharp.Indexing\ScipSharp.Indexing.csproj" />
+  </ItemGroup>
+</Project>

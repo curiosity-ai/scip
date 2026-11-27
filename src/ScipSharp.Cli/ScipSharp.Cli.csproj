@@ -5,7 +5,7 @@
     <AssemblyName>ScipSharp.Cli</AssemblyName>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>scip</ToolCommandName>
-    <Description>The scip command-line tool (print, lint, stats, snapshot, test, expt-convert, index) with built-in pure-.NET indexers for C#/VB, Java, TypeScript/JavaScript, Python, Ruby, Rust, C/C++, Dart and PHP.</Description>
+    <Description>The scip command-line tool (print, lint, stats, snapshot, test, expt-convert, index) with built-in pure-.NET indexers for C#/VB, Java, TypeScript/JavaScript, Python, Ruby, Rust, C/C++, Dart, PHP, COBOL, Visual Basic 6, PL/I, Fortran, Delphi, Pascal and SQL.</Description>
     <PackageTags>$(PackageTags);dotnet-tool</PackageTags>
   </PropertyGroup>
   <ItemGroup>
@@ -24,6 +24,13 @@
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Ruby\ScipSharp.Indexer.Ruby.csproj" />
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Rust\ScipSharp.Indexer.Rust.csproj" />
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.TypeScript\ScipSharp.Indexer.TypeScript.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Cobol\ScipSharp.Indexer.Cobol.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Vb6\ScipSharp.Indexer.Vb6.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Pli\ScipSharp.Indexer.Pli.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Fortran\ScipSharp.Indexer.Fortran.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Delphi\ScipSharp.Indexer.Delphi.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Pascal\ScipSharp.Indexer.Pascal.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Sql\ScipSharp.Indexer.Sql.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ScipSharp.Cli.Tests" />

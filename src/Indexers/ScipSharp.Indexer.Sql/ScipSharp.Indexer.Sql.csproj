@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ScipSharp.Indexer.Sql</RootNamespace>
+    <Description>Native C# SCIP indexer for SQL (ANSI, T-SQL, PL/SQL, PostgreSQL, MySQL, SQLite).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ScipSharp.Indexer.Sql.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\ScipSharp.Indexing\ScipSharp.Indexing.csproj" />
+  </ItemGroup>
+</Project>
