@@ -5,7 +5,7 @@
     <AssemblyName>ScipSharp.Cli</AssemblyName>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>scip</ToolCommandName>
-    <Description>The scip command-line tool (print, lint, stats, snapshot, test, expt-convert, index) with built-in pure-.NET indexers for C#/VB, Java, TypeScript/JavaScript, Python, Ruby, Rust, C/C++, Dart, PHP, COBOL, Visual Basic 6, PL/I, Fortran, Delphi, Pascal and SQL.</Description>
+    <Description>The scip command-line tool (print, lint, stats, snapshot, test, expt-convert, index) with built-in pure-.NET indexers for C#/VB, Java, TypeScript/JavaScript, Python, Ruby, Rust, C/C++, Dart, PHP, ABAP, COBOL, Visual Basic 6, PL/I, Fortran, Delphi, Pascal and SQL.</Description>
     <PackageTags>$(PackageTags);dotnet-tool</PackageTags>
   </PropertyGroup>
   <ItemGroup>
@@ -15,6 +15,7 @@
     <EmbeddedResource Include="version.txt" LogicalName="version.txt" />
     <ProjectReference Include="..\ScipSharp\ScipSharp.csproj" />
     <ProjectReference Include="..\ScipSharp.Indexing\ScipSharp.Indexing.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Abap\ScipSharp.Indexer.Abap.csproj" />
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Clang\ScipSharp.Indexer.Clang.csproj" />
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Dart\ScipSharp.Indexer.Dart.csproj" />
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.DotNet\ScipSharp.Indexer.DotNet.csproj" />

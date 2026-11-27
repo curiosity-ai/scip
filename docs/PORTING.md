@@ -24,6 +24,7 @@
 | (none — native) | `src/Indexers/ScipSharp.Indexer.Delphi` | new indexer (see TODO.md for gaps) |
 | (none — native) | `src/Indexers/ScipSharp.Indexer.Pascal` | new indexer (see TODO.md for gaps) |
 | (none — native) | `src/Indexers/ScipSharp.Indexer.Sql` | new indexer (see TODO.md for gaps) |
+| abaplint (`packages/core`, via an existing C# port; no upstream SCIP indexer) | `src/Indexers/ScipSharp.Indexer.Abap` | new indexer (see its README) |
 
 ## Key differences from the Go implementation
 
@@ -90,3 +91,19 @@ implementations. Each one reports `UpstreamProject` as `(none: native implementa
   expansion). Symbols are `scip-sql . <pkg> <ver> [db/]schema/table#column.`; constraints, indexes and triggers are
   `table#name:`, routines `schema/f(normalized types).`, PL/SQL packages namespaces; identifiers are case-folded per
   dialect; unknown objects become external symbols. Not built on ScriptDom or libpg_query (dialect-limited, non-native).
+### ABAP (`ScipSharp.Indexer.Abap`)
+
+There is no upstream SCIP indexer for ABAP. The indexer is built on a C# port of the abaplint parser and syntax check
+(`packages/core` of https://github.com/abaplint/abaplint, MIT), copied into `src/Indexers/ScipSharp.Indexer.Abap/Language`
+with its namespaces renamed to `ScipSharp.Indexer.Abap.*`. That port was verified token-for-token, statement-for-statement
+and issue-for-issue against `@abaplint/core` 2.120.80 on a corpus of 360 abapGit repositories. Its upstream statement and
+structure test suites run in `tests/ScipSharp.Indexer.Abap.Tests`.
+
+- Input: a folder of abapGit files (`*.abap` + `*.xml`); an `abaplint.json` in the root is honoured (`--config`, `--release`).
+- Semantics: abaplint's syntax check per object (spaghetti scopes with declarations and resolved references).
+  Declarations are keyed by file + position + name; every abaplint reference is mapped through that table.
+  Unresolved (void) names — SAP standard objects that are not in the sources — become external symbols.
+- abaplint records no reference for `CALL FUNCTION 'X'`, `INCLUDE`, `SUBMIT`, `CLASS … IMPLEMENTATION` or dictionary types and
+  tables; those are added from the statement trees.
+- See `src/Indexers/ScipSharp.Indexer.Abap/README.md` for the symbol layout and the known gaps.
+

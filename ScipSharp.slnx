@@ -6,6 +6,7 @@
     <Project Path="src/ScipSharp.Reprolang/ScipSharp.Reprolang.csproj" />
   </Folder>
   <Folder Name="/src/Indexers/">
+    <Project Path="src/Indexers/ScipSharp.Indexer.Abap/ScipSharp.Indexer.Abap.csproj" />
     <Project Path="src/Indexers/ScipSharp.Indexer.Clang/ScipSharp.Indexer.Clang.csproj" />
     <Project Path="src/Indexers/ScipSharp.Indexer.Dart/ScipSharp.Indexer.Dart.csproj" />
     <Project Path="src/Indexers/ScipSharp.Indexer.DotNet/ScipSharp.Indexer.DotNet.csproj" />
@@ -27,6 +28,7 @@
     <Project Path="tests/ScipSharp.Tests/ScipSharp.Tests.csproj" />
     <Project Path="tests/ScipSharp.Cli.Tests/ScipSharp.Cli.Tests.csproj" />
     <Project Path="tests/ScipSharp.Reprolang.Tests/ScipSharp.Reprolang.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Abap.Tests/ScipSharp.Indexer.Abap.Tests.csproj" />
     <Project Path="tests/ScipSharp.Indexer.Dart.Tests/ScipSharp.Indexer.Dart.Tests.csproj" />
     <Project Path="tests/ScipSharp.Indexer.DotNet.Tests/ScipSharp.Indexer.DotNet.Tests.csproj" />
     <Project Path="tests/ScipSharp.Indexer.Ruby.Tests/ScipSharp.Indexer.Ruby.Tests.csproj" />

@@ -6,6 +6,7 @@
     <Project Path="src/ScipSharp.Cli/ScipSharp.Cli.csproj" />
   </Folder>
   <Folder Name="/src/Indexers/">
+    <Project Path="src/Indexers/ScipSharp.Indexer.Abap/ScipSharp.Indexer.Abap.csproj" />
     <Project Path="src/Indexers/ScipSharp.Indexer.Clang/ScipSharp.Indexer.Clang.csproj" />
     <Project Path="src/Indexers/ScipSharp.Indexer.Dart/ScipSharp.Indexer.Dart.csproj" />
     <Project Path="src/Indexers/ScipSharp.Indexer.DotNet/ScipSharp.Indexer.DotNet.csproj" />

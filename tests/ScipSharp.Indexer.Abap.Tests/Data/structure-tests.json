@@ -1,0 +1,518 @@
+[
+ {
+  "file": "any.ts",
+  "structure": "Any",
+  "cases": [
+   {
+    "abap": ""
+   },
+   {
+    "abap": "WRITE foo. WRITE bar."
+   },
+   {
+    "abap": "WRITE foo. DATA i TYPE i."
+   },
+   {
+    "abap": "IF 1 = 2. WRITE foo. WRITE bar. ENDIF."
+   },
+   {
+    "abap": "WITH +monsters_with_heads AS\n  ( SELECT monster_number FROM z4t_monster_head\n    WHERE  no_of_heads = @id_no_of_heads )\nSELECT *\nFROM z4t_deliveries\nWHERE due_date       IN @it_date_range\nAND   monster_number IN ( SELECT monster_number FROM +monsters_with_heads )\nINTO TABLE @DATA(lt_deliveries_new)."
+   }
+  ]
+ },
+ {
+  "file": "case.ts",
+  "structure": "Case",
+  "cases": [
+   {
+    "abap": "CASE moo. ENDCASE."
+   },
+   {
+    "abap": "CASE moo. WHEN 2. ENDCASE."
+   },
+   {
+    "abap": "CASE moo. WHEN OTHERS. ENDCASE."
+   },
+   {
+    "abap": "CASE moo. WHEN 2. WRITE 'foo'. ENDCASE."
+   },
+   {
+    "abap": "CASE moo. WHEN 2. WRITE 'foo'. WRITE 'bar'. ENDCASE."
+   },
+   {
+    "abap": "CASE moo. WHEN 2. WHEN 3. ENDCASE."
+   },
+   {
+    "abap": "CASE sdfsd. INCLUDE zsdfsdf. ENDCASE."
+   },
+   {
+    "abap": "CASE sdfsd.\n    WRITE 'hello'.\n  ENDCASE."
+   }
+  ]
+ },
+ {
+  "file": "catch_system_exceptions.ts",
+  "structure": "CatchSystemExceptions",
+  "cases": [
+   {
+    "abap": "CATCH SYSTEM-EXCEPTIONS code = 4. ENDCATCH."
+   }
+  ]
+ },
+ {
+  "file": "chain.ts",
+  "structure": "Chain",
+  "cases": [
+   {
+    "abap": "\n  chain.\n    field sdfs-dsf.\n    field sdfs-sdfds.\n\n    module sdfs on chain-request.\n  endchain."
+   }
+  ]
+ },
+ {
+  "file": "class_data.ts",
+  "structure": "ClassData",
+  "cases": [
+   {
+    "abap": "CLASS-DATA: BEGIN OF name, foo TYPE string, bar TYPE string, END OF name."
+   }
+  ]
+ },
+ {
+  "file": "class_definition.ts",
+  "structure": "ClassDefinition",
+  "cases": [
+   {
+    "abap": "CLASS zfoo DEFINITION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION. PUBLIC SECTION. CONSTANTS foo TYPE i VALUE 2. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION. PRIVATE SECTION. CONSTANTS foo TYPE i VALUE 2. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION. PROTECTED SECTION. CONSTANTS foo TYPE i VALUE 2. ENDCLASS."
+   },
+   {
+    "abap": "CLASS lcl_service DEFINITION FINAL.\n    SET EXTENDED CHECK OFF.\n    SET EXTENDED CHECK ON.\n    ENDCLASS."
+   },
+   {
+    "abap": "CLASS lcl_service DEFINITION.\n    TYPE-POOLS: abcd.\n    ENDCLASS."
+   },
+   {
+    "abap": "CLASS lcl_service DEFINITION.\n    TYPE-POOLS: abcd, efgh.\n    ENDCLASS."
+   },
+   {
+    "abap": "CLASS lcl_foo DEFINITION.\n  PUBLIC SECTION.\n    INCLUDE zasdfd IF FOUND.\nENDCLASS."
+   },
+   {
+    "abap": "CLASS lcl_foo DEFINITION.\n  PUBLIC SECTION.\n    INCLUDE zasdfd.\n    METHODS moo.\nENDCLASS."
+   }
+  ]
+ },
+ {
+  "file": "class_global.ts",
+  "structure": "ClassGlobal",
+  "cases": [
+   {
+    "abap": "CLASS zfoo DEFINITION. ENDCLASS. CLASS zfoo IMPLEMENTATION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION. PUBLIC SECTION. ENDCLASS. CLASS zfoo IMPLEMENTATION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION. PROTECTED SECTION. ENDCLASS. CLASS zfoo IMPLEMENTATION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION. PRIVATE SECTION. ENDCLASS. CLASS zfoo IMPLEMENTATION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION PUBLIC CREATE PUBLIC. ENDCLASS. CLASS zfoo IMPLEMENTATION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION. PUBLIC SECTION. METHODS method1. ENDCLASS. CLASS zfoo IMPLEMENTATION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo DEFINITION. PUBLIC SECTION. METHODS method1. PRIVATE SECTION. ENDCLASS. CLASS zfoo IMPLEMENTATION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zcl_foobar DEFINITION PUBLIC CREATE PUBLIC.\n  PUBLIC SECTION.\n  PROTECTED SECTION.\n  PRIVATE SECTION.\n    METHODS method1.\nENDCLASS.\nCLASS zcl_foobar IMPLEMENTATION.\n  METHOD method1.\n  ENDMETHOD.\nENDCLASS."
+   }
+  ]
+ },
+ {
+  "file": "class_implementation.ts",
+  "structure": "ClassImplementation",
+  "cases": [
+   {
+    "abap": "CLASS zfoo IMPLEMENTATION. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo IMPLEMENTATION. METHOD foo. ENDMETHOD. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo IMPLEMENTATION. METHOD foo. moo = boo. ENDMETHOD. ENDCLASS."
+   },
+   {
+    "abap": "CLASS zfoo IMPLEMENTATION. METHOD foo. TYPE-POOLS: abcd. ENDMETHOD. ENDCLASS."
+   },
+   {
+    "abap": "\nCLASS zcl_abap_spatial_amdp IMPLEMENTATION.\n  METHOD insert_geo_location\n    BY DATABASE PROCEDURE FOR HDB\n    LANGUAGE SQLSCRIPT\n    USING zchargingpoints.\n\n    INSERT INTO zchargingpoints VALUES (\n                                  i_mandt,\n                                  NEW ST_POINT(i_longitude, i_latitude).ST_SRID(4326)\n                                );\n\n  ENDMETHOD.\nENDCLASS."
+   },
+   {
+    "abap": "\nCLASS lcl_global_func IMPLEMENTATION.\n  METHOD get_dummy BY DATABASE FUNCTION FOR HDB LANGUAGE SQLSCRIPT OPTIONS READ-ONLY.\n    RETURN\n      SELECT dummy FROM \"SYS\".dummy WHERE dummy = :var;\n  ENDMETHOD.\nENDCLASS."
+   }
+  ]
+ },
+ {
+  "file": "constants.ts",
+  "structure": "Constants",
+  "cases": [
+   {
+    "abap": "\nCONSTANTS BEGIN OF bar.\nINCLUDE zincl.\nCONSTANTS END OF bar."
+   }
+  ]
+ },
+ {
+  "file": "data.ts",
+  "structure": "Data",
+  "cases": [
+   {
+    "abap": "DATA: BEGIN OF name, foo TYPE string, bar TYPE string, END OF name."
+   },
+   {
+    "abap": "\n  DATA: BEGIN OF COMMON PART sddfs.\n  DATA: foo TYPE c LENGTH 1.\n  ENHANCEMENT-POINT sdf SPOTS sdfsdf STATIC INCLUDE BOUND.\n  DATA: END OF COMMON PART."
+   },
+   {
+    "abap": "\n  DATA: BEGIN OF COMMON PART something.\n  TYPE-POOLS zfsd.\n  DATA: END OF COMMON PART something."
+   },
+   {
+    "abap": "\n  DATA: BEGIN OF COMMON PART asdf.\n  ENHANCEMENT 1  sdfsd.\n  ENDENHANCEMENT.\n  DATA: END OF COMMON PART."
+   },
+   {
+    "abap": "\n  DATA: BEGIN OF COMMON PART something.\n  CONSTANTS foo TYPE c LENGTH 1 VALUE 'A'.\n  DATA: END   OF COMMON PART something."
+   },
+   {
+    "abap": "\n  DATA: BEGIN OF COMMON PART something.\n  TYPES: foo TYPE c LENGTH 1.\n  DATA: END   OF COMMON PART something."
+   },
+   {
+    "abap": "\n  DATA BEGIN OF COMMON PART commonpart.\n  TYPES:\n        BEGIN OF typea,\n          bar TYPE c,\n        END OF typea.\n  DATA END OF COMMON PART."
+   },
+   {
+    "abap": "\n  DATA BEGIN OF COMMON PART part123.\n  INCLUDE zsomething.\n  DATA END OF COMMON PART."
+   },
+   {
+    "abap": "\n  DATA BEGIN OF COMMON PART part123.\n  RANGES range FOR foo-bar.\n  DATA END OF COMMON PART."
+   },
+   {
+    "abap": "\n  DATA BEGIN OF COMMON PART part123.\n  DEFINE foobar.\n  END-OF-DEFINITION.\n  DATA END OF COMMON PART."
+   },
+   {
+    "abap": "\n  DATA BEGIN OF bar.\n  DATA foo TYPE c.\n  DATA END OF bar VALID BETWEEN foo AND foo."
+   },
+   {
+    "abap": "\nDATA BEGIN OF COMMON PART foobar.\nSELECT-OPTIONS i_esokz FOR eine-esokz.\nDATA END OF COMMON PART."
+   },
+   {
+    "abap": "\nDATA BEGIN OF COMMON PART foobar.\nselection-screen skip 1.\nSELECT-OPTIONS i_esokz FOR eine-esokz.\nDATA END OF COMMON PART."
+   },
+   {
+    "abap": "\nDATA BEGIN OF COMMON PART foobar.\nPARAMETERS ppp TYPE i.\nDATA END OF COMMON PART."
+   }
+  ]
+ },
+ {
+  "file": "define.ts",
+  "structure": "Define",
+  "cases": [
+   {
+    "abap": "DEFINE _macro. END-OF-DEFINITION."
+   },
+   {
+    "abap": "DEFINE _macro. WRITE bar. END-OF-DEFINITION."
+   }
+  ]
+ },
+ {
+  "file": "do.ts",
+  "structure": "Do",
+  "cases": [
+   {
+    "abap": "DO 2 TIMES. ENDDO."
+   },
+   {
+    "abap": "DO 2 TIMES. WRITE bar. ENDDO."
+   },
+   {
+    "abap": "DO 2 TIMES. MOVE-CORRESPONDING foo TO bar. ENDDO."
+   },
+   {
+    "abap": "DO 2 TIMES. MODIFY SCREEN. ENDDO."
+   },
+   {
+    "abap": "DO 2 TIMES. INSERT 'sdf' 'sdf' INTO header. ENDDO."
+   }
+  ]
+ },
+ {
+  "file": "dynpro_logic.ts",
+  "structure": "DynproLogic",
+  "cases": [
+   {
+    "abap": "PROCESS BEFORE OUTPUT.\n  MODULE status_0100.\n\nPROCESS AFTER INPUT.\n  MODULE user_command_0100."
+   },
+   {
+    "abap": "PROCESS BEFORE OUTPUT.\n  MODULE pbo_1001.\n\nPROCESS AFTER INPUT.\n  MODULE pai_exit AT EXIT-COMMAND.\n  FIELD trc_level VALUES (BETWEEN '0' AND '3')."
+   },
+   {
+    "abap": "\nPROCESS BEFORE OUTPUT.\n\nPROCESS AFTER INPUT.\n  LOOP AT gt_data.\n  ENDLOOP."
+   },
+   {
+    "abap": "\nPROCESS BEFORE OUTPUT.\n\nPROCESS AFTER INPUT.\n  LOOP AT tb_exit.\n    CHAIN.\n      FIELD sdf-grpno.\n      MODULE sdf ON CHAIN-REQUEST.\n    ENDCHAIN.\n  ENDLOOP.\n  MODULE twer.\n"
+   },
+   {
+    "abap": "\nPROCESS BEFORE OUTPUT.\n\nPROCESS AFTER INPUT.\n  LOOP AT idata.\n    module data_value.\n  ENDLOOP.\n\n  MODULE USER_COMMAND_0150.\n"
+   },
+   {
+    "abap": "\nPROCESS BEFORE OUTPUT.\n\nPROCESS AFTER INPUT.\n  LOOP AT t_log_ven.\n    CHAIN.\n      FIELD t_log_ven-foo.\n    ENDCHAIN.\n    FIELD t_log_ven-bar MODULE mod ON REQUEST.\n  ENDLOOP.\n"
+   },
+   {
+    "abap": "\nprocess before output.\n\nprocess after input.\n  loop with control tc_hdr.\n    chain.\n      field: zpro-selkz.\n      module hdr_fill_table on chain-request.\n    endchain.\n  endloop.\n  module user_command_header.\n"
+   },
+   {
+    "abap": "\nPROCESS BEFORE OUTPUT.\n\nPROCESS AFTER INPUT.\n  LOOP WITH CONTROL ctr1 .\n    FIELD zfoobar-kunnr MODULE check_kunnr ON REQUEST.\n  ENDLOOP.\n"
+   },
+   {
+    "abap": "\nPROCESS BEFORE OUTPUT.\n\nPROCESS AFTER INPUT.\n\nPROCESS ON HELP-REQUEST.\n\nPROCESS ON VALUE-REQUEST.\n\n"
+   },
+   {
+    "abap": "\nPROCESS BEFORE OUTPUT.\n  MODULE alv_8000.\n"
+   },
+   {
+    "abap": "\nPROCESS BEFORE OUTPUT.\n  LOOP.\n    MODULE foo.\n  ENDLOOP.\n\nPROCESS AFTER INPUT.\n  LOOP.\n    MODULE bar.\n  ENDLOOP.\n"
+   }
+  ]
+ },
+ {
+  "file": "exec_sql.ts",
+  "structure": "ExecSQL",
+  "cases": [
+   {
+    "abap": "EXEC sql.\n    select PROGNAME into :l_progname from REPOLOAD where PROGNAME = :p_prehdr\n    ENDEXEC."
+   },
+   {
+    "abap": "EXEC SQL.\n  COMMIT WORK.\nENDEXEC."
+   }
+  ]
+ },
+ {
+  "file": "form.ts",
+  "structure": "Form",
+  "cases": [
+   {
+    "abap": "FORM foo. ENDFORM."
+   },
+   {
+    "abap": "FORM foo. WRITE 'a'. ENDFORM."
+   },
+   {
+    "abap": "FORM foo USING bar-foo. ENDFORM."
+   },
+   {
+    "abap": "form moo using value(bar)\ttype c.\n  endform."
+   }
+  ]
+ },
+ {
+  "file": "if.ts",
+  "structure": "If",
+  "cases": [
+   {
+    "abap": "IF foo = bar. ENDIF."
+   },
+   {
+    "abap": "IF foo = bar. WRITE 'bar'. ENDIF."
+   },
+   {
+    "abap": "IF foo = bar. ELSE. ENDIF."
+   },
+   {
+    "abap": "IF foo = bar. ELSEIF moo = boo. ENDIF."
+   },
+   {
+    "abap": "IF foo = bar. ELSEIF moo = boo. ELSE. ENDIF."
+   },
+   {
+    "abap": "IF foo = bar. ELSEIF moo = boo. ELSEIF boo = loo. ENDIF."
+   },
+   {
+    "abap": "IF 1 = 2. INTERFACE zif_bar LOAD. ENDIF."
+   },
+   {
+    "abap": "\n  IF 1 = 2.\n    ON CHANGE OF bar-moo.\n      PERFORM foo.\n    ENDON.\n  ENDIF."
+   }
+  ]
+ },
+ {
+  "file": "interface.ts",
+  "structure": "Interface",
+  "cases": [
+   {
+    "abap": "\nINTERFACE if_foo PUBLIC.\nENDINTERFACE."
+   },
+   {
+    "abap": "\nINTERFACE if_foo PUBLIC.\n  INTERFACES if_bar.\nENDINTERFACE."
+   },
+   {
+    "abap": "\nINTERFACE if_foo PUBLIC.\n  INTERFACES if_bar.\n  ALIASES moo FOR if_bar~moo.\nENDINTERFACE."
+   }
+  ]
+ },
+ {
+  "file": "interface_global.ts",
+  "structure": "InterfaceGlobal",
+  "cases": [
+   {
+    "abap": "TYPE-POOLS abap.\n  INTERFACE zif_bar PUBLIC.\n  ENDINTERFACE."
+   },
+   {
+    "abap": "INTERFACE zif_bar PUBLIC.\n  TYPES: BEGIN OF bar,\n  foo1 TYPE i,\n  foo2 TYPE i,\n  foo3 TYPE i,\n  foo4 TYPE i,\n  END OF bar.\n  METHODS bar.\n  ENDINTERFACE."
+   }
+  ]
+ },
+ {
+  "file": "loop.ts",
+  "structure": "Loop",
+  "cases": [
+   {
+    "abap": "LOOP AT tab INTO stru. ENDLOOP."
+   },
+   {
+    "abap": "LOOP AT tab INTO stru. WRITE bar. ENDLOOP."
+   }
+  ]
+ },
+ {
+  "file": "loop_at_screen.ts",
+  "structure": "LoopAtScreen",
+  "cases": [
+   {
+    "abap": "LOOP AT SCREEN. ENDLOOP."
+   },
+   {
+    "abap": "LOOP AT SCREEN. WRITE bar. ENDLOOP."
+   }
+  ]
+ },
+ {
+  "file": "method.ts",
+  "structure": "Method",
+  "cases": [
+   {
+    "abap": "  METHOD get_lines.\n  result = VALUE ztimem_line_t(\n    FOR part IN parts\n    FOR line IN part-lines\n    ( line ) ).\nENDMETHOD."
+   }
+  ]
+ },
+ {
+  "file": "on_change.ts",
+  "structure": "OnChange",
+  "cases": [
+   {
+    "abap": "\n    on change of foo-bar.\n    else.\n    endon."
+   }
+  ]
+ },
+ {
+  "file": "select.ts",
+  "structure": "Select",
+  "cases": [
+   {
+    "abap": "SELECT * FROM zfoo INTO ls_area. EXIT. ENDSELECT."
+   }
+  ]
+ },
+ {
+  "file": "try.ts",
+  "structure": "Try",
+  "cases": [
+   {
+    "abap": "TRY. ENDTRY."
+   },
+   {
+    "abap": "TRY. CATCH cx_moo. ENDTRY."
+   },
+   {
+    "abap": "TRY. CATCH cx_moo. CATCH cx_boo. ENDTRY."
+   },
+   {
+    "abap": "TRY. CATCH cx_moo. CLEANUP. ENDTRY."
+   },
+   {
+    "abap": "TRY. CLEANUP. ENDTRY."
+   },
+   {
+    "abap": "TRY. WRITE bar. CATCH cx_moo. WRITE bar. ENDTRY."
+   }
+  ]
+ },
+ {
+  "file": "type_enum.ts",
+  "structure": "TypeEnum",
+  "cases": [
+   {
+    "abap": "TYPES BEGIN OF ENUM name STRUCTURE name2 BASE TYPE char01.\nTYPES foo VALUE IS INITIAL.\nTYPES bar VALUE '1'.\nTYPES END OF ENUM name STRUCTURE name2.\n"
+   },
+   {
+    "abap": "TYPES: BEGIN OF ENUM name, foo, bar, END OF ENUM name."
+   }
+  ]
+ },
+ {
+  "file": "types.ts",
+  "structure": "Types",
+  "cases": [
+   {
+    "abap": "TYPES: BEGIN OF ty_foo, raw TYPE xstring, compressed_len TYPE i, END OF ty_foo."
+   },
+   {
+    "abap": "TYPES:\nBEGIN OF ty_result,\n  ci_has_errors TYPE abap_bool,\n  BEGIN OF statistics,\n    finish_timestamp TYPE timestampl,\n  END OF statistics,\nEND OF ty_result."
+   },
+   {
+    "abap": "TYPES: BEGIN OF foobar %_FINAL,\n  sdfs  TYPE i,\nEND OF foobar."
+   },
+   {
+    "abap": "TYPES: BEGIN OF foobar,\nfoo TYPE i.\nINCLUDE zsdfsd.\nTYPES: bar TYPE i.\nTYPES: END OF foobar."
+   }
+  ]
+ },
+ {
+  "file": "when_type.ts",
+  "structure": "CaseType",
+  "cases": [
+   {
+    "abap": "CASE TYPE OF lo_artefact.\n    DATA lo_message TYPE REF TO object.\n    WHEN TYPE object INTO lo_message.\n  ENDCASE."
+   }
+  ]
+ },
+ {
+  "file": "while.ts",
+  "structure": "While",
+  "cases": [
+   {
+    "abap": "WHILE foo = bar. ENDWHILE."
+   },
+   {
+    "abap": "WHILE foo = bar. WRITE bar. ENDWHILE."
+   }
+  ]
+ },
+ {
+  "file": "with.ts",
+  "structure": "With",
+  "cases": [
+   {
+    "abap": "WITH +cnt AS (\n    SELECT\n    DISTINCT\n      my_column\n    FROM my_table\n    )\n    SELECT ('count( * )')\n      FROM ('+cnt')\n      INTO @DATA(lv_total_number_of_records).\n  ENDWITH."
+   }
+  ]
+ }
+]

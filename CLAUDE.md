@@ -14,7 +14,7 @@ namespaces, primary constructors, collection expressions, `Span`-based parsing w
 |---|---|
 | `src/ScipSharp` | Core library: protobuf types (generated), `SymbolParser`, `SymbolFormatter`, `IndexWriter`. Port of `bindings/go/scip`. |
 | `src/ScipSharp.Indexing` | `IIndexer` abstraction + shared helpers used by every language indexer. |
-| `src/Indexers/ScipSharp.Indexer.*` | One project per language indexer (Java, TypeScript, Rust, Clang, Ruby, Python, DotNet, Dart, Php; native, no upstream: Cobol, Vb6, Pli, Fortran, Delphi, Pascal, Sql). |
+| `src/Indexers/ScipSharp.Indexer.*` | One project per language indexer (Java, TypeScript, Rust, Clang, Ruby, Python, DotNet, Dart, Php, Abap; native, no upstream: Cobol, Vb6, Pli, Fortran, Delphi, Pascal, Sql). |
 | `src/ScipSharp.Cli` | The `scip` dotnet tool (port of `cmd/scip`) + `scip index <lang>` entry points. |
 | `tests/ScipSharp.Tests` | TUnit tests (Microsoft.Testing.Platform). |
 | `tools/sync-proto.sh` | Regenerates `src/ScipSharp/Protos/scip.proto` from `.reference/scip/scip.proto`. |

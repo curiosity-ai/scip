@@ -1,3 +1,4 @@
+using ScipSharp.Indexer.Abap;
 using ScipSharp.Indexer.Clang;
 using ScipSharp.Indexer.Cobol;
 using ScipSharp.Indexer.Dart;
@@ -39,5 +40,6 @@ internal static class IndexerRegistry
         new DelphiIndexer(),
         new PascalIndexer(),
         new SqlIndexer(),
+        new AbapIndexer(),
     ];
 }
