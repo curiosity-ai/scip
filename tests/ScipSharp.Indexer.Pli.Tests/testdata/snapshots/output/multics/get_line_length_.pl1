@@ -1,0 +1,276 @@
+  /* ***********************************************************
+     *                                                         *
+     * Copyright, (C) Honeywell Information Systems Inc., 1982 *
+     *                                                         *
+     * Copyright (c) 1972 by Massachusetts Institute of        *
+     * Technology and Honeywell Information Systems, Inc.      *
+     *                                                         *
+     *********************************************************** */
+  
+  
+  /* GET_LINE_LENGTH_ - subroutine to return the line length of a given
+     stream or switch.
+  
+     Written 750206 by PG from a program by the SIPB
+     Modified 801104 (election day) by JRD to use mode_string_$parse (MCR 4721)
+  */
+  
+  /* format:  style3,ll122,idind30,ifthenstmt */
+  
+//⌄ enclosing_range_start scip-pli pli multics . get_line_length_().
+  get_line_length_:
+//^^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().
+//                 kind Function
+//                 display_name get_line_length_
+//                 documentation
+//                 > ```pli
+//                 > get_line_length_: procedure(P_stream) returns(fixed bin(17))
+//                 > ```
+       procedure (P_stream) returns (fixed bin (17));
+//                ^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_stream)
+  
+  declare P_stream   char (*) parameter,
+//        ^^^^^^^^ definition scip-pli pli multics . get_line_length_().(P_stream)
+//                 kind Parameter
+//                 display_name P_stream
+//                 documentation
+//                 > ```pli
+//                 > DCL P_stream char(*) parameter
+//                 > ```
+   P_switch_ptr  ptr parameter,
+// ^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().(P_switch_ptr)
+//              kind Parameter
+//              display_name P_switch_ptr
+//              documentation
+//              > ```pli
+//              > DCL P_switch_ptr ptr parameter
+//              > ```
+   P_status   fixed bin (35) parameter;
+// ^^^^^^^^ definition scip-pli pli multics . get_line_length_().(P_status)
+//          kind Parameter
+//          display_name P_status
+//          documentation
+//          > ```pli
+//          > DCL P_status fixed bin(35) parameter
+//          > ```
+  
+  declare (addr, null)  builtin;
+//         ^^^^ reference scip-pli pli builtin . ADDR().
+//               ^^^^ reference scip-pli pli builtin . NULL().
+  
+  declare mode_string  char (512),
+//        ^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_string.
+//                    kind Variable
+//                    display_name mode_string
+//                    documentation
+//                    > ```pli
+//                    > DCL mode_string char(512)
+//                    > ```
+   switch_ptr  ptr,
+// ^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().switch_ptr.
+//            kind Variable
+//            display_name switch_ptr
+//            documentation
+//            > ```pli
+//            > DCL switch_ptr ptr
+//            > ```
+   have_code   bit (1) aligned,
+// ^^^^^^^^^ definition scip-pli pli multics . get_line_length_().have_code.
+//           kind Variable
+//           display_name have_code
+//           documentation
+//           > ```pli
+//           > DCL have_code bit(1) aligned
+//           > ```
+   status   fixed bin (35);
+// ^^^^^^ definition scip-pli pli multics . get_line_length_().status.
+//        kind Variable
+//        display_name status
+//        documentation
+//        > ```pli
+//        > DCL status fixed bin(35)
+//        > ```
+  
+  declare 1 mv   aligned like mode_value;
+//          ^^ definition scip-pli pli multics . get_line_length_().mv.
+//             kind Variable
+//             display_name mv
+//             documentation
+//             > ```pli
+//             > DCL 1 mv aligned like mode_value
+//             > ```
+//                            ^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_value.
+  
+  declare error_table_$action_not_performed
+//        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ definition scip-pli pli multics . error_table_$action_not_performed.
+//                                          kind Variable
+//                                          display_name error_table_$action_not_performed
+//                                          documentation
+//                                          > ```pli
+//                                          > DCL error_table_$action_not_performed fixed bin(35) external
+//                                          > ```
+      fixed bin (35) external;
+  
+  declare mode_string_$get_mode entry (char (*), char (*), ptr, fixed bin (35));
+//        ^^^^^^^^^^^^^^^^^^^^^ definition scip-pli pli multics . mode_string_$get_mode().
+//                              kind Function
+//                              display_name mode_string_$get_mode
+//                              documentation
+//                              > ```pli
+//                              > DCL mode_string_$get_mode entry(char(*), char(*), ptr, fixed bin(35))
+//                              > ```
+  %page;
+  %include iox_dcls;
+  %page;
+  %include mode_string_info;
+  %page;
+  /* get_line_length_:
+          procedure (P_stream) returns (fixed bin (17)); */
+  
+   have_code = "0"b;
+// ^^^^^^^^^ reference scip-pli pli multics . get_line_length_().have_code.
+   goto STREAM_JOIN;
+//      ^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().STREAM_JOIN.
+  
+  get_line_length_$stream:
+//^^^^^^^^^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_$stream().
+//                        kind Function
+//                        display_name get_line_length_$stream
+//                        documentation
+//                        > ```pli
+//                        > get_line_length_$stream: entry(P_stream, P_status) returns(fixed bin(17))
+//                        > ```
+       entry (P_stream, P_status) returns (fixed bin (17));
+//            ^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_stream)
+//                      ^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_status)
+  
+   have_code = "1"b;
+// ^^^^^^^^^ reference scip-pli pli multics . get_line_length_().have_code.
+  
+  
+  STREAM_JOIN:
+//^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().STREAM_JOIN.
+//            kind Constant
+//            display_name STREAM_JOIN
+//            documentation
+//            > ```pli
+//            > STREAM_JOIN: (label)
+//            > ```
+   if P_stream = ""
+//    ^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_stream)
+   then switch_ptr = iox_$user_output;
+//      ^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().switch_ptr.
+//                   ^^^^^^^^^^^^^^^^ reference scip-pli pli multics . iox_$user_output.
+   else do;
+    call iox_$look_iocb (P_stream, switch_ptr, status);
+//       ^^^^^^^^^^^^^^ reference scip-pli pli multics . iox_$look_iocb().
+//                       ^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_stream)
+//                                 ^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().switch_ptr.
+//                                             ^^^^^^ reference scip-pli pli multics . get_line_length_().status.
+    if status ^= 0 then go to RETURN_CODE;
+//     ^^^^^^ reference scip-pli pli multics . get_line_length_().status.
+//                            ^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().RETURN_CODE.
+        end;
+  
+   go to JOIN;
+//       ^^^^ reference scip-pli pli multics . get_line_length_().JOIN.
+  
+  
+  get_line_length_$switch:
+//^^^^^^^^^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_$switch().
+//                        kind Function
+//                        display_name get_line_length_$switch
+//                        documentation
+//                        > ```pli
+//                        > get_line_length_$switch: entry(P_switch_ptr, P_status) returns(fixed bin(17))
+//                        > ```
+       entry (P_switch_ptr, P_status) returns (fixed bin (17));
+//            ^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_switch_ptr)
+//                          ^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_status)
+  
+   have_code = "1"b;
+// ^^^^^^^^^ reference scip-pli pli multics . get_line_length_().have_code.
+   switch_ptr = P_switch_ptr;
+// ^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().switch_ptr.
+//              ^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_switch_ptr)
+   if switch_ptr = null () then switch_ptr = iox_$user_output;
+//    ^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().switch_ptr.
+//                 ^^^^ reference scip-pli pli builtin . NULL().
+//                              ^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().switch_ptr.
+//                                           ^^^^^^^^^^^^^^^^ reference scip-pli pli multics . iox_$user_output.
+  
+  JOIN:
+//^^^^ definition scip-pli pli multics . get_line_length_().JOIN.
+//     kind Constant
+//     display_name JOIN
+//     documentation
+//     > ```pli
+//     > JOIN: (label)
+//     > ```
+   call iox_$modes (switch_ptr, "", mode_string, status);
+//      ^^^^^^^^^^ reference scip-pli pli multics . iox_$modes().
+//                  ^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().switch_ptr.
+//                                  ^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_string.
+//                                               ^^^^^^ reference scip-pli pli multics . get_line_length_().status.
+   if status ^= 0 then go to RETURN_CODE;
+//    ^^^^^^ reference scip-pli pli multics . get_line_length_().status.
+//                           ^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().RETURN_CODE.
+  
+   mv.version = mode_value_version_3;
+// ^^ reference scip-pli pli multics . get_line_length_().mv.
+//    ^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_value.version.
+//              ^^^^^^^^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_value_version_3.
+   call mode_string_$get_mode (mode_string, "ll", addr (mv), status);
+//      ^^^^^^^^^^^^^^^^^^^^^ reference scip-pli pli multics . mode_string_$get_mode().
+//                             ^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_string.
+//                                                ^^^^ reference scip-pli pli builtin . ADDR().
+//                                                      ^^ reference scip-pli pli multics . get_line_length_().mv.
+//                                                           ^^^^^^ reference scip-pli pli multics . get_line_length_().status.
+   if status ^= 0 then goto RETURN_CODE;
+//    ^^^^^^ reference scip-pli pli multics . get_line_length_().status.
+//                          ^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().RETURN_CODE.
+  
+   if ^mv.numeric_valuep then goto RETURN_NO_ACTION;
+//     ^^ reference scip-pli pli multics . get_line_length_().mv.
+//        ^^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_value.flags.numeric_valuep.
+//                                 ^^^^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().RETURN_NO_ACTION.
+  
+   if have_code then P_status = 0;
+//    ^^^^^^^^^ reference scip-pli pli multics . get_line_length_().have_code.
+//                   ^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_status)
+  
+   return (mv.numeric_value);
+//         ^^ reference scip-pli pli multics . get_line_length_().mv.
+//            ^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_value.numeric_value.
+  
+  RETURN_NO_ACTION:
+//^^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().RETURN_NO_ACTION.
+//                 kind Constant
+//                 display_name RETURN_NO_ACTION
+//                 documentation
+//                 > ```pli
+//                 > RETURN_NO_ACTION: (label)
+//                 > ```
+   status = error_table_$action_not_performed;
+// ^^^^^^ reference scip-pli pli multics . get_line_length_().status.
+//          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ reference scip-pli pli multics . error_table_$action_not_performed.
+  
+  RETURN_CODE:
+//^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().RETURN_CODE.
+//            kind Constant
+//            display_name RETURN_CODE
+//            documentation
+//            > ```pli
+//            > RETURN_CODE: (label)
+//            > ```
+   if have_code then P_status = status;
+//    ^^^^^^^^^ reference scip-pli pli multics . get_line_length_().have_code.
+//                   ^^^^^^^^ reference scip-pli pli multics . get_line_length_().(P_status)
+//                              ^^^^^^ reference scip-pli pli multics . get_line_length_().status.
+  
+   return (72);    /* return default line length (policy decision) */
+  
+       end get_line_length_;
+//         ^^^^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().
+//                         ⌃ enclosing_range_end scip-pli pli multics . get_line_length_().
+  

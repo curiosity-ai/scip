@@ -1,0 +1,48 @@
+// ⌄ enclosing_range_start scip-pli pli basics . SUMMARY().
+   SUMMARY: PROC (T) RETURNS (FIXED DEC(9,2));
+// ^^^^^^^ definition scip-pli pli basics . SUMMARY().
+//         kind Function
+//         display_name SUMMARY
+//         documentation
+//         > ```pli
+//         > SUMMARY: PROC(T) RETURNS(FIXED DEC(9, 2))
+//         > ```
+//                ^ reference scip-pli pli basics . SUMMARY().(T)
+     DCL T FIXED BIN(31);
+//       ^ definition scip-pli pli basics . SUMMARY().(T)
+//         kind Parameter
+//         display_name T
+//         documentation
+//         > ```pli
+//         > DCL T FIXED BIN(31)
+//         > ```
+     DCL LOG_LEVEL FIXED BIN(15) EXTERNAL;
+//       ^^^^^^^^^ definition scip-pli pli basics . LOG_LEVEL.
+//                 kind Variable
+//                 display_name LOG_LEVEL
+//                 documentation
+//                 > ```pli
+//                 > DCL LOG_LEVEL FIXED BIN(15) EXTERNAL
+//                 > ```
+     DCL LOGGER ENTRY (CHAR(*), BIT(1));
+//       ^^^^^^ reference scip-pli pli basics . LOGGER().
+     IF LOG_LEVEL > 0 THEN CALL LOGGER('SUMMARY', '1'B);
+//      ^^^^^^^^^ reference scip-pli pli basics . LOG_LEVEL.
+//                              ^^^^^^ reference scip-pli pli basics . LOGGER().
+     RETURN (T / 100);
+//           ^ reference scip-pli pli basics . SUMMARY().(T)
+   ALT_SUMMARY: ENTRY (T) RETURNS (FIXED DEC(9,2));
+// ^^^^^^^^^^^ definition scip-pli pli basics . ALT_SUMMARY().
+//             kind Function
+//             display_name ALT_SUMMARY
+//             documentation
+//             > ```pli
+//             > ALT_SUMMARY: ENTRY(T) RETURNS(FIXED DEC(9, 2))
+//             > ```
+//                     ^ reference scip-pli pli basics . SUMMARY().(T)
+     RETURN (T);
+//           ^ reference scip-pli pli basics . SUMMARY().(T)
+   END SUMMARY;
+//     ^^^^^^^ reference scip-pli pli basics . SUMMARY().
+//            ⌃ enclosing_range_end scip-pli pli basics . SUMMARY().
+  

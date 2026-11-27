@@ -1,0 +1,324 @@
+  *PROCESS PP(MACRO) MARGINS(1,100);
+  /* Enterprise PL/I: package with exports, types, generics, preprocessor. */
+  %DCL DEBUG CHAR;
+//     ^^^^^ definition scip-pli pli packages . `geometry.pli`/DEBUG!
+//           kind Macro
+//           display_name DEBUG
+//           documentation
+//           > ```pli
+//           > %DCL DEBUG CHAR
+//           > ```
+  %DEBUG = 'NO';
+// ^^^^^ reference scip-pli pli packages . `geometry.pli`/DEBUG!
+  %DCL SQUARE ENTRY;
+//     ^^^^^^ reference scip-pli pli packages . `geometry.pli`/SQUARE!
+// ⌄ enclosing_range_start scip-pli pli packages . `geometry.pli`/SQUARE!
+  %SQUARE: PROC (X) RETURNS (CHAR);
+// ^^^^^^ definition scip-pli pli packages . `geometry.pli`/SQUARE!
+//        kind Macro
+//        display_name SQUARE
+//        documentation
+//        > ```pli
+//        > %SQUARE: PROC(X) RETURNS(CHAR)
+//        > ```
+//               ^ reference scip-pli pli packages . `geometry.pli`/SQUARE!(X)
+    DCL X CHAR;
+//      ^ definition scip-pli pli packages . `geometry.pli`/SQUARE!(X)
+//        kind Parameter
+//        display_name X
+//        documentation
+//        > ```pli
+//        > DCL X CHAR
+//        > ```
+    RETURN ('((' || X || ')*(' || X || '))');
+//                  ^ reference scip-pli pli packages . `geometry.pli`/SQUARE!(X)
+//                                ^ reference scip-pli pli packages . `geometry.pli`/SQUARE!(X)
+  %END SQUARE;
+//           ⌃ enclosing_range_end scip-pli pli packages . `geometry.pli`/SQUARE!
+  %ACTIVATE SQUARE;
+//          ^^^^^^ reference scip-pli pli packages . `geometry.pli`/SQUARE!
+  
+//⌄ enclosing_range_start scip-pli pli packages . GEOMETRY/
+  GEOMETRY: PACKAGE EXPORTS(AREA_OF, SCALE);
+//^^^^^^^^ definition scip-pli pli packages . GEOMETRY/
+//         kind Package
+//         display_name GEOMETRY
+//         documentation
+//         > ```pli
+//         > GEOMETRY: PACKAGE EXPORTS(AREA_OF, SCALE)
+//         > ```
+//                          ^^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().
+//                                   ^^^^^ reference scip-pli pli packages . GEOMETRY/SCALE().
+  
+    DEFINE ORDINAL SHAPE (CIRCLE, RECT VALUE(5), TRIANGLE);
+//                 ^^^^^ definition scip-pli pli packages . GEOMETRY/SHAPE#
+//                       kind Type
+//                       display_name SHAPE
+//                       documentation
+//                       > ```pli
+//                       > DEFINE ORDINAL SHAPE(CIRCLE, RECT VALUE(5), TRIANGLE)
+//                       > ```
+//                        ^^^^^^ definition scip-pli pli packages . GEOMETRY/CIRCLE.
+//                               kind EnumMember
+//                               display_name CIRCLE
+//                               documentation
+//                               > ```pli
+//                               > CIRCLE (ordinal value of SHAPE)
+//                               > ```
+//                                ^^^^ definition scip-pli pli packages . GEOMETRY/RECT.
+//                                     kind EnumMember
+//                                     display_name RECT
+//                                     documentation
+//                                     > ```pli
+//                                     > RECT (ordinal value of SHAPE)
+//                                     > ```
+//                                               ^^^^^^^^ definition scip-pli pli packages . GEOMETRY/TRIANGLE.
+//                                                        kind EnumMember
+//                                                        display_name TRIANGLE
+//                                                        documentation
+//                                                        > ```pli
+//                                                        > TRIANGLE (ordinal value of SHAPE)
+//                                                        > ```
+    DEFINE STRUCTURE
+      1 POINT,
+//      ^^^^^ definition scip-pli pli packages . GEOMETRY/POINT#
+//            kind Struct
+//            display_name POINT
+//            documentation
+//            > ```pli
+//            > DEFINE 1 POINT
+//            > ```
+        2 X FLOAT BIN(53),
+//        ^ definition scip-pli pli packages . GEOMETRY/POINT#X.
+//          kind Field
+//          display_name X
+//          documentation
+//          > ```pli
+//          > DEFINE 2 X FLOAT BIN(53)
+//          > ```
+        2 Y FLOAT BIN(53);
+//        ^ definition scip-pli pli packages . GEOMETRY/POINT#Y.
+//          kind Field
+//          display_name Y
+//          documentation
+//          > ```pli
+//          > DEFINE 2 Y FLOAT BIN(53)
+//          > ```
+  
+    DCL ORIGIN TYPE(POINT) STATIC;
+//      ^^^^^^ definition scip-pli pli packages . GEOMETRY/ORIGIN.
+//             kind Variable
+//             display_name ORIGIN
+//             documentation
+//             > ```pli
+//             > DCL ORIGIN TYPE(POINT) STATIC
+//             > ```
+//                  ^^^^^ reference scip-pli pli packages . GEOMETRY/POINT#
+    DCL SCALE_ANY GENERIC (SCALE_FIXED WHEN (FIXED), SCALE WHEN (FLOAT));
+//      ^^^^^^^^^ definition scip-pli pli packages . GEOMETRY/SCALE_ANY.
+//                kind Function
+//                display_name SCALE_ANY
+//                documentation
+//                > ```pli
+//                > DCL SCALE_ANY GENERIC(SCALE_FIXED WHEN(FIXED), SCALE WHEN(FLOAT))
+//                > ```
+//                         ^^^^^^^^^^^ reference scip-pli pli packages . GEOMETRY/SCALE_FIXED().
+//                                                   ^^^^^ reference scip-pli pli packages . GEOMETRY/SCALE().
+    DCL PI FLOAT BIN(53) VALUE(3.14159265358979);
+//      ^^ definition scip-pli pli packages . GEOMETRY/PI.
+//         kind Variable
+//         display_name PI
+//         documentation
+//         > ```pli
+//         > DCL PI FLOAT BIN(53) VALUE(3.14159265358979)
+//         > ```
+  
+//  ⌄ enclosing_range_start scip-pli pli packages . GEOMETRY/AREA_OF().
+    AREA_OF: PROC (KIND, W, H) RETURNS (FLOAT BIN(53));
+//  ^^^^^^^ definition scip-pli pli packages . GEOMETRY/AREA_OF().
+//          kind Function
+//          display_name AREA_OF
+//          documentation
+//          > ```pli
+//          > AREA_OF: PROC(KIND, W, H) RETURNS(FLOAT BIN(53))
+//          > ```
+//                 ^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(KIND)
+//                       ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(W)
+//                          ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(H)
+      DCL KIND ORDINAL SHAPE BYVALUE;
+//        ^^^^ definition scip-pli pli packages . GEOMETRY/AREA_OF().(KIND)
+//             kind Parameter
+//             display_name KIND
+//             documentation
+//             > ```pli
+//             > DCL KIND ORDINAL SHAPE BYVALUE
+//             > ```
+//                     ^^^^^ reference scip-pli pli packages . GEOMETRY/SHAPE#
+      DCL (W, H) FLOAT BIN(53) BYVALUE;
+//         ^ definition scip-pli pli packages . GEOMETRY/AREA_OF().(W)
+//           kind Parameter
+//           display_name W
+//           documentation
+//           > ```pli
+//           > DCL W FLOAT BIN(53) BYVALUE
+//           > ```
+//            ^ definition scip-pli pli packages . GEOMETRY/AREA_OF().(H)
+//              kind Parameter
+//              display_name H
+//              documentation
+//              > ```pli
+//              > DCL H FLOAT BIN(53) BYVALUE
+//              > ```
+      DCL RESULT FLOAT BIN(53);
+//        ^^^^^^ definition scip-pli pli packages . GEOMETRY/AREA_OF().RESULT.
+//               kind Variable
+//               display_name RESULT
+//               documentation
+//               > ```pli
+//               > DCL RESULT FLOAT BIN(53)
+//               > ```
+      DCL P POINTER;
+//        ^ definition scip-pli pli packages . GEOMETRY/AREA_OF().P.
+//          kind Variable
+//          display_name P
+//          documentation
+//          > ```pli
+//          > DCL P POINTER
+//          > ```
+      DCL 1 CORNER BASED(P) LIKE POINT;
+//          ^^^^^^ definition scip-pli pli packages . GEOMETRY/AREA_OF().CORNER.
+//                 kind Variable
+//                 display_name CORNER
+//                 documentation
+//                 > ```pli
+//                 > DCL 1 CORNER BASED(P) LIKE POINT
+//                 > ```
+//                       ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().P.
+//                               ^^^^^ reference scip-pli pli packages . GEOMETRY/POINT#
+      DCL RAW CHAR(8) DEFINED RESULT;
+//        ^^^ definition scip-pli pli packages . GEOMETRY/AREA_OF().RAW.
+//            kind Variable
+//            display_name RAW
+//            documentation
+//            > ```pli
+//            > DCL RAW CHAR(8) DEFINED RESULT
+//            > ```
+//                            ^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().RESULT.
+      SELECT (KIND);
+//            ^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(KIND)
+        WHEN (CIRCLE) RESULT = PI * SQUARE(W);
+//            ^^^^^^ reference scip-pli pli packages . GEOMETRY/CIRCLE.
+//                    ^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().RESULT.
+//                             ^^ reference scip-pli pli packages . GEOMETRY/PI.
+//                                  ^^^^^^ reference scip-pli pli packages . `geometry.pli`/SQUARE!
+//                                         ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(W)
+        WHEN (RECT) RESULT = W * H;
+//            ^^^^ reference scip-pli pli packages . GEOMETRY/RECT.
+//                  ^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().RESULT.
+//                           ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(W)
+//                               ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(H)
+        OTHERWISE BEGIN;
+          DCL HALF FLOAT BIN(53) INIT(0.5);
+//            ^^^^ definition scip-pli pli packages . GEOMETRY/AREA_OF().$begin1/HALF.
+//                 kind Variable
+//                 display_name HALF
+//                 documentation
+//                 > ```pli
+//                 > DCL HALF FLOAT BIN(53) INIT(0.5)
+//                 > ```
+          RESULT = HALF * W * H;
+//        ^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().RESULT.
+//                 ^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().$begin1/HALF.
+//                        ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(W)
+//                            ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().(H)
+        END;
+      END;
+      P = ADDR(ORIGIN);
+//    ^ reference scip-pli pli packages . GEOMETRY/AREA_OF().P.
+//        ^^^^ reference scip-pli pli builtin . ADDR().
+//             ^^^^^^ reference scip-pli pli packages . GEOMETRY/ORIGIN.
+      CORNER.X = ORIGIN.Y;
+//    ^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().CORNER.
+//           ^ reference scip-pli pli packages . GEOMETRY/POINT#X.
+//               ^^^^^^ reference scip-pli pli packages . GEOMETRY/ORIGIN.
+//                      ^ reference scip-pli pli packages . GEOMETRY/POINT#Y.
+      %IF DEBUG = 'YES' %THEN %DO;
+//        ^^^^^ reference scip-pli pli packages . `geometry.pli`/DEBUG!
+        PUT SKIP LIST ('AREA', RESULT, RAW);
+//                             ^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().RESULT.
+//                                     ^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().RAW.
+      %END;
+      RETURN (RESULT);
+//            ^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().RESULT.
+    END AREA_OF;
+//      ^^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().
+//             ⌃ enclosing_range_end scip-pli pli packages . GEOMETRY/AREA_OF().
+  
+//  ⌄ enclosing_range_start scip-pli pli packages . GEOMETRY/SCALE().
+    SCALE: PROC (V, F) RETURNS (FLOAT BIN(53));
+//  ^^^^^ definition scip-pli pli packages . GEOMETRY/SCALE().
+//        kind Function
+//        display_name SCALE
+//        documentation
+//        > ```pli
+//        > SCALE: PROC(V, F) RETURNS(FLOAT BIN(53))
+//        > ```
+//               ^ reference scip-pli pli packages . GEOMETRY/SCALE().(V)
+//                  ^ reference scip-pli pli packages . GEOMETRY/SCALE().(F)
+      DCL (V, F) FLOAT BIN(53);
+//         ^ definition scip-pli pli packages . GEOMETRY/SCALE().(V)
+//           kind Parameter
+//           display_name V
+//           documentation
+//           > ```pli
+//           > DCL V FLOAT BIN(53)
+//           > ```
+//            ^ definition scip-pli pli packages . GEOMETRY/SCALE().(F)
+//              kind Parameter
+//              display_name F
+//              documentation
+//              > ```pli
+//              > DCL F FLOAT BIN(53)
+//              > ```
+      RETURN (V * F);
+//            ^ reference scip-pli pli packages . GEOMETRY/SCALE().(V)
+//                ^ reference scip-pli pli packages . GEOMETRY/SCALE().(F)
+    END SCALE;
+//      ^^^^^ reference scip-pli pli packages . GEOMETRY/SCALE().
+//           ⌃ enclosing_range_end scip-pli pli packages . GEOMETRY/SCALE().
+  
+//  ⌄ enclosing_range_start scip-pli pli packages . GEOMETRY/SCALE_FIXED().
+    SCALE_FIXED: PROC (V, F) RETURNS (FIXED BIN(31));
+//  ^^^^^^^^^^^ definition scip-pli pli packages . GEOMETRY/SCALE_FIXED().
+//              kind Function
+//              display_name SCALE_FIXED
+//              documentation
+//              > ```pli
+//              > SCALE_FIXED: PROC(V, F) RETURNS(FIXED BIN(31))
+//              > ```
+//                     ^ reference scip-pli pli packages . GEOMETRY/SCALE_FIXED().(V)
+//                        ^ reference scip-pli pli packages . GEOMETRY/SCALE_FIXED().(F)
+      DCL (V, F) FIXED BIN(31);
+//         ^ definition scip-pli pli packages . GEOMETRY/SCALE_FIXED().(V)
+//           kind Parameter
+//           display_name V
+//           documentation
+//           > ```pli
+//           > DCL V FIXED BIN(31)
+//           > ```
+//            ^ definition scip-pli pli packages . GEOMETRY/SCALE_FIXED().(F)
+//              kind Parameter
+//              display_name F
+//              documentation
+//              > ```pli
+//              > DCL F FIXED BIN(31)
+//              > ```
+      RETURN (V * F);
+//            ^ reference scip-pli pli packages . GEOMETRY/SCALE_FIXED().(V)
+//                ^ reference scip-pli pli packages . GEOMETRY/SCALE_FIXED().(F)
+    END;
+//     ⌃ enclosing_range_end scip-pli pli packages . GEOMETRY/SCALE_FIXED().
+  END GEOMETRY;
+//    ^^^^^^^^ reference scip-pli pli packages . GEOMETRY/
+//            ⌃ enclosing_range_end scip-pli pli packages . GEOMETRY/
+  

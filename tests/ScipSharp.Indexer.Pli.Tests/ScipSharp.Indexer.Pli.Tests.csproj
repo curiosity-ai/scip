@@ -7,6 +7,8 @@
     <PackageReference Include="TUnit" />
     <ProjectReference Include="..\..\src\ScipSharp\ScipSharp.csproj" />
     <ProjectReference Include="..\..\src\Indexers\ScipSharp.Indexer.Pli\ScipSharp.Indexer.Pli.csproj" />
+    <!-- Only for IndexLinter (lint-clean checks of the produced indexes). -->
+    <ProjectReference Include="..\..\src\ScipSharp.Cli\ScipSharp.Cli.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="testdata\**\*" CopyToOutputDirectory="PreserveNewest" LinkBase="testdata" />

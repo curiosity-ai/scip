@@ -1,0 +1,5 @@
+scip-pli pli builtin . ADDR().
+scip-pli pli builtin . INDEX().
+scip-pli pli builtin . LENGTH().
+scip-pli pli builtin . NULL().
+scip-pli pli builtin . SUBSTR().

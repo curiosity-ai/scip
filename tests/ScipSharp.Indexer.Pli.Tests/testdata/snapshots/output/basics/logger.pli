@@ -1,0 +1,45 @@
+// ⌄ enclosing_range_start scip-pli pli basics . LOGGER().
+   LOGGER: PROCEDURE (MSG, FLAG);
+// ^^^^^^ definition scip-pli pli basics . LOGGER().
+//        kind Function
+//        display_name LOGGER
+//        documentation
+//        > ```pli
+//        > LOGGER: PROCEDURE(MSG, FLAG)
+//        > ```
+//                    ^^^ reference scip-pli pli basics . LOGGER().(MSG)
+//                         ^^^^ reference scip-pli pli basics . LOGGER().(FLAG)
+     DCL MSG CHAR(*);
+//       ^^^ definition scip-pli pli basics . LOGGER().(MSG)
+//           kind Parameter
+//           display_name MSG
+//           documentation
+//           > ```pli
+//           > DCL MSG CHAR(*)
+//           > ```
+     DCL FLAG BIT(1);
+//       ^^^^ definition scip-pli pli basics . LOGGER().(FLAG)
+//            kind Parameter
+//            display_name FLAG
+//            documentation
+//            > ```pli
+//            > DCL FLAG BIT(1)
+//            > ```
+     DCL LINES FIXED BIN(31) STATIC INIT(0);
+//       ^^^^^ definition scip-pli pli basics . LOGGER().LINES.
+//             kind Variable
+//             display_name LINES
+//             documentation
+//             > ```pli
+//             > DCL LINES FIXED BIN(31) STATIC INIT(0)
+//             > ```
+     LINES += 1;
+//   ^^^^^ reference scip-pli pli basics . LOGGER().LINES.
+     PUT SKIP LIST (MSG);
+//                  ^^^ reference scip-pli pli basics . LOGGER().(MSG)
+     CALL SUMMARY$ALT_SUMMARY;
+//        ^^^^^^^^^^^^^^^^^^^ reference scip-pli pli basics . ALT_SUMMARY().
+   END LOGGER;
+//     ^^^^^^ reference scip-pli pli basics . LOGGER().
+//           ⌃ enclosing_range_end scip-pli pli basics . LOGGER().
+  

@@ -1,0 +1,50 @@
+  *PROCESS MARGINS(1,100);
+//⌄ enclosing_range_start scip-pli pli packages . CLIENT().
+  CLIENT: PROC OPTIONS(MAIN);
+//^^^^^^ definition scip-pli pli packages . CLIENT().
+//       kind Function
+//       display_name CLIENT
+//       documentation
+//       > ```pli
+//       > CLIENT: PROC OPTIONS(MAIN)
+//       > ```
+    DCL AREA_OF ENTRY (ORDINAL SHAPE BYVALUE, FLOAT BIN(53) BYVALUE, FLOAT BIN(53) BYVALUE)
+//      ^^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().
+                RETURNS (FLOAT BIN(53));
+    DCL A FLOAT BIN(53);
+//      ^ definition scip-pli pli packages . CLIENT().A.
+//        kind Variable
+//        display_name A
+//        documentation
+//        > ```pli
+//        > DCL A FLOAT BIN(53)
+//        > ```
+    DCL IF FIXED BIN(31) INIT(1);   /* keywords are not reserved */
+//      ^^ definition scip-pli pli packages . CLIENT().IF.
+//         kind Variable
+//         display_name IF
+//         documentation
+//         > ```pli
+//         > DCL IF FIXED BIN(31) INIT(1)
+//         > ```
+    DCL THEN FIXED BIN(31);
+//      ^^^^ definition scip-pli pli packages . CLIENT().THEN.
+//           kind Variable
+//           display_name THEN
+//           documentation
+//           > ```pli
+//           > DCL THEN FIXED BIN(31)
+//           > ```
+    IF IF = 1 THEN THEN = 2;
+//     ^^ reference scip-pli pli packages . CLIENT().IF.
+//                 ^^^^ reference scip-pli pli packages . CLIENT().THEN.
+    A = AREA_OF(2, 3.0E0, 4.0E0);
+//  ^ reference scip-pli pli packages . CLIENT().A.
+//      ^^^^^^^ reference scip-pli pli packages . GEOMETRY/AREA_OF().
+    PUT SKIP LIST (A, THEN);
+//                 ^ reference scip-pli pli packages . CLIENT().A.
+//                    ^^^^ reference scip-pli pli packages . CLIENT().THEN.
+  END CLIENT;
+//    ^^^^^^ reference scip-pli pli packages . CLIENT().
+//          ⌃ enclosing_range_end scip-pli pli packages . CLIENT().
+  

@@ -1,0 +1,207 @@
+  /****^  ***********************************************************
+          *                                                         *
+          * Copyright, (C) Honeywell Bull Inc., 1987                *
+          *                                                         *
+          * Copyright, (C) Honeywell Information Systems Inc., 1982 *
+          *                                                         *
+          * Copyright (c) 1972 by Massachusetts Institute of        *
+          * Technology and Honeywell Information Systems, Inc.      *
+          *                                                         *
+          *********************************************************** */
+  
+  
+//⌄ enclosing_range_start scip-pli pli multics . requote_string_().
+  requote_string_: proc (instring) returns (char (*));
+//^^^^^^^^^^^^^^^ definition scip-pli pli multics . requote_string_().
+//                kind Function
+//                display_name requote_string_
+//                documentation
+//                > ```pli
+//                > requote_string_: proc(instring) returns(char(*))
+//                > ```
+//                       ^^^^^^^^ reference scip-pli pli multics . requote_string_().(instring)
+  
+  /* How difficult is PL/I for character string manipulation */
+  /* B. Greenberg 5/31/77 */
+  /* E. N. Kittlitz. added quote_string entry. */
+  
+  dcl  instring char (*);
+//     ^^^^^^^^ definition scip-pli pli multics . requote_string_().(instring)
+//              kind Parameter
+//              display_name instring
+//              documentation
+//              > ```pli
+//              > DCL instring char(*)
+//              > ```
+  dcl  outstringl fixed bin (21);
+//     ^^^^^^^^^^ definition scip-pli pli multics . requote_string_().outstringl.
+//                kind Variable
+//                display_name outstringl
+//                documentation
+//                > ```pli
+//                > DCL outstringl fixed bin(21)
+//                > ```
+  dcl  QUOTE char (1) static init ("""") options (constant);
+//     ^^^^^ definition scip-pli pli multics . requote_string_().QUOTE.
+//           kind Variable
+//           display_name QUOTE
+//           documentation
+//           > ```pli
+//           > DCL QUOTE char(1) static init("""") options(constant)
+//           > ```
+  dcl  QUOTEQUOTE char (2) static init ("""""") options (constant);
+//     ^^^^^^^^^^ definition scip-pli pli multics . requote_string_().QUOTEQUOTE.
+//                kind Variable
+//                display_name QUOTEQUOTE
+//                documentation
+//                > ```pli
+//                > DCL QUOTEQUOTE char(2) static init("""""") options(constant)
+//                > ```
+  dcl  outstring char (2 * length (instring) + 2);
+//     ^^^^^^^^^ definition scip-pli pli multics . requote_string_().outstring.
+//               kind Variable
+//               display_name outstring
+//               documentation
+//               > ```pli
+//               > DCL outstring char(2 * length(instring) + 2)
+//               > ```
+//                         ^^^^^^ reference scip-pli pli builtin . LENGTH().
+//                                 ^^^^^^^^ reference scip-pli pli multics . requote_string_().(instring)
+  dcl (i, j) fixed bin (21);
+//     ^ definition scip-pli pli multics . requote_string_().i.
+//       kind Variable
+//       display_name i
+//       documentation
+//       > ```pli
+//       > DCL i fixed bin(21)
+//       > ```
+//        ^ definition scip-pli pli multics . requote_string_().j.
+//          kind Variable
+//          display_name j
+//          documentation
+//          > ```pli
+//          > DCL j fixed bin(21)
+//          > ```
+  dcl  requote_sw bit (1) aligned;
+//     ^^^^^^^^^^ definition scip-pli pli multics . requote_string_().requote_sw.
+//                kind Variable
+//                display_name requote_sw
+//                documentation
+//                > ```pli
+//                > DCL requote_sw bit(1) aligned
+//                > ```
+  
+  dcl (index, length, substr) builtin;
+//     ^^^^^ reference scip-pli pli builtin . INDEX().
+//            ^^^^^^ reference scip-pli pli builtin . LENGTH().
+//                    ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+  
+   requote_sw = "1"b;
+// ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().requote_sw.
+   outstringl = 1;
+// ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+   substr (outstring, 1, 1) = QUOTE;
+// ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//         ^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstring.
+//                            ^^^^^ reference scip-pli pli multics . requote_string_().QUOTE.
+   i = 1;
+// ^ reference scip-pli pli multics . requote_string_().i.
+  nextj: j = index (substr (instring, i), QUOTE);
+//^^^^^ definition scip-pli pli multics . requote_string_().nextj.
+//      kind Constant
+//      display_name nextj
+//      documentation
+//      > ```pli
+//      > nextj: (label)
+//      > ```
+//       ^ reference scip-pli pli multics . requote_string_().j.
+//           ^^^^^ reference scip-pli pli builtin . INDEX().
+//                  ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//                          ^^^^^^^^ reference scip-pli pli multics . requote_string_().(instring)
+//                                    ^ reference scip-pli pli multics . requote_string_().i.
+//                                        ^^^^^ reference scip-pli pli multics . requote_string_().QUOTE.
+   if j = 0 then do;
+//    ^ reference scip-pli pli multics . requote_string_().j.
+        substr (outstring, outstringl + 1, length (instring) - i + 1)
+//      ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//              ^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstring.
+//                         ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//                                         ^^^^^^ reference scip-pli pli builtin . LENGTH().
+//                                                 ^^^^^^^^ reference scip-pli pli multics . requote_string_().(instring)
+//                                                             ^ reference scip-pli pli multics . requote_string_().i.
+    = substr (instring, i);
+//    ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//            ^^^^^^^^ reference scip-pli pli multics . requote_string_().(instring)
+//                      ^ reference scip-pli pli multics . requote_string_().i.
+        outstringl = outstringl + length (instring) - i + 1;
+//      ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//                   ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//                                ^^^^^^ reference scip-pli pli builtin . LENGTH().
+//                                        ^^^^^^^^ reference scip-pli pli multics . requote_string_().(instring)
+//                                                    ^ reference scip-pli pli multics . requote_string_().i.
+        if requote_sw then do;
+//         ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().requote_sw.
+    outstringl = outstringl + 1;
+//  ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//               ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+    substr (outstring, outstringl, 1) = QUOTE;
+//  ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//          ^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstring.
+//                     ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//                                      ^^^^^ reference scip-pli pli multics . requote_string_().QUOTE.
+        end;
+        return (substr (outstring, 1, outstringl));
+//              ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//                      ^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstring.
+//                                    ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+   end;
+   substr (outstring, outstringl + 1, j - 1) = substr (instring, i, j - 1);
+// ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//         ^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstring.
+//                    ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//                                    ^ reference scip-pli pli multics . requote_string_().j.
+//                                             ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//                                                     ^^^^^^^^ reference scip-pli pli multics . requote_string_().(instring)
+//                                                               ^ reference scip-pli pli multics . requote_string_().i.
+//                                                                  ^ reference scip-pli pli multics . requote_string_().j.
+   outstringl = outstringl + j;
+// ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//              ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//                           ^ reference scip-pli pli multics . requote_string_().j.
+   substr (outstring, outstringl, 2) = QUOTEQUOTE;
+// ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//         ^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstring.
+//                    ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//                                     ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().QUOTEQUOTE.
+   outstringl = outstringl + 1;
+// ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+//              ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+   i = i + j;
+// ^ reference scip-pli pli multics . requote_string_().i.
+//     ^ reference scip-pli pli multics . requote_string_().i.
+//         ^ reference scip-pli pli multics . requote_string_().j.
+   go to nextj;
+//       ^^^^^ reference scip-pli pli multics . requote_string_().nextj.
+  
+  quote_string: entry (instring) returns (char (*));
+//^^^^^^^^^^^^ definition scip-pli pli multics . quote_string().
+//             kind Function
+//             display_name quote_string
+//             documentation
+//             > ```pli
+//             > quote_string: entry(instring) returns(char(*))
+//             > ```
+//                     ^^^^^^^^ reference scip-pli pli multics . requote_string_().(instring)
+  
+   requote_sw = "0"b;
+// ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().requote_sw.
+   outstringl = 0;
+// ^^^^^^^^^^ reference scip-pli pli multics . requote_string_().outstringl.
+   i = 1;
+// ^ reference scip-pli pli multics . requote_string_().i.
+   go to nextj;
+//       ^^^^^ reference scip-pli pli multics . requote_string_().nextj.
+  
+       end;
+//        ⌃ enclosing_range_end scip-pli pli multics . requote_string_().
+  

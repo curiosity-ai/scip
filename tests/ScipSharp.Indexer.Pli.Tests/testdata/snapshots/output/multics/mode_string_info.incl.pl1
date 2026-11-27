@@ -1,0 +1,194 @@
+  /*  BEGIN INCLUDE FILE   mode_string_info.incl.pl1       */
+  
+  /* Structure for parse_mode_string_ JRDavis 20 October 1980
+     Last modified 12 January 1981 by J. Spencer Love for version 2, make char_value varying string */
+  
+  declare mode_value_ptr  ptr,
+//        ^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value_ptr.
+//                       kind Variable
+//                       display_name mode_value_ptr
+//                       documentation
+//                       > ```pli
+//                       > DCL mode_value_ptr ptr
+//                       > ```
+   number_of_modes  fixed bin;
+// ^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().number_of_modes.
+//                 kind Variable
+//                 display_name number_of_modes
+//                 documentation
+//                 > ```pli
+//                 > DCL number_of_modes fixed bin
+//                 > ```
+  
+  declare 1 mode_string_info  aligned based (mode_string_info_ptr),
+//          ^^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_string_info.
+//                           kind Variable
+//                           display_name mode_string_info
+//                           documentation
+//                           > ```pli
+//                           > DCL 1 mode_string_info aligned based(mode_string_info_ptr)
+//                           > ```
+//                                           ^^^^^^^^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_string_info_ptr.
+     2 version  fixed bin,
+//     ^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_string_info.version.
+//             kind Field
+//             display_name version
+//             documentation
+//             > ```pli
+//             > DCL 2 version fixed bin
+//             > ```
+     2 number  fixed bin,
+//     ^^^^^^ definition scip-pli pli multics . get_line_length_().mode_string_info.number.
+//            kind Field
+//            display_name number
+//            documentation
+//            > ```pli
+//            > DCL 2 number fixed bin
+//            > ```
+     2 modes   (number_of_modes refer (mode_string_info.number)) like mode_value;
+//     ^^^^^ definition scip-pli pli multics . get_line_length_().mode_string_info.modes.
+//           kind Field
+//           display_name modes
+//           documentation
+//           > ```pli
+//           > DCL 2 modes(number_of_modes refer(mode_string_info.number)) like mode_value
+//           > ```
+//              ^^^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().number_of_modes.
+//                                     ^^^^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_string_info.
+//                                                      ^^^^^^ reference scip-pli pli multics . get_line_length_().mode_string_info.number.
+//                                                                    ^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_value.
+  
+  declare mode_string_info_ptr ptr;
+//        ^^^^^^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_string_info_ptr.
+//                             kind Variable
+//                             display_name mode_string_info_ptr
+//                             documentation
+//                             > ```pli
+//                             > DCL mode_string_info_ptr ptr
+//                             > ```
+  
+  declare 1 mode_value  aligned based (mode_value_ptr),
+//          ^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.
+//                     kind Variable
+//                     display_name mode_value
+//                     documentation
+//                     > ```pli
+//                     > DCL 1 mode_value aligned based(mode_value_ptr)
+//                     > ```
+//                                     ^^^^^^^^^^^^^^ reference scip-pli pli multics . get_line_length_().mode_value_ptr.
+     2 version  fixed bin,
+//     ^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.version.
+//             kind Field
+//             display_name version
+//             documentation
+//             > ```pli
+//             > DCL 2 version fixed bin
+//             > ```
+     2 mode_name  char (32) unaligned,
+//     ^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.mode_name.
+//               kind Field
+//               display_name mode_name
+//               documentation
+//               > ```pli
+//               > DCL 2 mode_name char(32) unaligned
+//               > ```
+     2 flags,
+//     ^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.flags.
+//           kind Field
+//           display_name flags
+//           documentation
+//           > ```pli
+//           > DCL 2 flags
+//           > ```
+       3 boolean_valuep bit (1) unaligned,
+//       ^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.flags.boolean_valuep.
+//                      kind Field
+//                      display_name boolean_valuep
+//                      documentation
+//                      > ```pli
+//                      > DCL 3 boolean_valuep bit(1) unaligned
+//                      > ```
+       3 numeric_valuep bit (1) unaligned,
+//       ^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.flags.numeric_valuep.
+//                      kind Field
+//                      display_name numeric_valuep
+//                      documentation
+//                      > ```pli
+//                      > DCL 3 numeric_valuep bit(1) unaligned
+//                      > ```
+       3 char_valuep  bit (1) unaligned,
+//       ^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.flags.char_valuep.
+//                   kind Field
+//                   display_name char_valuep
+//                   documentation
+//                   > ```pli
+//                   > DCL 3 char_valuep bit(1) unaligned
+//                   > ```
+       3 boolean_value  bit (1) unaligned,
+//       ^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.flags.boolean_value.
+//                     kind Field
+//                     display_name boolean_value
+//                     documentation
+//                     > ```pli
+//                     > DCL 3 boolean_value bit(1) unaligned
+//                     > ```
+       3 pad1  bit (32) unaligned,
+//       ^^^^ definition scip-pli pli multics . get_line_length_().mode_value.flags.pad1.
+//            kind Field
+//            display_name pad1
+//            documentation
+//            > ```pli
+//            > DCL 3 pad1 bit(32) unaligned
+//            > ```
+     2 numeric_value  fixed bin (35),
+//     ^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.numeric_value.
+//                   kind Field
+//                   display_name numeric_value
+//                   documentation
+//                   > ```pli
+//                   > DCL 2 numeric_value fixed bin(35)
+//                   > ```
+     2 char_value  char (32) varying,
+//     ^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value.char_value.
+//                kind Field
+//                display_name char_value
+//                documentation
+//                > ```pli
+//                > DCL 2 char_value char(32) varying
+//                > ```
+     2 code   fixed bin (35),
+//     ^^^^ definition scip-pli pli multics . get_line_length_().mode_value.code.
+//          kind Field
+//          display_name code
+//          documentation
+//          > ```pli
+//          > DCL 2 code fixed bin(35)
+//          > ```
+     2 pad2   bit (36);
+//     ^^^^ definition scip-pli pli multics . get_line_length_().mode_value.pad2.
+//          kind Field
+//          display_name pad2
+//          documentation
+//          > ```pli
+//          > DCL 2 pad2 bit(36)
+//          > ```
+  
+  declare mode_string_info_version_2 fixed bin static options (constant) initial (2),
+//        ^^^^^^^^^^^^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_string_info_version_2.
+//                                   kind Variable
+//                                   display_name mode_string_info_version_2
+//                                   documentation
+//                                   > ```pli
+//                                   > DCL mode_string_info_version_2 fixed bin static options(constant) initial(2)
+//                                   > ```
+   mode_value_version_3 fixed bin static options (constant) initial (3);
+// ^^^^^^^^^^^^^^^^^^^^ definition scip-pli pli multics . get_line_length_().mode_value_version_3.
+//                      kind Variable
+//                      display_name mode_value_version_3
+//                      documentation
+//                      > ```pli
+//                      > DCL mode_value_version_3 fixed bin static options(constant) initial(3)
+//                      > ```
+  
+  /* END INCLUDE FILE   mode_string_info.incl.pl1        */
+  
