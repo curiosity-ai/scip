@@ -1,0 +1,112 @@
+scip-vb6 vbp INKEDLibCtl . InkEdit#
+  kind Class
+  signature INKEDLibCtl.InkEdit
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#
+  kind Class
+  signature Class cAsyncSocket
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#Accept().
+  kind Method
+  signature Public Function Accept(ConnectedSocket As cAsyncSocket, Optional SocketAddress As String, Optional SocketPort As Long) As Boolean
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#Close_().
+  kind Method
+  signature Public Sub Close_()
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#Connect().
+  kind Method
+  signature Public Function Connect(HostAddress As String, ByVal HostPort As Long) As Boolean
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#Create().
+  kind Method
+  signature Public Function Create(Optional ByVal SocketPort As Long, Optional ByVal SocketType As UcsAsyncSocketTypeEnum = ucsSckStream, Optional ByVal EventMask As UcsAsyncSocketEventMaskEnum = ucsSfdAll, Optional SocketAddress As String, Optional ByVal SocketProtocol As UcsAsyncSocketProtocolEnum) As Boolean
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#FromTextArray().
+  kind Method
+  signature Public Function FromTextArray(baText() As Byte, Optional ByVal CodePage As UcsAsyncSocketCodePageEnum = ucsScpUtf8) As String
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#GetErrorDescription().
+  kind Method
+  signature Public Function GetErrorDescription(ByVal ErrorCode As Long) As String
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#GetPeerName().
+  kind Method
+  signature Public Function GetPeerName(PeerAddress As String, PeerPort As Long) As Boolean
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#GetSockName().
+  kind Method
+  signature Public Function GetSockName(SocketAddress As String, SocketPort As Long) As Boolean
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#LastError.
+  kind Property
+  signature Public Property Get LastError() As VBA.ErrObject
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#Listen().
+  kind Method
+  signature Public Function Listen(Optional ByVal ConnectionBacklog As Long = 5) As Boolean
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#OnAccept().
+  kind Event
+  signature Event OnAccept()
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#OnClose().
+  kind Event
+  signature Event OnClose()
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#OnConnect().
+  kind Event
+  signature Event OnConnect()
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#OnError().
+  kind Event
+  signature Event OnError(ByVal ErrorCode As Long, ByVal EventMask As UcsAsyncSocketEventMaskEnum)
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#OnReceive().
+  kind Event
+  signature Event OnReceive()
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#OnResolve().
+  kind Event
+  signature Event OnResolve(IpAddress As String)
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#ReceiveArray().
+  kind Method
+  signature Public Function ReceiveArray(Buffer() As Byte, Optional HostAddress As String = STR_CHR1, Optional HostPort As Long, Optional ByVal Flags As Long = 0) As Boolean
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#ReceiveText().
+  kind Method
+  signature Public Function ReceiveText(Optional HostAddress As String = STR_CHR1, Optional HostPort As Long, Optional ByVal CodePage As UcsAsyncSocketCodePageEnum = ucsScpUtf8) As String
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#SendText().
+  kind Method
+  signature Public Function SendText(Text As String, Optional HostAddress As String, Optional ByVal HostPort As Long, Optional ByVal CodePage As UcsAsyncSocketCodePageEnum = ucsScpUtf8) As Boolean
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#SockOpt.
+  kind Property
+  signature Public Property Get SockOpt(ByVal OptionName As UcsAsyncSocketOptionNameEnum, Optional ByVal Level As UcsAsyncSocketOptionLevelEnum = ucsSolSocket) As Long
+            Public Property Let SockOpt(ByVal OptionName As UcsAsyncSocketOptionNameEnum, Optional ByVal Level As UcsAsyncSocketOptionLevelEnum = ucsSolSocket, ByVal Value As Long)
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#UcsAsyncSocketEventMaskEnum#
+  kind Enum
+  signature Public Enum UcsAsyncSocketEventMaskEnum
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#UcsAsyncSocketEventMaskEnum#ucsSfdConnect.
+  kind EnumMember
+  signature ucsSfdConnect = 2 ^ 4
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#UcsAsyncSocketOptionNameEnum#ucsSsoType.
+  kind EnumMember
+  signature ucsSsoType = &H1008
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#UcsAsyncSocketTypeEnum#
+  kind Enum
+  signature Public Enum UcsAsyncSocketTypeEnum
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#UcsAsyncSocketTypeEnum#ucsSckDatagram.
+  kind EnumMember
+  signature ucsSckDatagram = 2
+scip-vb6 vbp Project1 1.0.0 cAsyncSocket#UcsAsyncSocketTypeEnum#ucsSckStream.
+  kind EnumMember
+  signature ucsSckStream = 1
+scip-vb6 vbp VB . CheckBox#
+  kind Class
+  signature VB.CheckBox
+scip-vb6 vbp VB . CommandButton#
+  kind Class
+  signature VB.CommandButton
+scip-vb6 vbp VB . CommandButton#Click().
+  kind Event
+  signature Event VB.CommandButton.Click
+scip-vb6 vbp VB . Form#
+  kind Class
+  signature VB.Form
+scip-vb6 vbp VB . Form#Load().
+  kind Event
+  signature Event VB.Form.Load
+scip-vb6 vbp VB . Form#Resize().
+  kind Event
+  signature Event VB.Form.Resize
+scip-vb6 vbp VB . Form#Unload().
+  kind Event
+  signature Event VB.Form.Unload
+scip-vb6 vbp VB . Label#
+  kind Class
+  signature VB.Label
+scip-vb6 vbp VB . TextBox#
+  kind Class
+  signature VB.TextBox

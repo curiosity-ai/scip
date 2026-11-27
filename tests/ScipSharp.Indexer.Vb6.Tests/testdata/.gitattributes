@@ -1,0 +1,2 @@
+# Keep VB6 fixtures byte-exact: CRLF line ends and Windows-1252 bytes are part of what is tested.
+* -text

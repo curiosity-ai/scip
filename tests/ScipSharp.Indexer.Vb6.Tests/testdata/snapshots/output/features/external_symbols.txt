@@ -1,0 +1,30 @@
+scip-vb6 vbp MSComctlLib . ProgressBar#
+  kind Class
+  signature MSComctlLib.ProgressBar
+scip-vb6 vbp VB . CommandButton#
+  kind Class
+  signature VB.CommandButton
+scip-vb6 vbp VB . CommandButton#Click().
+  kind Event
+  signature Event VB.CommandButton.Click
+scip-vb6 vbp VB . Form#
+  kind Class
+  signature VB.Form
+scip-vb6 vbp VB . Form#Load().
+  kind Event
+  signature Event VB.Form.Load
+scip-vb6 vbp VB . Frame#
+  kind Class
+  signature VB.Frame
+scip-vb6 vbp VB . Menu#
+  kind Class
+  signature VB.Menu
+scip-vb6 vbp VB . Menu#Click().
+  kind Event
+  signature Event VB.Menu.Click
+scip-vb6 vbp VB . OptionButton#
+  kind Class
+  signature VB.OptionButton
+scip-vb6 vbp VB . OptionButton#Click().
+  kind Event
+  signature Event VB.OptionButton.Click
