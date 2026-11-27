@@ -1,0 +1,6 @@
+scip-sql . dbt . raw/
+scip-sql . dbt . raw/customers#
+scip-sql . dbt . raw/customers#first_name.
+scip-sql . dbt . raw/customers#id.
+scip-sql . dbt . raw/customers#last_name.
+scip-sql . dbt . raw/orders#
