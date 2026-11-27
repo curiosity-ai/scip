@@ -1,3 +1,4 @@
+using ScipSharp.Indexer.Abap;
 using ScipSharp.Indexer.Clang;
 using ScipSharp.Indexer.Dart;
 using ScipSharp.Indexer.DotNet;
@@ -25,5 +26,6 @@ internal static class IndexerRegistry
         new DotNetIndexer(),
         new DartIndexer(),
         new PhpIndexer(),
+        new AbapIndexer(),
     ];
 }

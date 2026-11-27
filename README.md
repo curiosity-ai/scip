@@ -2,10 +2,10 @@
 
 A C# / .NET 11 port of [SCIP](https://github.com/scip-code/scip), the Code Intelligence Protocol — the protocol
 library, the `scip` CLI, and the per-language indexers
-(Java, TypeScript, Rust, C/C++, Ruby, Python, C#, Dart, PHP).
+(Java, TypeScript, Rust, C/C++, Ruby, Python, C#, Dart, PHP, ABAP).
 
-> **Status: working port, partial fidelity.** The core library, the `scip` CLI commands and all nine indexers are implemented
-> and tested. All nine language indexers exist as pure-C# ports of varying completeness (see TODO.md). See [TODO.md](TODO.md) for the roadmap.
+> **Status: working port, partial fidelity.** The core library, the `scip` CLI commands and all ten indexers are implemented
+> and tested. All ten language indexers exist as pure-C# ports of varying completeness (see TODO.md). See [TODO.md](TODO.md) for the roadmap.
 
 ## Layout
 
@@ -22,7 +22,7 @@ tests/ScipSharp.Tests      TUnit tests
 
 ```bash
 dotnet tool install -g ScipSharp.Cli  # the `scip` command
-scip index python --project-root .   # also: dotnet, java, typescript, rust, clang, ruby, dart, php
+scip index python --project-root .   # also: dotnet, java, typescript, rust, clang, ruby, dart, php, abap
 scip print index.scip
 ```
 
@@ -33,7 +33,7 @@ NuGet packages (all published from `main` by `.azure-devops/build-nuget.yml`):
 | `ScipSharp.Cli` | the `scip` .NET tool, bundling every indexer |
 | `ScipSharp` | core library: protobuf types, symbols, positions, index writer (namespace `ScipSharp`) |
 | `ScipSharp.Indexing` | indexer abstractions (`IIndexer`) |
-| `ScipSharp.Indexer.DotNet` / `.Java` / `.TypeScript` / `.Python` / `.Ruby` / `.Rust` / `.Clang` / `.Dart` / `.Php` | one package per language indexer |
+| `ScipSharp.Indexer.DotNet` / `.Java` / `.TypeScript` / `.Python` / `.Ruby` / `.Rust` / `.Clang` / `.Dart` / `.Php` / `.Abap` | one package per language indexer |
 
 ## Build & test
 

@@ -15,6 +15,7 @@
     <EmbeddedResource Include="version.txt" LogicalName="version.txt" />
     <ProjectReference Include="..\ScipSharp\ScipSharp.csproj" />
     <ProjectReference Include="..\ScipSharp.Indexing\ScipSharp.Indexing.csproj" />
+    <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Abap\ScipSharp.Indexer.Abap.csproj" />
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Clang\ScipSharp.Indexer.Clang.csproj" />
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.Dart\ScipSharp.Indexer.Dart.csproj" />
     <ProjectReference Include="..\Indexers\ScipSharp.Indexer.DotNet\ScipSharp.Indexer.DotNet.csproj" />
