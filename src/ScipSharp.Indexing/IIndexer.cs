@@ -18,7 +18,8 @@ public interface IIndexer
     /// <summary>Human readable languages handled by this indexer.</summary>
     string Languages { get; }
 
-    /// <summary>Upstream project this indexer is ported from (a folder under <c>.reference/</c>).</summary>
+    /// <summary>Upstream project this indexer is ported from (a folder under <c>.reference/</c>), or a parenthesised note such as
+    /// <c>(none: native implementation)</c> for indexers written from scratch.</summary>
     string UpstreamProject { get; }
 
     /// <summary>Runs the indexer. Returns a process exit code.</summary>
