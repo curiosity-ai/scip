@@ -31,6 +31,11 @@ Both are original work, released under the repository licence (Apache-2.0).
 - `snapshots/input/multics/` holds copies of `requote_string_.pl1`, `get_line_length_.pl1`, `iox_dcls.incl.pl1` and
   `mode_string_info.incl.pl1` from the same commit.
 
-## Not used
+## IBM Z Open Editor sample (`snapshots/input/zopeneditor/`)
 
-- IBM/zopeneditor-sample: the repository is Apache-2.0, but its PL/I files carry "Restricted Materials of IBM ... All rights reserved" banners, so they are not committed here.
+- Origin: <https://github.com/IBM/zopeneditor-sample>, commit `8f9835308de6159eb54f226041d5f81a780cb8eb`.
+- Licence: Apache License 2.0; the repository's `LICENSE` is copied next to the file.
+- Files: `PLI/MACSAMP.pli` only (copied unchanged; the macro-preprocessor showcase, self-contained).
+- Not copied: every other PL/I and COBOL file in that repository (`PSAM1`, `PSAM1LIB`, `PSAM2`, `CUSTPLI.inc`,
+  `BALSTATS.inc`, the COBOL samples and copybooks). Although the repository is Apache-2.0, those files carry
+  "Licensed Materials - Property of IBM / Restricted Materials of IBM ... All rights reserved" banners.

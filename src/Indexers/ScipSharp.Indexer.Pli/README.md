@@ -125,4 +125,4 @@ The member name is tried as written and with each known extension, case-insensit
   parsing instead.
 - No grammar for PL/I exists in ANTLR grammars-v4. Eclipse Che4z covers COBOL only. IBM Z Open Editor is closed source.
   pl1gcc is GPL and was not consulted for code.
-- Corpora: [Multics](https://github.com/dancrossnyc/multics) (Multics licence); IBM/zopeneditor-sample was not committed because its files carry "Restricted Materials of IBM" banners. See `tests/ScipSharp.Indexer.Pli.Tests/testdata/SOURCES.md`.
+- Corpora: [Multics](https://github.com/dancrossnyc/multics) (Multics licence) and `PLI/MACSAMP.pli` from [IBM/zopeneditor-sample](https://github.com/IBM/zopeneditor-sample) (Apache-2.0; the repository's other samples carry "Restricted Materials of IBM" banners and are not used). See `tests/ScipSharp.Indexer.Pli.Tests/testdata/SOURCES.md`.
