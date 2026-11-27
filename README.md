@@ -2,10 +2,12 @@
 
 A C# / .NET 11 port of [SCIP](https://github.com/scip-code/scip), the Code Intelligence Protocol — the protocol
 library, the `scip` CLI, and the per-language indexers
-(Java, TypeScript, Rust, C/C++, Ruby, Python, C#, Dart, PHP).
+(Java, TypeScript, Rust, C/C++, Ruby, Python, C#, Dart, PHP), plus native indexers for languages without an upstream
+SCIP indexer (COBOL, Visual Basic 6, PL/I, Fortran, Delphi, Pascal, SQL).
 
-> **Status: working port, partial fidelity.** The core library, the `scip` CLI commands and all nine indexers are implemented
-> and tested. All nine language indexers exist as pure-C# ports of varying completeness (see TODO.md). See [TODO.md](TODO.md) for the roadmap.
+> **Status: working port, partial fidelity.** The core library, the `scip` CLI commands and all sixteen indexers are implemented
+> and tested: nine pure-C# ports of the upstream `scip-*` indexers and seven original native indexers, all of varying
+> completeness. See [TODO.md](TODO.md) for the roadmap.
 
 ## Layout
 
@@ -22,7 +24,8 @@ tests/ScipSharp.Tests      TUnit tests
 
 ```bash
 dotnet tool install -g ScipSharp.Cli  # the `scip` command
-scip index python --project-root .   # also: dotnet, java, typescript, rust, clang, ruby, dart, php
+scip index python --project-root .   # also: dotnet, java, typescript, rust, clang, ruby, dart, php,
+                                     #       cobol, vb6, pli, fortran, delphi, pascal, sql
 scip print index.scip
 ```
 
@@ -33,7 +36,8 @@ NuGet packages (all published from `main` by `.azure-devops/build-nuget.yml`):
 | `ScipSharp.Cli` | the `scip` .NET tool, bundling every indexer |
 | `ScipSharp` | core library: protobuf types, symbols, positions, index writer (namespace `ScipSharp`) |
 | `ScipSharp.Indexing` | indexer abstractions (`IIndexer`) |
-| `ScipSharp.Indexer.DotNet` / `.Java` / `.TypeScript` / `.Python` / `.Ruby` / `.Rust` / `.Clang` / `.Dart` / `.Php` | one package per language indexer |
+| `ScipSharp.Indexer.DotNet` / `.Java` / `.TypeScript` / `.Python` / `.Ruby` / `.Rust` / `.Clang` / `.Dart` / `.Php` | one package per ported language indexer |
+| `ScipSharp.Indexer.Cobol` / `.Vb6` / `.Pli` / `.Fortran` / `.Delphi` / `.Pascal` / `.Sql` | one package per native language indexer |
 
 ## Build & test
 

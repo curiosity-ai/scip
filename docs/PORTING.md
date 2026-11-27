@@ -23,6 +23,7 @@
 | (none — native) | `src/Indexers/ScipSharp.Indexer.Fortran` | new indexer (see TODO.md for gaps) |
 | (none — native) | `src/Indexers/ScipSharp.Indexer.Delphi` | new indexer (see TODO.md for gaps) |
 | (none — native) | `src/Indexers/ScipSharp.Indexer.Pascal` | new indexer (see TODO.md for gaps) |
+| (none — native) | `src/Indexers/ScipSharp.Indexer.Sql` | new indexer (see TODO.md for gaps) |
 
 ## Key differences from the Go implementation
 
@@ -81,3 +82,11 @@ implementations. Each one reports `UpstreamProject` as `(none: native implementa
   for members, `with`, ancestors, helpers and generics. External units resolve against a hand-written RTL/LCL summary
   table. Lazarus `.lpi`/`.lpk` give package names, versions, search paths and modes; `.lfm` forms are indexed. Kept
   separate from the Delphi indexer because indexer projects may only reference `ScipSharp.Indexing`.
+- **SQL** (`sql`, ANSI/PostgreSQL/T-SQL/MySQL/SQLite/PL/SQL + dbt): a dialect-aware lexer (quoted identifiers, `$tag$`,
+  nested comments, `GO`/`/`/`DELIMITER`, Jinja) and a tolerant recursive-descent parser that never throws and keeps only
+  name-bearing structure in a flat AST. A directory of `.sql` files is one catalog: files are replayed in natural sort
+  order in two passes, so migrations, renames and drops apply in sequence while `pg_dump`-style forward references still
+  resolve. Column resolution follows sqlglot's scope model (FROM scopes, aliases, CTEs, sole-source attribution, star
+  expansion). Symbols are `scip-sql . <pkg> <ver> [db/]schema/table#column.`; constraints, indexes and triggers are
+  `table#name:`, routines `schema/f(normalized types).`, PL/SQL packages namespaces; identifiers are case-folded per
+  dialect; unknown objects become external symbols. Not built on ScriptDom or libpg_query (dialect-limited, non-native).
