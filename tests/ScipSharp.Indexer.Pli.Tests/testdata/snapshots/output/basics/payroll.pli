@@ -1,0 +1,238 @@
+  *PROCESS MARGINS(2,72) SOURCE;
+   /* Payroll sample: structures, factored declarations, scoping.     */
+// ⌄ enclosing_range_start scip-pli pli basics . PAYROLL().
+   PAYROLL: PROCEDURE OPTIONS(MAIN);
+// ^^^^^^^ definition scip-pli pli basics . PAYROLL().
+//         kind Function
+//         display_name PAYROLL
+//         documentation
+//         > ```pli
+//         > PAYROLL: PROCEDURE OPTIONS(MAIN)
+//         > ```
+     DCL (COUNT, TOTAL) FIXED BINARY(31) INIT(0);
+//        ^^^^^ definition scip-pli pli basics . PAYROLL().COUNT.
+//              kind Variable
+//              display_name COUNT
+//              documentation
+//              > ```pli
+//              > DCL COUNT FIXED BINARY(31) INIT(0)
+//              > ```
+//               ^^^^^ definition scip-pli pli basics . PAYROLL().TOTAL.
+//                     kind Variable
+//                     display_name TOTAL
+//                     documentation
+//                     > ```pli
+//                     > DCL TOTAL FIXED BINARY(31) INIT(0)
+//                     > ```
+     DCL 1 EMPLOYEE,
+//         ^^^^^^^^ definition scip-pli pli basics . PAYROLL().EMPLOYEE.
+//                  kind Variable
+//                  display_name EMPLOYEE
+//                  documentation
+//                  > ```pli
+//                  > DCL 1 EMPLOYEE
+//                  > ```
+           2 NAME        CHAR(20),
+//           ^^^^ definition scip-pli pli basics . PAYROLL().EMPLOYEE.NAME.
+//                kind Field
+//                display_name NAME
+//                documentation
+//                > ```pli
+//                > DCL 2 NAME CHAR(20)
+//                > ```
+           2 PAY,
+//           ^^^ definition scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.
+//               kind Field
+//               display_name PAY
+//               documentation
+//               > ```pli
+//               > DCL 2 PAY
+//               > ```
+             3 RATE      FIXED DEC(7,2),
+//             ^^^^ definition scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.RATE.
+//                  kind Field
+//                  display_name RATE
+//                  documentation
+//                  > ```pli
+//                  > DCL 3 RATE FIXED DEC(7, 2)
+//                  > ```
+             3 HOURS     FIXED DEC(5,1),
+//             ^^^^^ definition scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.HOURS.
+//                   kind Field
+//                   display_name HOURS
+//                   documentation
+//                   > ```pli
+//                   > DCL 3 HOURS FIXED DEC(5, 1)
+//                   > ```
+           2 DEPT        CHAR(4);
+//           ^^^^ definition scip-pli pli basics . PAYROLL().EMPLOYEE.DEPT.
+//                kind Field
+//                display_name DEPT
+//                documentation
+//                > ```pli
+//                > DCL 2 DEPT CHAR(4)
+//                > ```
+     DCL 1 MANAGER LIKE EMPLOYEE;
+//         ^^^^^^^ definition scip-pli pli basics . PAYROLL().MANAGER.
+//                 kind Variable
+//                 display_name MANAGER
+//                 documentation
+//                 > ```pli
+//                 > DCL 1 MANAGER LIKE EMPLOYEE
+//                 > ```
+//                      ^^^^^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.
+     DCL SUMMARY ENTRY (FIXED BIN(31)) RETURNS (FIXED DEC(9,2));
+//       ^^^^^^^ reference scip-pli pli basics . SUMMARY().
+     DCL (SUBSTR, LENGTH) BUILTIN;
+//        ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//                ^^^^^^ reference scip-pli pli builtin . LENGTH().
+     DCL EOF BIT(1) INIT('0'B);
+//       ^^^ definition scip-pli pli basics . PAYROLL().EOF.
+//           kind Variable
+//           display_name EOF
+//           documentation
+//           > ```pli
+//           > DCL EOF BIT(1) INIT('0'B)
+//           > ```
+     %INCLUDE COMMON;
+  
+     ON ENDFILE(SYSIN) EOF = '1'B;
+//              ^^^^^ reference scip-pli pli builtin . SYSIN.
+//                     ^^^ reference scip-pli pli basics . PAYROLL().EOF.
+     GET LIST (EMPLOYEE.NAME, RATE, PAY.HOURS);
+//             ^^^^^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.
+//                      ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.NAME.
+//                            ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.RATE.
+//                                  ^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.
+//                                      ^^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.HOURS.
+     DO WHILE (¬EOF);
+//              ^^^ reference scip-pli pli basics . PAYROLL().EOF.
+       COUNT = COUNT + 1;
+//     ^^^^^ reference scip-pli pli basics . PAYROLL().COUNT.
+//             ^^^^^ reference scip-pli pli basics . PAYROLL().COUNT.
+       TOTAL = TOTAL + EMPLOYEE.PAY.RATE * HOURS;
+//     ^^^^^ reference scip-pli pli basics . PAYROLL().TOTAL.
+//             ^^^^^ reference scip-pli pli basics . PAYROLL().TOTAL.
+//                     ^^^^^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.
+//                              ^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.
+//                                  ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.RATE.
+//                                         ^^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.HOURS.
+       MANAGER.NAME = SUBSTR(NAME, 1, LENGTH(NAME));
+//     ^^^^^^^ reference scip-pli pli basics . PAYROLL().MANAGER.
+//             ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.NAME.
+//                    ^^^^^^ reference scip-pli pli builtin . SUBSTR().
+//                           ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.NAME.
+//                                    ^^^^^^ reference scip-pli pli builtin . LENGTH().
+//                                           ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.NAME.
+       IF MANAGER.PAY.RATE > LIMIT THEN CALL REPORT(COUNT);
+//        ^^^^^^^ reference scip-pli pli basics . PAYROLL().MANAGER.
+//                ^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.
+//                    ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.RATE.
+//                           ^^^^^ reference scip-pli pli basics . PAYROLL().LIMIT.
+//                                           ^^^^^^ reference scip-pli pli basics . PAYROLL().REPORT().
+//                                                  ^^^^^ reference scip-pli pli basics . PAYROLL().COUNT.
+       ELSE GO TO NEXT;
+//                ^^^^ reference scip-pli pli basics . PAYROLL().NEXT.
+   NEXT:
+// ^^^^ definition scip-pli pli basics . PAYROLL().NEXT.
+//      kind Constant
+//      display_name NEXT
+//      documentation
+//      > ```pli
+//      > NEXT: (label)
+//      > ```
+       GET LIST (EMPLOYEE.NAME, RATE, PAY.HOURS);
+//               ^^^^^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.
+//                        ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.NAME.
+//                              ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.RATE.
+//                                    ^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.
+//                                        ^^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.PAY.HOURS.
+     END;
+     PUT SKIP EDIT ('TOTAL:', SUMMARY(TOTAL)) (A, F(9,2));
+//                            ^^^^^^^ reference scip-pli pli basics . SUMMARY().
+//                                    ^^^^^ reference scip-pli pli basics . PAYROLL().TOTAL.
+     CALL LOGGER('DONE', UNDECLARED_FLAG);
+//        ^^^^^^ reference scip-pli pli basics . LOGGER().
+//                       ^^^^^^^^^^^^^^^ reference local 0
+  
+// ⌄ enclosing_range_start scip-pli pli basics . PAYROLL().REPORT().
+   REPORT: PROCEDURE (N);
+// ^^^^^^ definition scip-pli pli basics . PAYROLL().REPORT().
+//        kind Function
+//        display_name REPORT
+//        documentation
+//        > ```pli
+//        > REPORT: PROCEDURE(N)
+//        > ```
+//                    ^ reference scip-pli pli basics . PAYROLL().REPORT().(N)
+     DCL N FIXED BINARY(31);
+//       ^ definition scip-pli pli basics . PAYROLL().REPORT().(N)
+//         kind Parameter
+//         display_name N
+//         documentation
+//         > ```pli
+//         > DCL N FIXED BINARY(31)
+//         > ```
+     DCL TEMP CHAR(20);
+//       ^^^^ definition scip-pli pli basics . PAYROLL().REPORT().TEMP.
+//            kind Variable
+//            display_name TEMP
+//            documentation
+//            > ```pli
+//            > DCL TEMP CHAR(20)
+//            > ```
+     TEMP = NAME;
+//   ^^^^ reference scip-pli pli basics . PAYROLL().REPORT().TEMP.
+//          ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.NAME.
+     PUT SKIP LIST (N, TEMP, DEPT);
+//                  ^ reference scip-pli pli basics . PAYROLL().REPORT().(N)
+//                     ^^^^ reference scip-pli pli basics . PAYROLL().REPORT().TEMP.
+//                           ^^^^ reference scip-pli pli basics . PAYROLL().EMPLOYEE.DEPT.
+   END REPORT;
+//     ^^^^^^ reference scip-pli pli basics . PAYROLL().REPORT().
+//           ⌃ enclosing_range_end scip-pli pli basics . PAYROLL().REPORT().
+  
+// ⌄ enclosing_range_start scip-pli pli basics . PAYROLL().BLOCK1/
+   BLOCK1: BEGIN;
+// ^^^^^^ definition scip-pli pli basics . PAYROLL().BLOCK1/
+//        kind Namespace
+//        display_name BLOCK1
+//        documentation
+//        > ```pli
+//        > BLOCK1: BEGIN
+//        > ```
+     DCL COUNT FIXED DEC(3);
+//       ^^^^^ definition scip-pli pli basics . PAYROLL().BLOCK1/COUNT.
+//             kind Variable
+//             display_name COUNT
+//             documentation
+//             > ```pli
+//             > DCL COUNT FIXED DEC(3)
+//             > ```
+     COUNT = 0;
+//   ^^^^^ reference scip-pli pli basics . PAYROLL().BLOCK1/COUNT.
+     OUTER: DO I = 1 TO 10 BY 2;
+//   ^^^^^ definition scip-pli pli basics . PAYROLL().BLOCK1/OUTER.
+//         kind Constant
+//         display_name OUTER
+//         documentation
+//         > ```pli
+//         > OUTER: (label)
+//         > ```
+//             ^ reference local 1
+       IF I > 5 THEN LEAVE OUTER;
+//        ^ reference local 1
+//                         ^^^^^ reference scip-pli pli basics . PAYROLL().BLOCK1/OUTER.
+       COUNT = COUNT + I;
+//     ^^^^^ reference scip-pli pli basics . PAYROLL().BLOCK1/COUNT.
+//             ^^^^^ reference scip-pli pli basics . PAYROLL().BLOCK1/COUNT.
+//                     ^ reference local 1
+     END OUTER;
+//       ^^^^^ reference scip-pli pli basics . PAYROLL().BLOCK1/OUTER.
+   END BLOCK1;
+//     ^^^^^^ reference scip-pli pli basics . PAYROLL().BLOCK1/
+//           ⌃ enclosing_range_end scip-pli pli basics . PAYROLL().BLOCK1/
+   END PAYROLL;                                                           00470000
+//     ^^^^^^^ reference scip-pli pli basics . PAYROLL().
+//            ⌃ enclosing_range_end scip-pli pli basics . PAYROLL().
+  

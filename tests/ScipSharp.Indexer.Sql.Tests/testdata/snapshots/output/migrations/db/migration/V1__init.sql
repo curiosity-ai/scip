@@ -1,0 +1,29 @@
+--⌄ enclosing_range_start scip-sql . migrations . default/users#
+--                    ⌄ enclosing_range_start scip-sql . migrations . default/users#id.
+--                                           ⌄ enclosing_range_start scip-sql . migrations . default/users#email.
+  CREATE TABLE users (id bigint PRIMARY KEY, email text NOT NULL);
+--             ^^^^^ definition scip-sql . migrations . default/users#
+--                   kind Class
+--                   display_name users
+--                   documentation
+--                   > ```sql
+--                   > TABLE default.users
+--                   > ```
+--                    ^^ definition scip-sql . migrations . default/users#id.
+--                       kind Field
+--                       display_name id
+--                       documentation
+--                       > ```sql
+--                       > id bigint PRIMARY KEY
+--                       > ```
+--                                           ^^^^^ definition scip-sql . migrations . default/users#email.
+--                                                 kind Field
+--                                                 display_name email
+--                                                 documentation
+--                                                 > ```sql
+--                                                 > email text NOT NULL
+--                                                 > ```
+--                                        ⌃ enclosing_range_end scip-sql . migrations . default/users#id.
+--                                                             ⌃ enclosing_range_end scip-sql . migrations . default/users#email.
+--                                                              ⌃ enclosing_range_end scip-sql . migrations . default/users#
+  

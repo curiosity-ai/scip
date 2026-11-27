@@ -1,0 +1,547 @@
+  *PROCESS PP(MACRO);
+   /**********************************************************************
+    * SAMPLE: MACSAMP.pli
+    *
+    * A showcase of the IBM Z Open Editor native PL/I macro preprocessor
+    * support (available from IBM Z Open Editor 6.7.0). This is not a
+    * test harness — it is meant to be opened, hovered over, and stepped
+    * through to see how Z Open Editor understands PL/I macro directives
+    * without invoking the PL/I compiler.
+    *
+    * Try this:
+    *   - Hover over PLATFORM and COUNT to see their resolved
+    *     macro-variable values.
+    *   - Hover over SCORES to see its declared dimensions and its
+    *     current element values.
+    *   - Notice the grayed-out (inactive) DCL statements below the
+    *     %ELSE and %OTHERWISE branches, and inside the %DO SKIP block.
+    *   - Hover over the %DO WHILE loop in Section 6 to see the PL/I
+    *     source text emitted by all of its iterations.
+    *   - Hover over a call to DOUBLE(...) to see its resolved value,
+    *     and over a call to BANNER to see the PL/I text it emits.
+    *   - In Section 12, hover over SYSPARM() to see the value supplied
+    *     by the zapp.yaml compilerOptions (PRODUCTION), and notice how
+    *     the %IF branch selects the active DCL accordingly.
+    *
+    * IBM Z Open Editor 6.7.0
+    *********************************************************************/
+  
+   /*--- Section 1 - Top-level macro variables -------------------------*/
+   %DECLARE PLATFORM CHARACTER;
+//          ^^^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/PLATFORM!
+//                   kind Macro
+//                   display_name PLATFORM
+//                   documentation
+//                   > ```pli
+//                   > %DCL PLATFORM CHARACTER
+//                   > ```
+   %PLATFORM = 'MVS';
+//  ^^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/PLATFORM!
+  
+   %DECLARE COUNT FIXED;
+//          ^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COUNT!
+//                kind Macro
+//                display_name COUNT
+//                documentation
+//                > ```pli
+//                > %DCL COUNT FIXED
+//                > ```
+   %COUNT = 3;
+//  ^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COUNT!
+  
+   /*--- Section 2 - Array macro variable with a RETURNS accessor ------*/
+   /* Macro array elements are not directly visible to regular PL/I     */
+   /* code, so a RETURNS procedure exposes an element by index.         */
+   %DECLARE SCORES(1:5) FIXED;
+//          ^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCORES!
+//                 kind Macro
+//                 display_name SCORES
+//                 documentation
+//                 > ```pli
+//                 > %DCL SCORES(1: 5) FIXED
+//                 > ```
+   %SCORES(1) = 10;
+//  ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCORES!
+   %SCORES(2) = 20;
+//  ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCORES!
+   %SCORES(3) = 30;
+//  ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCORES!
+   %SCORES(4) = 40;
+//  ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCORES!
+   %SCORES(5) = 50;
+//  ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCORES!
+  
+//  ⌄ enclosing_range_start scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCOREGET!
+   %SCOREGET: PROCEDURE(IDX) RETURNS(FIXED);
+//  ^^^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCOREGET!
+//           kind Macro
+//           display_name SCOREGET
+//           documentation
+//           > ```pli
+//           > %SCOREGET: PROCEDURE(IDX) RETURNS(FIXED)
+//           > ```
+//                      ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCOREGET!(IDX)
+     DECLARE IDX FIXED;
+//           ^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCOREGET!(IDX)
+//               kind Parameter
+//               display_name IDX
+//               documentation
+//               > ```pli
+//               > DCL IDX FIXED
+//               > ```
+     RETURN(SCORES(IDX));
+//          ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCORES!
+//                 ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCOREGET!(IDX)
+   %END SCOREGET;
+//              ⌃ enclosing_range_end scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCOREGET!
+   %ACTIVATE SCOREGET;
+//           ^^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCOREGET!
+  
+// ⌄ enclosing_range_start scip-pli pli zopeneditor . MACROFEATURES().
+   MACROFEATURES: PROC OPTIONS(MAIN);
+// ^^^^^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().
+//               kind Function
+//               display_name MACROFEATURES
+//               documentation
+//               > ```pli
+//               > MACROFEATURES: PROC OPTIONS(MAIN)
+//               > ```
+  
+   DCL (ABABAB, WORLD, PADDED, YEOOO) CHAR;
+//      ^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().ABABAB.
+//             kind Variable
+//             display_name ABABAB
+//             documentation
+//             > ```pli
+//             > DCL ABABAB CHAR
+//             > ```
+//              ^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().WORLD.
+//                    kind Variable
+//                    display_name WORLD
+//                    documentation
+//                    > ```pli
+//                    > DCL WORLD CHAR
+//                    > ```
+//                     ^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().PADDED.
+//                            kind Variable
+//                            display_name PADDED
+//                            documentation
+//                            > ```pli
+//                            > DCL PADDED CHAR
+//                            > ```
+//                             ^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().YEOOO.
+//                                   kind Variable
+//                                   display_name YEOOO
+//                                   documentation
+//                                   > ```pli
+//                                   > DCL YEOOO CHAR
+//                                   > ```
+  
+   /*--- Section 3 - %IF / %ELSE: active vs inactive branches ----------*/
+   %IF PLATFORM = 'MVS' %THEN %DO;
+//     ^^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/PLATFORM!
+     DCL ACTIVE_PLATFORM CHAR(3) INIT('MVS');   /* ACTIVE   */
+//       ^^^^^^^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().ACTIVE_PLATFORM.
+//                       kind Variable
+//                       display_name ACTIVE_PLATFORM
+//                       documentation
+//                       > ```pli
+//                       > DCL ACTIVE_PLATFORM CHAR(3) INIT('MVS')
+//                       > ```
+   %END;
+   %ELSE %DO;
+     DCL OTHER_PLATFORM CHAR(4) INIT('N/A');    /* INACTIVE */
+//       ^^^^^^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().OTHER_PLATFORM.
+//                      kind Variable
+//                      display_name OTHER_PLATFORM
+//                      documentation
+//                      > ```pli
+//                      > DCL OTHER_PLATFORM CHAR(4) INIT('N/A')
+//                      > ```
+   %END;
+  
+   /*--- Section 4 - %SELECT / %WHEN / %OTHERWISE ----------------------*/
+   %DECLARE REGION FIXED;
+//          ^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/REGION!
+//                 kind Macro
+//                 display_name REGION
+//                 documentation
+//                 > ```pli
+//                 > %DCL REGION FIXED
+//                 > ```
+   %REGION = 2;
+//  ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/REGION!
+   %SELECT (REGION);
+//          ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/REGION!
+     %WHEN (1) %DO;
+       DCL REGION_ONE FIXED;                    /* INACTIVE */
+//         ^^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().REGION_ONE.
+//                    kind Variable
+//                    display_name REGION_ONE
+//                    documentation
+//                    > ```pli
+//                    > DCL REGION_ONE FIXED
+//                    > ```
+     %END;
+     %WHEN (2) %DO;
+       DCL REGION_TWO FIXED;                    /* ACTIVE   */
+//         ^^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().REGION_TWO.
+//                    kind Variable
+//                    display_name REGION_TWO
+//                    documentation
+//                    > ```pli
+//                    > DCL REGION_TWO FIXED
+//                    > ```
+     %END;
+     %OTHERWISE %DO;
+       DCL REGION_OTHER FIXED;                  /* INACTIVE */
+//         ^^^^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().REGION_OTHER.
+//                      kind Variable
+//                      display_name REGION_OTHER
+//                      documentation
+//                      > ```pli
+//                      > DCL REGION_OTHER FIXED
+//                      > ```
+     %END;
+   %END;
+  
+   /*--- Section 5 - %DO counter loop with %; concatenation ------------*/
+   /* Generates DCL FIELD1, FIELD2, FIELD3 in the expanded source       */
+   %DECLARE I FIXED;
+//          ^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/I!
+//            kind Macro
+//            display_name I
+//            documentation
+//            > ```pli
+//            > %DCL I FIXED
+//            > ```
+   %DECLARE J CHARACTER;
+//          ^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/J!
+//            kind Macro
+//            display_name J
+//            documentation
+//            > ```pli
+//            > %DCL J CHARACTER
+//            > ```
+   %DO I = 1 TO COUNT;
+//     ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/I!
+//              ^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COUNT!
+     %J = TRIM(I);
+//    ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/J!
+//             ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/I!
+     DCL FIELD%;J FIXED BIN(31);
+//       ^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().FIELD.
+//             kind Variable
+//             display_name FIELD
+//             documentation
+//             > ```pli
+//             > DCL FIELD %; J FIXED BIN(31)
+//             > ```
+//              ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/J!
+     FIELD%;J = I;
+//   ^^^^^ reference scip-pli pli zopeneditor . MACROFEATURES().FIELD.
+//          ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/J!
+//              ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/I!
+   %END;
+  
+   /*--- Section 6 - iterative %DO-group with %ITERATE and %LEAVE ------*/
+   /* %ITERATE skips K=3; %LEAVE exits when K=6. Output: 1,2,4,5        */
+   %DECLARE K FIXED;
+//          ^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/K!
+//            kind Macro
+//            display_name K
+//            documentation
+//            > ```pli
+//            > %DCL K FIXED
+//            > ```
+   %DO K = 1 TO 10;
+//     ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/K!
+     %IF K = 3 %THEN
+//       ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/K!
+       %ITERATE;
+     %IF K = 6 %THEN %LEAVE;
+//       ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/K!
+     PUT SKIP LIST(K);
+//                 ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/K!
+   %END;
+  
+   /*--- Section 7 - %DO SKIP (body suppressed) ------------------------*/
+   %DO SKIP;
+     DCL SKIPPED_VAR FIXED;                     /* NEVER EMITTED */
+//       ^^^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().SKIPPED_VAR.
+//                   kind Variable
+//                   display_name SKIPPED_VAR
+//                   documentation
+//                   > ```pli
+//                   > DCL SKIPPED_VAR FIXED
+//                   > ```
+   %END;
+   DCL AFTER_SKIP FIXED;                        /* ACTIVE */
+//     ^^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().AFTER_SKIP.
+//                kind Variable
+//                display_name AFTER_SKIP
+//                documentation
+//                > ```pli
+//                > DCL AFTER_SKIP FIXED
+//                > ```
+  
+   /*--- Section 8 - RETURNS procedure: function-style macro -----------*/
+   /* Hovering DOUBLE(5) shows the resolved value "10"                  */
+//  ⌄ enclosing_range_start scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/DOUBLE!
+   %DOUBLE: PROCEDURE(N) RETURNS(FIXED);
+//  ^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/DOUBLE!
+//         kind Macro
+//         display_name DOUBLE
+//         documentation
+//         > ```pli
+//         > %DOUBLE: PROCEDURE(N) RETURNS(FIXED)
+//         > ```
+//                    ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/DOUBLE!(N)
+     DECLARE N FIXED;
+//           ^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/DOUBLE!(N)
+//             kind Parameter
+//             display_name N
+//             documentation
+//             > ```pli
+//             > DCL N FIXED
+//             > ```
+     RETURN(N * 2);
+//          ^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/DOUBLE!(N)
+   %END DOUBLE;
+//            ⌃ enclosing_range_end scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/DOUBLE!
+   %ACTIVATE DOUBLE;
+//           ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/DOUBLE!
+  
+   DCL DBLRESULT FIXED BIN(31);
+//     ^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().DBLRESULT.
+//               kind Variable
+//               display_name DBLRESULT
+//               documentation
+//               > ```pli
+//               > DCL DBLRESULT FIXED BIN(31)
+//               > ```
+   DBLRESULT = DOUBLE(SCOREGET(3));
+// ^^^^^^^^^ reference scip-pli pli zopeneditor . MACROFEATURES().DBLRESULT.
+//             ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/DOUBLE!
+//                    ^^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SCOREGET!
+  
+   /*--- Section 9 - Statement-invoked procedure with ANSWER -----------*/
+   /* Hovering the BANNER call shows the PL/I text it emits             */
+//  ⌄ enclosing_range_start scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BANNER!
+   %BANNER: PROCEDURE(TXT) STATEMENT;
+//  ^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BANNER!
+//         kind Macro
+//         display_name BANNER
+//         documentation
+//         > ```pli
+//         > %BANNER: PROCEDURE(TXT) STATEMENT
+//         > ```
+//                    ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BANNER!(TXT)
+     DECLARE TXT CHARACTER;
+//           ^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BANNER!(TXT)
+//               kind Parameter
+//               display_name TXT
+//               documentation
+//               > ```pli
+//               > DCL TXT CHARACTER
+//               > ```
+     ANSWER ('PUT SKIP LIST(' || QUOTE(TXT) || ');');
+//                                     ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BANNER!(TXT)
+   %END BANNER;
+//            ⌃ enclosing_range_end scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BANNER!
+   %ACTIVATE BANNER;
+//           ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BANNER!
+   BANNER('MACRO PREPROCESSOR DEMO');
+// ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BANNER!
+  
+   /*--- Section 10 - Built-in functions -------------------------------*/
+   %DECLARE SUB CHARACTER;
+//          ^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SUB!
+//              kind Macro
+//              display_name SUB
+//              documentation
+//              > ```pli
+//              > %DCL SUB CHARACTER
+//              > ```
+   %SUB = SUBSTR('HELLO WORLD', 7, 5);          /* 'WORLD' */
+//  ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SUB!
+  
+   %DECLARE LEN FIXED;
+//          ^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/LEN!
+//              kind Macro
+//              display_name LEN
+//              documentation
+//              > ```pli
+//              > %DCL LEN FIXED
+//              > ```
+   %LEN = LENGTH(SUB);                          /* 5 */
+//  ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/LEN!
+//               ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SUB!
+  
+   %DECLARE COPIED CHARACTER;
+//          ^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COPIED!
+//                 kind Macro
+//                 display_name COPIED
+//                 documentation
+//                 > ```pli
+//                 > %DCL COPIED CHARACTER
+//                 > ```
+   %COPIED = COPY('AB', 3);                     /* 'ABABAB' */
+//  ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COPIED!
+  
+   %DECLARE QUOTED CHARACTER;
+//          ^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/QUOTED!
+//                 kind Macro
+//                 display_name QUOTED
+//                 documentation
+//                 > ```pli
+//                 > %DCL QUOTED CHARACTER
+//                 > ```
+   %QUOTED = QUOTE('it''s');                    /* '''it''''s''' */
+//  ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/QUOTED!
+  
+   %DECLARE TRIMMED CHARACTER;
+//          ^^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/TRIMMED!
+//                  kind Macro
+//                  display_name TRIMMED
+//                  documentation
+//                  > ```pli
+//                  > %DCL TRIMMED CHARACTER
+//                  > ```
+   %TRIMMED = TRIM('  padded  ');                /* 'padded' */
+//  ^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/TRIMMED!
+  
+   %DECLARE UPPER CHARACTER;
+//          ^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/UPPER!
+//                kind Macro
+//                display_name UPPER
+//                documentation
+//                > ```pli
+//                > %DCL UPPER CHARACTER
+//                > ```
+   %UPPER = TRANSLATE('hello', 'yowza', 'hl');
+//  ^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/UPPER!
+   %UPPER = UPPERCASE(UPPER);                    /* 'YEOOO' */
+//  ^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/UPPER!
+//                    ^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/UPPER!
+  
+   DCL SUBOUT   CHAR(5)  INIT(SUB);
+//     ^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().SUBOUT.
+//            kind Variable
+//            display_name SUBOUT
+//            documentation
+//            > ```pli
+//            > DCL SUBOUT CHAR(5) INIT(SUB)
+//            > ```
+//                            ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/SUB!
+   DCL LENOUT   FIXED    INIT(LEN);
+//     ^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().LENOUT.
+//            kind Variable
+//            display_name LENOUT
+//            documentation
+//            > ```pli
+//            > DCL LENOUT FIXED INIT(LEN)
+//            > ```
+//                            ^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/LEN!
+   DCL COPYOUT  CHAR(6)  INIT(COPIED);
+//     ^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().COPYOUT.
+//             kind Variable
+//             display_name COPYOUT
+//             documentation
+//             > ```pli
+//             > DCL COPYOUT CHAR(6) INIT(COPIED)
+//             > ```
+//                            ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COPIED!
+   DCL QUOTEOUT CHAR(12) INIT(QUOTED);
+//     ^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().QUOTEOUT.
+//              kind Variable
+//              display_name QUOTEOUT
+//              documentation
+//              > ```pli
+//              > DCL QUOTEOUT CHAR(12) INIT(QUOTED)
+//              > ```
+//                            ^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/QUOTED!
+   DCL TRIMOUT  CHAR(6)  INIT(TRIMMED);
+//     ^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().TRIMOUT.
+//             kind Variable
+//             display_name TRIMOUT
+//             documentation
+//             > ```pli
+//             > DCL TRIMOUT CHAR(6) INIT(TRIMMED)
+//             > ```
+//                            ^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/TRIMMED!
+   DCL UPPEROUT CHAR(5)  INIT(UPPER);
+//     ^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().UPPEROUT.
+//              kind Variable
+//              display_name UPPEROUT
+//              documentation
+//              > ```pli
+//              > DCL UPPEROUT CHAR(5) INIT(UPPER)
+//              > ```
+//                            ^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/UPPER!
+  
+   /*--- Section 11 - Type coercion: FIXED <-> CHARACTER ---------------*/
+   /* TRIM(COUNT) converts the numeric value 3 to the string '3'        */
+   %DECLARE COUNTASCHAR CHARACTER;
+//          ^^^^^^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COUNTASCHAR!
+//                      kind Macro
+//                      display_name COUNTASCHAR
+//                      documentation
+//                      > ```pli
+//                      > %DCL COUNTASCHAR CHARACTER
+//                      > ```
+   %COUNTASCHAR = TRIM(COUNT);
+//  ^^^^^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COUNTASCHAR!
+//                     ^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COUNT!
+   DCL COERCEOUT CHAR(2) INIT(COUNTASCHAR);
+//     ^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().COERCEOUT.
+//               kind Variable
+//               display_name COERCEOUT
+//               documentation
+//               > ```pli
+//               > DCL COERCEOUT CHAR(2) INIT(COUNTASCHAR)
+//               > ```
+//                            ^^^^^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/COUNTASCHAR!
+  
+   /*--- Section 12 - SYSPARM(): build-time parameter from zapp.yaml --*/
+   /* The SYSPARM compiler option is set to 'PRODUCTION' in zapp.yaml. */
+   /* SYSPARM() returns that string at macro-preprocessor time, so the */
+   /* %IF below resolves to the ACTIVE branch without invoking the      */
+   /* compiler.  Change sysparm('PRODUCTION') to sysparm('DEBUG') in   */
+   /* zapp.yaml and the branches flip.                                  */
+   %DECLARE BUILDENV CHARACTER;
+//          ^^^^^^^^ definition scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BUILDENV!
+//                   kind Macro
+//                   display_name BUILDENV
+//                   documentation
+//                   > ```pli
+//                   > %DCL BUILDENV CHARACTER
+//                   > ```
+   %BUILDENV = SYSPARM();
+//  ^^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BUILDENV!
+  
+   %IF BUILDENV = 'PRODUCTION' %THEN %DO;
+//     ^^^^^^^^ reference scip-pli pli zopeneditor . `PLI/MACSAMP.pli`/BUILDENV!
+     DCL ENV_LABEL CHAR(10) INIT('PRODUCTION');  /* ACTIVE  */
+//       ^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().ENV_LABEL.
+//                 kind Variable
+//                 display_name ENV_LABEL
+//                 documentation
+//                 > ```pli
+//                 > DCL ENV_LABEL CHAR(10) INIT('PRODUCTION')
+//                 > ```
+   %END;
+   %ELSE %DO;
+     DCL ENV_LABEL CHAR(5)  INIT('DEBUG');       /* INACTIVE */
+//       ^^^^^^^^^ definition scip-pli pli zopeneditor . MACROFEATURES().ENV_LABEL.
+//                 kind Variable
+//                 display_name ENV_LABEL
+//                 documentation
+//                 > ```pli
+//                 > DCL ENV_LABEL CHAR(10) INIT('PRODUCTION')
+//                 > ```
+   %END;
+  
+   END MACROFEATURES;
+//     ^^^^^^^^^^^^^ reference scip-pli pli zopeneditor . MACROFEATURES().
+//                  ⌃ enclosing_range_end scip-pli pli zopeneditor . MACROFEATURES().

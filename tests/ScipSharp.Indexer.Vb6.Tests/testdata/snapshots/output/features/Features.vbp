@@ -1,0 +1,31 @@
+'⌄ enclosing_range_start scip-vb6 vbp Features 1.2.3 Features/
+ Type=Exe
+ Reference=*\G{00020430-0000-0000-C000-000000000046}#2.0#0#..\..\Windows\SysWOW64\stdole2.tlb#OLE Automation
+ Form=frmMain.frm
+'     ^^^^^^^^^^^ reference scip-vb6 vbp Features 1.2.3 frmMain#
+ Module=modMain; modMain.bas
+'       ^^^^^^^ reference scip-vb6 vbp Features 1.2.3 modMain#
+ Class=IShape; IShape.cls
+'      ^^^^^^ reference scip-vb6 vbp Features 1.2.3 IShape#
+ Class=cCircle; Shapes\cCircle.cls
+'      ^^^^^^^ reference scip-vb6 vbp Features 1.2.3 cCircle#
+ Startup="Sub Main"
+'         ^^^^^^^^ reference scip-vb6 vbp Features 1.2.3 modMain#Main().
+ Name="Features"
+'      ^^^^^^^^ definition scip-vb6 vbp Features 1.2.3 Features/
+'               kind Package
+'               display_name Features
+'               signature_documentation
+'               > Name="Features" (Type=Exe)
+'               documentation
+'               > Feature tour
+ CondComp="USE_LOG = 1"
+ MajorVer=1
+ MinorVer=2
+ RevisionVer=3
+ Title="Feature tour"
+ 
+ [MS Transaction Server]
+ AutoRefresh=1
+ 
+'⌃ enclosing_range_end scip-vb6 vbp Features 1.2.3 Features/

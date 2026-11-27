@@ -1,0 +1,3 @@
+scip-pli pli builtin . LENGTH().
+scip-pli pli builtin . SUBSTR().
+scip-pli pli builtin . SYSIN.

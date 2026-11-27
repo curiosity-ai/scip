@@ -1,0 +1,36 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. OUTER.
+      * Nested programs: GLOBAL data, COMMON programs, END PROGRAM.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  SHARED-AREA IS GLOBAL.
+           05 SHARED-COUNT     PIC 9(4) VALUE 0.
+       01  PRIVATE-AREA        PIC X(10).
+       PROCEDURE DIVISION.
+       MAIN SECTION.
+       START-UP.
+           CALL 'INNER-A'
+           CALL 'INNER-B'
+           PERFORM DONE OF MAIN
+           GOBACK.
+       DONE.
+           EXIT.
+
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. INNER-A IS COMMON PROGRAM.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  PRIVATE-AREA        PIC X(20).
+       PROCEDURE DIVISION.
+           ADD 1 TO SHARED-COUNT
+           MOVE SPACES TO PRIVATE-AREA
+           GOBACK.
+       END PROGRAM INNER-A.
+
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. INNER-B.
+       PROCEDURE DIVISION.
+           CALL 'INNER-A'
+           GOBACK.
+       END PROGRAM INNER-B.
+       END PROGRAM OUTER.

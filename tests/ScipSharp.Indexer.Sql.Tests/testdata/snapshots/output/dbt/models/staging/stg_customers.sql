@@ -1,0 +1,31 @@
+  select id as customer_id, first_name, last_name from {{ source('raw', 'customers') }}
+--       ^^ reference scip-sql . dbt . raw/customers#id.
+--             ^^^^^^^^^^^ definition scip-sql . dbt . default/stg_customers#customer_id.
+--                         kind Field
+--                         display_name customer_id
+--                         documentation
+--                         > ```sql
+--                         > customer_id (column of default.stg_customers)
+--                         > ```
+--                         relationship scip-sql . dbt . raw/customers#id. reference
+--                          ^^^^^^^^^^ reference scip-sql . dbt . raw/customers#first_name.
+--                          ^^^^^^^^^^ definition scip-sql . dbt . default/stg_customers#first_name.
+--                                     kind Field
+--                                     display_name first_name
+--                                     documentation
+--                                     > ```sql
+--                                     > first_name (column of default.stg_customers)
+--                                     > ```
+--                                     relationship scip-sql . dbt . raw/customers#first_name. reference
+--                                      ^^^^^^^^^ reference scip-sql . dbt . raw/customers#last_name.
+--                                      ^^^^^^^^^ definition scip-sql . dbt . default/stg_customers#last_name.
+--                                                kind Field
+--                                                display_name last_name
+--                                                documentation
+--                                                > ```sql
+--                                                > last_name (column of default.stg_customers)
+--                                                > ```
+--                                                relationship scip-sql . dbt . raw/customers#last_name. reference
+--                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ reference scip-sql . dbt . raw/
+--                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ reference scip-sql . dbt . raw/customers#
+  

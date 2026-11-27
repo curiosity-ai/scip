@@ -16,6 +16,13 @@
     <Project Path="src/Indexers/ScipSharp.Indexer.Ruby/ScipSharp.Indexer.Ruby.csproj" />
     <Project Path="src/Indexers/ScipSharp.Indexer.Rust/ScipSharp.Indexer.Rust.csproj" />
     <Project Path="src/Indexers/ScipSharp.Indexer.TypeScript/ScipSharp.Indexer.TypeScript.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Cobol/ScipSharp.Indexer.Cobol.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Vb6/ScipSharp.Indexer.Vb6.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Pli/ScipSharp.Indexer.Pli.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Fortran/ScipSharp.Indexer.Fortran.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Delphi/ScipSharp.Indexer.Delphi.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Pascal/ScipSharp.Indexer.Pascal.csproj" />
+    <Project Path="src/Indexers/ScipSharp.Indexer.Sql/ScipSharp.Indexer.Sql.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ScipSharp.Tests/ScipSharp.Tests.csproj" />
@@ -31,5 +38,12 @@
     <Project Path="tests/ScipSharp.Indexer.Python.Tests/ScipSharp.Indexer.Python.Tests.csproj" />
     <Project Path="tests/ScipSharp.Indexer.TypeScript.Tests/ScipSharp.Indexer.TypeScript.Tests.csproj" />
     <Project Path="tests/ScipSharp.Indexer.Java.Tests/ScipSharp.Indexer.Java.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Cobol.Tests/ScipSharp.Indexer.Cobol.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Vb6.Tests/ScipSharp.Indexer.Vb6.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Pli.Tests/ScipSharp.Indexer.Pli.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Fortran.Tests/ScipSharp.Indexer.Fortran.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Delphi.Tests/ScipSharp.Indexer.Delphi.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Pascal.Tests/ScipSharp.Indexer.Pascal.Tests.csproj" />
+    <Project Path="tests/ScipSharp.Indexer.Sql.Tests/ScipSharp.Indexer.Sql.Tests.csproj" />
   </Folder>
 </Solution>

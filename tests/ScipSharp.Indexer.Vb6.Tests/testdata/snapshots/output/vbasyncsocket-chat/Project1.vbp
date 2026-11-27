@@ -1,0 +1,57 @@
+'⌄ enclosing_range_start scip-vb6 vbp Project1 1.0.0 Project1/
+ Type=Exe
+ Reference=*\G{00020430-0000-0000-C000-000000000046}#2.0#0#..\..\..\..\..\Windows\SysWOW64\stdole2.tlb#OLE Automation
+ Object={8405D0DF-9FDD-4829-AEAD-8E2B0A18FEA4}#1.0#0; Inked.dll
+ Form=frmMain.frm
+'     ^^^^^^^^^^^ reference scip-vb6 vbp Project1 1.0.0 frmMain#
+ Form=frmServer.frm
+'     ^^^^^^^^^^^^^ reference scip-vb6 vbp Project1 1.0.0 frmServer#
+ Class=cClientInfo; cClientInfo.cls
+'      ^^^^^^^^^^^ reference scip-vb6 vbp Project1 1.0.0 cClientInfo#
+ Module=mdGlobals; mdGlobals.bas
+'       ^^^^^^^^^ reference scip-vb6 vbp Project1 1.0.0 mdGlobals#
+ Form=frmClient.frm
+'     ^^^^^^^^^^^^^ reference scip-vb6 vbp Project1 1.0.0 frmClient#
+ Class=cAsyncSocket; ..\..\src\cAsyncSocket.cls
+'      ^^^^^^^^^^^^ reference scip-vb6 vbp Project1 1.0.0 cAsyncSocket#
+ IconForm="frmMain"
+ Startup="frmMain"
+'         ^^^^^^^ reference scip-vb6 vbp Project1 1.0.0 frmMain#
+ HelpFile=""
+ Title="Project1"
+ ExeName32="Project1.exe"
+ Command32=""
+ Name="Project1"
+'      ^^^^^^^^ definition scip-vb6 vbp Project1 1.0.0 Project1/
+'               kind Package
+'               display_name Project1
+'               signature_documentation
+'               > Name="Project1" (Type=Exe)
+'               documentation
+'               > Project1
+ HelpContextID="0"
+ CompatibleMode="0"
+ MajorVer=1
+ MinorVer=0
+ RevisionVer=0
+ AutoIncrementVer=0
+ ServerSupportFiles=0
+ VersionCompanyName="Unicontsoft"
+ CondComp="ASYNCSOCKET_NO_SYNC = 1"
+ CompilationType=0
+ OptimizationType=0
+ FavorPentiumPro(tm)=0
+ CodeViewDebugInfo=0
+ NoAliasing=0
+ BoundsCheck=0
+ OverflowCheck=0
+ FlPointCheck=0
+ FDIVCheck=0
+ UnroundedFP=0
+ StartMode=0
+ Unattended=0
+ Retained=0
+ ThreadPerObject=0
+ MaxNumberOfThreads=1
+ 
+'⌃ enclosing_range_end scip-vb6 vbp Project1 1.0.0 Project1/

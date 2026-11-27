@@ -21,7 +21,9 @@ internal static class IndexCommand
                 Description = "Output file",
                 DefaultValueFactory = _ => IndexerOptions.DefaultOutputPath,
             };
-            var sub = new Command(indexer.Name, $"{indexer.Languages} (port of {indexer.UpstreamProject})") { root, output };
+            // Indexers without an upstream scip-* project report a parenthesised note such as "(none: native implementation)".
+            var origin = indexer.UpstreamProject.StartsWith('(') ? "native, no upstream indexer" : $"port of {indexer.UpstreamProject}";
+            var sub = new Command(indexer.Name, $"{indexer.Languages} ({origin})") { root, output };
             // Indexer-specific options (e.g. --jobs, --project-name) are parsed by the indexer itself.
             sub.TreatUnmatchedTokensAsErrors = false;
             sub.SetAction((parse, ct) => indexer.IndexAsync(

@@ -1,0 +1,39 @@
+Attribute VB_Name = "modGlobals"
+Option Explicit
+
+' global variables and constants
+
+
+' consts - public
+
+Public Const MAINFORM_MIN_WIDTH As Integer = 300
+Public Const MAINFORM_MIN_HEIGHT As Integer = 200
+
+Public Const COLOR_KEY As Long = &HFF00FF00
+
+
+' consts - private
+
+
+' types - public
+
+
+' types - private
+
+
+' vars - public
+
+
+' vars - private
+
+
+' external functions - public
+
+
+' external functions - private
+
+
+' functions - public
+
+
+' functions - private
