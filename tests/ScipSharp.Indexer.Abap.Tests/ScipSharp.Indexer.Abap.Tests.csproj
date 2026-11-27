@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ScipSharp.Indexer.Abap.Tests</RootNamespace>
+    <NoWarn>$(NoWarn);CA1707;CA1822;CA1861;CA2007;CA1305;CA1307;CA1310;CA1812</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\ScipSharp\ScipSharp.csproj" />
+    <ProjectReference Include="..\..\src\Indexers\ScipSharp.Indexer.Abap\ScipSharp.Indexer.Abap.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Data/: the abaplint statement and structure test cases (MIT, see THIRD-PARTY-NOTICES.md of the indexer).
+         testdata/: abapGit fixture projects and their golden snapshots. -->
+    <Content Include="Data\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="testdata\**\*" CopyToOutputDirectory="PreserveNewest" LinkBase="testdata" />
+  </ItemGroup>
+</Project>

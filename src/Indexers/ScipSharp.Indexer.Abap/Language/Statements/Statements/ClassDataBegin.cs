@@ -1,0 +1,26 @@
+// Ported from abaplint packages/core/src/abap/2_statements/statements/class_data_begin.ts (MIT, see THIRD-PARTY-NOTICES.md in this project)
+using ScipSharp.Indexer.Abap.Statements;
+using ScipSharp.Indexer.Abap.Statements.Expressions;
+using static ScipSharp.Indexer.Abap.Statements.Combi;
+
+namespace ScipSharp.Indexer.Abap.Statements.Statements;
+
+using Tokens = ScipSharp.Indexer.Abap.Lexer.Tokens;
+
+public class ClassDataBegin : IStatement
+{
+
+    public IStatementRunnable GetMatcher()
+    {
+
+        var occurs = Seq("OCCURS", Expr<Integer>());
+
+        var structure = Seq("BEGIN OF",
+                              OptPrio("COMMON PART"),
+                              Expr<NamespaceSimpleName>(),
+                              OptPrio("READ-ONLY"),
+                              OptPrio(occurs));
+
+        return Seq("CLASS-DATA", structure);
+    }
+}

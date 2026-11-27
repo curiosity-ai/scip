@@ -60,6 +60,7 @@ Each needs: a design note in `docs/PORTING.md`, implementation, ported tests/sna
 - [~] **python** ← `scip-python`: native tokenizer/parser/binder/import resolver. 22 upstream snapshots (6 divergent, documented). Open: typeshed/hover, generics/narrowing/flow analysis, match patterns, CLI option forwarding (--project-name etc.)
 - [~] **dart** ← `scip-dart`: native syntactic indexer. Defs match upstream snapshots; refs precision >90%/recall >50%. Open: type resolution, SDK/3rd-party symbols, instance members, locals
 - [x] **php** ← `scip-php`: native lexer/parser/resolver, Composer. 10/10 upstream goldens exact. Open: phpstorm-stubs for built-ins, parse error recovery, property hooks
+- [~] **abap** ← abaplint (`packages/core`, via an existing C# port copied into the indexer; no upstream SCIP indexer): abapGit folders, syntax-check based definitions/references, DDIC objects, void references as externals. Lint-clean on open-abap and the 360-repo abapGit corpus. Open: port the abaplint syntax/object replay suites (8 MB of data, left out), CDS (DDLS) parser, structure components (`ls-field`), dynpros/screens, messages (MSAG/T100), enhancements, `--release` per object
 - [x] Forward indexer-specific CLI options from `scip index <lang>` to indexers (unmatched tokens pass through)
 - [ ] Shared indexing helpers in `ScipSharp.Indexing` (document builder, package metadata) — extract duplication across the nine indexers
 - [x] Decision: pure native C# for all indexers (no runtime compilers/toolchains; see CLAUDE.md)
