@@ -183,8 +183,9 @@ internal static class Preprocessor
             var p = new ExprParser(expression, consts);
             return p.Parse();
         }
-        catch (FormatException)
+        catch (Exception e) when (e is FormatException or OverflowException or ArgumentException or InsufficientExecutionStackException)
         {
+            // Malformed directive ("#If &H Then", an out-of-range literal, absurd nesting): Empty, like an unknown name.
             return 0L;
         }
     }
@@ -216,7 +217,13 @@ internal static class Preprocessor
             return left;
         }
 
-        private object Not() => TryWord("not") ? ~AsLong(Not()) : Comparison();
+        private object Not()
+        {
+            EnsureStack();
+            return TryWord("not") ? ~AsLong(Not()) : Comparison();
+        }
+
+        private static void EnsureStack() => System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
 
         private object Comparison()
         {
@@ -314,6 +321,7 @@ internal static class Preprocessor
 
         private object Unary()
         {
+            EnsureStack();
             if (TryChar('-'))
             {
                 return -AsLong(Unary());
@@ -333,6 +341,7 @@ internal static class Preprocessor
             var c = text[_pos];
             if (c == '(')
             {
+                EnsureStack();
                 _pos++;
                 var v = Imp();
                 TryChar(')');

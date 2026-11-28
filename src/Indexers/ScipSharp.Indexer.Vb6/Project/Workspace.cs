@@ -34,6 +34,12 @@ internal sealed class Workspace
 
     public Dictionary<ProjectInfo, SourceText> ProjectSources { get; } = [];
 
+    /// <summary>
+    /// Case-insensitive directory listings used by <see cref="ResolvePath"/>: a .vbp written on Windows often spells every
+    /// path in a different case, and re-enumerating the directory per item made large projects quadratic.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, string>?> Listings { get; } = new(StringComparer.Ordinal);
+
     public static Workspace Load(string root, Vb6Options options, Action<string>? warn)
     {
         var ws = new Workspace(root);
@@ -49,7 +55,7 @@ internal sealed class Workspace
                     var src = SourceText.Read(p, options.Encoding);
                     var group = VbgFile.Parse(p, src.Lines);
                     ws.Groups.Add((Relative(root, p)!, group, src));
-                    vbpPaths.AddRange(group.Projects.Select(g => ResolvePath(Path.GetDirectoryName(p)!, g.RawPath)).OfType<string>());
+                    vbpPaths.AddRange(group.Projects.Select(g => ResolvePath(Path.GetDirectoryName(p)!, g.RawPath, ws.Listings)).OfType<string>());
                 }
                 else
                 {
@@ -84,7 +90,7 @@ internal sealed class Workspace
             var dir = Path.GetDirectoryName(vbpPath)!;
             foreach (var item in vbp.Items)
             {
-                var path = ResolvePath(dir, item.RawPath);
+                var path = ResolvePath(dir, item.RawPath, ws.Listings);
                 if (path is null)
                 {
                     warn?.Invoke($"{Relative(root, vbpPath)}: missing {item.Kind.ToString().ToLowerInvariant()} file '{item.RawPath}'");
@@ -136,7 +142,7 @@ internal sealed class Workspace
         {
             foreach (var r in project.Vbp!.References.Where(r => r.ProjectPath is not null))
             {
-                var target = ResolvePath(Path.GetDirectoryName(project.Vbp.Path)!, r.ProjectPath!);
+                var target = ResolvePath(Path.GetDirectoryName(project.Vbp.Path)!, r.ProjectPath!, ws.Listings);
                 if (target is not null && byVbp.TryGetValue(target, out var referenced) && referenced != project)
                 {
                     project.References.Add(referenced);
@@ -178,7 +184,7 @@ internal sealed class Workspace
     /// Resolves a path written in a .vbp (Windows separators, any letter case) against <paramref name="baseDir"/>, matching each
     /// segment case-insensitively on case-sensitive file systems. Returns null when the file does not exist.
     /// </summary>
-    public static string? ResolvePath(string baseDir, string raw)
+    public static string? ResolvePath(string baseDir, string raw, Dictionary<string, Dictionary<string, string>?>? listings = null)
     {
         var p = raw.Trim().Trim('"').Replace('\\', '/');
         if (p.Length == 0)
@@ -212,13 +218,7 @@ internal sealed class Workspace
                 continue;
             }
 
-            if (!Directory.Exists(current))
-            {
-                return null;
-            }
-
-            var match = Directory.EnumerateFileSystemEntries(current)
-                .FirstOrDefault(e => string.Equals(Path.GetFileName(e), segment, StringComparison.OrdinalIgnoreCase));
+            var match = listings is null ? FindEntry(current, segment) : Listing(listings, current)?.GetValueOrDefault(segment);
             if (match is null)
             {
                 return null;
@@ -228,5 +228,36 @@ internal sealed class Workspace
         }
 
         return File.Exists(current) ? Path.GetFullPath(current) : null;
+    }
+
+    private static string? FindEntry(string dir, string name) =>
+        Directory.Exists(dir)
+            ? Directory.EnumerateFileSystemEntries(dir).FirstOrDefault(e => string.Equals(Path.GetFileName(e), name, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+    /// <summary>Entries of <paramref name="dir"/> by case-insensitive name (first in enumeration order wins); null when missing.</summary>
+    private static Dictionary<string, string>? Listing(Dictionary<string, Dictionary<string, string>?> listings, string dir)
+    {
+        if (!listings.TryGetValue(dir, out var listing))
+        {
+            if (Directory.Exists(dir))
+            {
+                listing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    foreach (var e in Directory.EnumerateFileSystemEntries(dir))
+                    {
+                        listing.TryAdd(Path.GetFileName(e), e);
+                    }
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+
+            listings[dir] = listing;
+        }
+
+        return listing;
     }
 }

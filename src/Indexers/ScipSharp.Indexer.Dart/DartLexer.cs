@@ -272,7 +272,11 @@ internal sealed class DartLexer(string source)
         var quote = source[_pos];
         var triple = Peek(1) == quote && Peek(2) == quote;
         _pos += triple ? 3 : 1;
-        var interpolated = new List<Token>();
+
+        // The string token precedes the tokens of its interpolations: reserve its slot and lex them in place (moving
+        // them after the fact copied every nested level's tokens again, quadratic in the nesting depth).
+        var slot = _tokens.Count;
+        _tokens.Add(default);
         while (_pos < source.Length)
         {
             var c = source[_pos];
@@ -289,13 +293,11 @@ internal sealed class DartLexer(string source)
             {
                 break; // unterminated
             }
-            else if (!raw && c == '$' && Peek(1) == '{')
+            else if (!raw && c == '$' && Peek(1) == '{' && System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
             {
+                // (Interpolations nest recursively; past the stack limit the rest is lexed as plain string text.)
                 _pos += 2;
-                var before = _tokens.Count;
                 LexUntil(stopAtCloseBrace: true);
-                interpolated.AddRange(_tokens.Skip(before));
-                _tokens.RemoveRange(before, _tokens.Count - before);
             }
             else if (!raw && c == '$' && IsIdentStart(Peek(1)) && Peek(1) != '$')
             {
@@ -306,7 +308,7 @@ internal sealed class DartLexer(string source)
                     e++;
                 }
 
-                interpolated.Add(new Token(TokenKind.Identifier, source[s..e], s, e - s));
+                _tokens.Add(new Token(TokenKind.Identifier, source[s..e], s, e - s));
                 _pos = e;
             }
             else
@@ -316,8 +318,6 @@ internal sealed class DartLexer(string source)
         }
 
         var end = Math.Min(_pos, source.Length);
-        var stringToken = new Token(TokenKind.String, source[start..end], start, end - start);
-        _tokens.Add(stringToken);
-        _tokens.AddRange(interpolated);
+        _tokens[slot] = new Token(TokenKind.String, source[start..end], start, end - start);
     }
 }

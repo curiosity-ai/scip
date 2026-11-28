@@ -22,6 +22,11 @@ public sealed partial class FortranProjectIndexer(string projectRoot, FortranOpt
     private readonly FortranOptions _options = options ?? new FortranOptions();
     private readonly Dictionary<string, SourceDoc> _includeDocs = new(StringComparer.Ordinal);
 
+    // INCLUDE lookups repeat in every file (often for missing headers such as mpif.h): cache results and the
+    // case-insensitive directory listings, which would otherwise be re-enumerated per include line.
+    private readonly Dictionary<(string Path, string FromDir), string?> _findCache = [];
+    private readonly Dictionary<string, Dictionary<string, string>?> _dirListings = new(StringComparer.Ordinal);
+
     [GeneratedRegex(@"^\s*(?:\d+\s+)?include\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex FortranIncludeLine();
 
@@ -248,6 +253,17 @@ public sealed partial class FortranProjectIndexer(string projectRoot, FortranOpt
 
     private string? FindInclude(string path, string fromDir)
     {
+        if (!_findCache.TryGetValue((path, fromDir), out var found))
+        {
+            found = FindIncludeUncached(path, fromDir);
+            _findCache[(path, fromDir)] = found;
+        }
+
+        return found;
+    }
+
+    private string? FindIncludeUncached(string path, string fromDir)
+    {
         var candidates = new List<string> { fromDir, _root };
         candidates.AddRange(_options.IncludeDirs.Select(d => Path.IsPathRooted(d) ? d : Path.Combine(_root, d)));
         foreach (var dir in candidates)
@@ -274,17 +290,42 @@ public sealed partial class FortranProjectIndexer(string projectRoot, FortranOpt
 
             // Case-insensitive fallback (INCLUDE 'PARAMS.INC' for params.inc).
             var parent = Path.GetDirectoryName(full);
-            if (parent is not null && Directory.Exists(parent))
+            if (parent is not null && DirListing(parent) is { } listing && listing.TryGetValue(Path.GetFileName(full), out var match))
             {
-                var match = Directory.EnumerateFiles(parent).FirstOrDefault(f => Path.GetFileName(f).Equals(Path.GetFileName(full), StringComparison.OrdinalIgnoreCase));
-                if (match is not null)
-                {
-                    return match;
-                }
+                return match;
             }
         }
 
         return null;
+    }
+
+    /// <summary>Files of <paramref name="dir"/> by case-insensitive name (first in enumeration order wins); null when missing.</summary>
+    private Dictionary<string, string>? DirListing(string dir)
+    {
+        if (!_dirListings.TryGetValue(dir, out var listing))
+        {
+            if (Directory.Exists(dir))
+            {
+                listing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    foreach (var f in Directory.EnumerateFiles(dir))
+                    {
+                        listing.TryAdd(Path.GetFileName(f), f);
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
+            _dirListings[dir] = listing;
+        }
+
+        return listing;
     }
 
     private SourceDoc? LoadDoc(string abs, string rel, SourceForm? includerForm)

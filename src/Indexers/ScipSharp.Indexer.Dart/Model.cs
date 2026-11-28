@@ -83,6 +83,34 @@ internal sealed class Decl(DeclKind kind, string name, Decl? parent, Token nameT
     /// <summary>Members, for type-like declarations.</summary>
     public List<Decl> Members { get; } = [];
 
+    private Dictionary<string, List<Decl>>? _membersByName;
+    private int _membersIndexed;
+
+    /// <summary>
+    /// The members named <paramref name="name"/>, in declaration order. Member lookups run once per identifier, so a
+    /// linear scan of a class with thousands of members (generated bindings) made indexing quadratic.
+    /// </summary>
+    public IReadOnlyList<Decl> MembersNamed(string name)
+    {
+        if (_membersByName is null || _membersIndexed != Members.Count)
+        {
+            _membersByName = new Dictionary<string, List<Decl>>(StringComparer.Ordinal);
+            foreach (var m in Members)
+            {
+                if (!_membersByName.TryGetValue(m.Name, out var list))
+                {
+                    _membersByName[m.Name] = list = [];
+                }
+
+                list.Add(m);
+            }
+
+            _membersIndexed = Members.Count;
+        }
+
+        return _membersByName.TryGetValue(name, out var found) ? found : [];
+    }
+
     /// <summary>Parameters (named and positional), for functions/methods/constructors.</summary>
     public List<Decl> Parameters { get; } = [];
 
@@ -131,6 +159,11 @@ internal sealed class FileModel(string relativePath)
 
     public List<Decl> TopLevel { get; } = [];
 
+    /// <summary>Membership test for <see cref="TopLevel"/> (only valid once parsing is complete).</summary>
+    public bool IsTopLevel(Decl d) => (_topLevelSet ??= [.. TopLevel]).Contains(d);
+
+    private HashSet<Decl>? _topLevelSet;
+
     public List<Decl> AllDecls { get; } = [];
 
     public List<Decl> SyntheticParams { get; } = [];
@@ -154,28 +187,61 @@ internal sealed class FileModel(string relativePath)
         }
 
         list.Add(new LocalScope(d, start, end));
+        _sortedScopes.Remove(d.Name);
     }
+
+    // Scopes per name sorted by start (stable), built on first lookup: a name such as `context` or `i` can have
+    // thousands of scopes in one file, and scanning all of them for every reference was quadratic.
+    private readonly Dictionary<string, (LocalScope[] Scopes, int[] MaxEnd)> _sortedScopes = new(StringComparer.Ordinal);
 
     /// <summary>Innermost local declaration named <paramref name="name"/> visible at <paramref name="offset"/>.</summary>
     public Decl? LookupLocal(string name, int offset)
     {
-        if (!Scopes.TryGetValue(name, out var list))
+        if (!_sortedScopes.TryGetValue(name, out var index))
         {
-            return null;
+            if (!Scopes.TryGetValue(name, out var list))
+            {
+                return null;
+            }
+
+            LocalScope[] ordered = [.. list.OrderBy(static s => s.Start)];
+            var maxEnd = new int[ordered.Length];
+            for (var i = 0; i < ordered.Length; i++)
+            {
+                maxEnd[i] = Math.Max(ordered[i].End, i > 0 ? maxEnd[i - 1] : int.MinValue);
+            }
+
+            index = (ordered, maxEnd);
+            _sortedScopes[name] = index;
         }
 
-        Decl? best = null;
-        var bestStart = -1;
-        foreach (var s in list)
+        var (sorted, reach) = index;
+
+        // The innermost scope is the containing one with the greatest start (the last in list order on ties): walk
+        // back from the last scope starting at or before the offset.
+        int lo = 0, hi = sorted.Length;
+        while (lo < hi)
         {
-            if (s.Start <= offset && offset < s.End && s.Start >= bestStart)
+            var mid = (lo + hi) >>> 1;
+            if (sorted[mid].Start <= offset)
             {
-                best = s.Decl;
-                bestStart = s.Start;
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
             }
         }
 
-        return best;
+        for (var i = lo - 1; i >= 0 && offset < reach[i]; i--)
+        {
+            if (offset < sorted[i].End)
+            {
+                return sorted[i].Decl;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Offsets of identifier tokens that are declarations (never treated as references).</summary>

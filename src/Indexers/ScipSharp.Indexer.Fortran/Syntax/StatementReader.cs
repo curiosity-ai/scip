@@ -69,12 +69,15 @@ internal sealed class StatementReader
             var raw = lines[li];
             if (Preprocessor.IsDirective(raw) && _quote == '\0')
             {
-                var text = raw.TrimStart()[1..];
-                while (text.EndsWith('\\') && li + 1 < lines.Length)
+                var sbText = new StringBuilder(raw.TrimStart()[1..]);
+                while (sbText.Length > 0 && sbText[^1] == '\\' && li + 1 < lines.Length)
                 {
                     li++;
-                    text = text[..^1] + lines[li];
+                    sbText.Length--;
+                    sbText.Append(lines[li]);
                 }
+
+                var text = sbText.ToString();
 
                 var include = _pp.Directive(text, _doc);
                 if (include is not null)
