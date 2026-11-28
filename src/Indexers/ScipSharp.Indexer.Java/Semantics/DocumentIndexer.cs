@@ -378,7 +378,7 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
 
     private void VisitMethod(TypeInfo ti, MethodDecl d, Scope typeScope)
     {
-        var m = ti.Methods.First(x => x.Decl == d);
+        var m = MethodOfDecl(ti, d);
         var scope = typeScope.ChildFor(m);
         foreach (var tp in d.TypeParams) scope.TypeVars[tp.Name] = new VarT(tp.Name);
         var ms = _names.Method(m);
@@ -484,6 +484,20 @@ public sealed partial class DocumentIndexer(Workspace ws, JavaSourceFile file) :
             }
             Eval(value, scope);
         }
+    }
+
+    private readonly Dictionary<TypeInfo, (List<MethodInfo> List, int Count, Dictionary<MethodDecl, MethodInfo> ByDecl)> _methodsByDecl = [];
+
+    /// <summary>The method declared by <paramref name="d"/>; indexed per type, a linear search per method is quadratic in large (generated) classes.</summary>
+    private MethodInfo MethodOfDecl(TypeInfo ti, MethodDecl d)
+    {
+        if (!_methodsByDecl.TryGetValue(ti, out var e) || !ReferenceEquals(e.List, ti.Methods) || e.Count != ti.Methods.Count)
+        {
+            var byDecl = new Dictionary<MethodDecl, MethodInfo>(ReferenceEqualityComparer.Instance);
+            foreach (var x in ti.Methods) if (x.Decl is { } xd) byDecl.TryAdd(xd, x);
+            _methodsByDecl[ti] = e = (ti.Methods, ti.Methods.Count, byDecl);
+        }
+        return e.ByDecl.TryGetValue(d, out var m) ? m : ti.Methods.First(x => x.Decl == d);
     }
 
     // ------------------------------------------------------------------ hierarchy relationships

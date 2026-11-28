@@ -49,6 +49,7 @@ public sealed partial class Parser
 
     private Node ParseType()
     {
+        EnsureStack();
         var start = _s.TokenStart;
         if (IsFunctionTypeStart(out var isCtor, out var isAbstract))
         {
@@ -90,23 +91,32 @@ public sealed partial class Parser
         if (IsK("abstract") && PeekIsKeyword("new")) { isCtor = true; isAbstract = true; return true; }
         if (IsK("new")) { isCtor = true; return true; }
         if (!IsP("(") && !IsP("<")) { return false; }
+        // Memoised: the lookahead parses the parameters, whose types do the same lookahead (exponential when nested).
+        var key = (_s.TokenStart, _noConditional);
+        if (_functionTypeStarts.TryGetValue(key, out var known)) { return known; }
         var snap = Save();
+        var result = false;
         try
         {
             var scratch = new Node(SK.FunctionType, 0);
             ParseTypeParameters(scratch);
             ParseParameters(scratch);
-            return IsP("=>");
+            result = IsP("=>");
         }
         catch (SyntaxException)
         {
-            return false;
+            result = false;
         }
         finally
         {
             Restore(snap);
         }
+
+        _functionTypeStarts[key] = result;
+        return result;
     }
+
+    private readonly Dictionary<(int, bool), bool> _functionTypeStarts = [];
 
     private Node ParseUnionType()
     {
@@ -134,6 +144,7 @@ public sealed partial class Parser
 
     private Node ParseTypeOperator()
     {
+        EnsureStack();
         if (IsK("keyof") || IsK("unique") || (IsK("readonly") && !PeekIsPunct(",") && !PeekIsPunct(">")))
         {
             var n = Begin(SK.TypeOperator);

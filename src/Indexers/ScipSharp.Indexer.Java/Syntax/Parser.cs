@@ -82,6 +82,12 @@ public sealed class Parser
         return Next();
     }
 
+    /// <summary>
+    /// Guard at the recursive entry points: throws <see cref="InsufficientExecutionStackException"/> (which speculative
+    /// parses do not catch) before deeply nested input overflows the stack; callers skip the file.
+    /// </summary>
+    private static void EnsureStack() => System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
+
     private T? Speculate<T>(Func<T?> f) where T : class
     {
         var save = (_p, _lastEnd);
@@ -197,6 +203,7 @@ public sealed class Parser
 
     private Annotation ParseAnnotation()
     {
+        EnsureStack();
         var start = Expect("@").Start;
         var a = new Annotation { Name = ParseType(allowDims: false, allowArgs: false) };
         if (Accept("("))
@@ -222,6 +229,7 @@ public sealed class Parser
 
     private Expr ParseElementValue()
     {
+        EnsureStack();
         var start = Cur.Start;
         if (At("@")) return Fin(new AnnotationExpr { A = ParseAnnotation() }, start);
         if (At("{"))
@@ -247,6 +255,7 @@ public sealed class Parser
 
     public TypeRef ParseType(bool allowDims = true, bool allowArgs = true)
     {
+        EnsureStack();
         var t = new TypeRef();
         while (At("@")) t.Annotations.Add(ParseAnnotation());
         var start = Cur.Start;
@@ -280,14 +289,27 @@ public sealed class Parser
                 var seg = new TypeSeg { Name = n.Text, Start = n.Start, End = n.End };
                 if (allowArgs && At("<"))
                 {
-                    Next();
-                    if (At(">")) seg.Diamond = true;
-                    else
+                    // Failures are remembered: speculating a type at every identifier of `a < b < c < ...` re-parsed
+                    // the rest of the chain as nested type arguments each time (quadratic, with deep exceptions).
+                    var key = (_p, _inCastType, _noLambda);
+                    if (_failedTypeArgs.Contains(key)) throw Fail("type arguments expected");
+                    var ok = false;
+                    try
                     {
-                        do seg.Args.Add(ParseType());
-                        while (Accept(","));
+                        Next();
+                        if (At(">")) seg.Diamond = true;
+                        else
+                        {
+                            do seg.Args.Add(ParseType());
+                            while (Accept(","));
+                        }
+                        Expect(">");
+                        ok = true;
                     }
-                    Expect(">");
+                    finally
+                    {
+                        if (!ok) _failedTypeArgs.Add(key);
+                    }
                 }
                 t.Segs.Add(seg);
             }
@@ -311,6 +333,7 @@ public sealed class Parser
     }
 
     private bool _inCastType;
+    private readonly HashSet<(int, bool, bool)> _failedTypeArgs = [];
 
     private List<TypeParam> ParseTypeParams()
     {
@@ -341,6 +364,7 @@ public sealed class Parser
 
     private TypeDecl ParseTypeDecl(Modifiers mods, string? doc)
     {
+        EnsureStack();
         var d = new TypeDecl { Mods = mods, Doc = doc };
         var start = mods.First >= 0 ? mods.First : Cur.Start;
         if (At("@")) { Next(); Next(); d.Kind = TypeKind.Annotation; }
@@ -529,6 +553,7 @@ public sealed class Parser
 
     private ArrayInit ParseArrayInit()
     {
+        EnsureStack();
         var start = Expect("{").Start;
         var a = new ArrayInit();
         while (!At("}"))
@@ -544,6 +569,7 @@ public sealed class Parser
 
     public Block ParseBlock()
     {
+        EnsureStack();
         var start = Expect("{").Start;
         var b = new Block();
         while (!At("}"))
@@ -582,6 +608,7 @@ public sealed class Parser
 
     public Stmt ParseStmt()
     {
+        EnsureStack();
         var start = Cur.Start;
         if (At("{")) return ParseBlock();
         if (Accept(";")) return Fin(new SimpleStmt(), start);
@@ -906,6 +933,7 @@ public sealed class Parser
 
     public Expr ParseExpr()
     {
+        EnsureStack();
         var start = Cur.Start;
         if (!_noLambda)
         {
@@ -951,16 +979,7 @@ public sealed class Parser
             return Fin(lam, start);
         }
         if (!At("(")) return null;
-        // find matching paren
-        var depth = 0;
-        var i = _p;
-        for (; i < _t.Count; i++)
-        {
-            var tk = _t[i];
-            if (tk.Kind != Tk.Op) continue;
-            if (tk.Text == "(") depth++;
-            else if (tk.Text == ")" && --depth == 0) break;
-        }
+        var i = MatchingParen(_p);
         if (i + 1 >= _t.Count || !_t[i + 1].Is("->")) return null;
         Next();
         var l = new Lambda();
@@ -981,6 +1000,30 @@ public sealed class Parser
         Expect("->");
         ParseLambdaBodyAfterArrow(l);
         return Fin(l, start);
+    }
+
+    private int[]? _matchingParen;
+
+    /// <summary>
+    /// Index of the <c>)</c> matching the <c>(</c> at token <paramref name="open"/> (<c>_t.Count</c> if unmatched).
+    /// Computed once for the file: scanning ahead at every <c>(</c> was quadratic in the nesting depth.
+    /// </summary>
+    private int MatchingParen(int open)
+    {
+        if (_matchingParen is null)
+        {
+            _matchingParen = new int[_t.Count];
+            Array.Fill(_matchingParen, _t.Count);
+            var stack = new Stack<int>();
+            for (var k = 0; k < _t.Count; k++)
+            {
+                var tk = _t[k];
+                if (tk.Kind != Tk.Op) continue;
+                if (tk.Text == "(") stack.Push(k);
+                else if (tk.Text == ")" && stack.Count > 0) _matchingParen[stack.Pop()] = k;
+            }
+        }
+        return _matchingParen[open];
     }
 
     private void ParseLambdaBody(Lambda l)
@@ -1073,6 +1116,7 @@ public sealed class Parser
 
     private Expr ParseUnary()
     {
+        EnsureStack();
         var start = Cur.Start;
         if (Cur.Kind == Tk.Op)
         {
@@ -1226,6 +1270,7 @@ public sealed class Parser
 
     private Expr ParseNew(Expr? outer)
     {
+        EnsureStack();
         var start = outer?.Start ?? Cur.Start;
         Expect("new");
         if (At("<")) { Next(); do ParseType(); while (Accept(",")); Expect(">"); }

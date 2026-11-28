@@ -4,6 +4,7 @@ public sealed partial class Parser
 {
     private Node ParseStatement()
     {
+        EnsureStack();
         var start = _s.TokenStart;
         var doc = _s.JsDoc;
         var decorators = new List<Node>();

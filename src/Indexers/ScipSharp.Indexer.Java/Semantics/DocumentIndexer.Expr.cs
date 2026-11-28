@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Java.Syntax;
 
 namespace ScipSharp.Indexer.Java.Semantics;
@@ -20,6 +21,9 @@ public sealed partial class DocumentIndexer
     /// <summary>Evaluates <paramref name="e"/>, emitting every reference inside it, and returns its static type.</summary>
     private JType Eval(Expr e, Scope s, JType? expected = null)
     {
+        // Expression trees can nest deeper than the stack allows (long call chains, nested lambdas): stop descending
+        // rather than overflow; the references inside the too-deep part are simply not emitted.
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack()) return JType.Unknown;
         switch (e)
         {
             case Literal l:
@@ -56,14 +60,23 @@ public sealed partial class DocumentIndexer
             }
             case Binary b:
             {
-                var l = Eval(b.L, s);
-                var r = Eval(b.R, s);
-                return b.Op switch
+                // `a + b + c + ...` is left-nested as deep as it is long: walk the left spine with a loop.
+                var spine = new Stack<Binary>();
+                Expr leftmost = b;
+                while (leftmost is Binary inner) { spine.Push(inner); leftmost = inner.L; }
+                var l = Eval(leftmost, s);
+                while (spine.Count > 0)
                 {
-                    "==" or "!=" or "<" or ">" or "<=" or ">=" or "&&" or "||" => new PrimT("boolean"),
-                    "+" when IsString(l) || IsString(r) => JType.String,
-                    _ => Promote(l, r),
-                };
+                    var node = spine.Pop();
+                    var r = Eval(node.R, s);
+                    l = node.Op switch
+                    {
+                        "==" or "!=" or "<" or ">" or "<=" or ">=" or "&&" or "||" => new PrimT("boolean"),
+                        "+" when IsString(l) || IsString(r) => JType.String,
+                        _ => Promote(l, r),
+                    };
+                }
+                return l;
             }
             case Unary u:
             {

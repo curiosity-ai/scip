@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Java.Classpath;
 using ScipSharp.Indexer.Java.Syntax;
 
@@ -373,7 +374,7 @@ public sealed class Workspace : IDisposable
 
     private TypeInfo? FindMemberType(TypeInfo t, string name, HashSet<TypeInfo> seen)
     {
-        if (!seen.Add(t)) return null;
+        if (!seen.Add(t) || !RuntimeHelpers.TryEnsureSufficientExecutionStack()) return null;
         if (t.MemberTypes.TryGetValue(name, out var n) && Load(n) is { } found) return found;
         t.Complete();
         foreach (var sup in SuperTypes(t))
@@ -431,6 +432,7 @@ public sealed class Workspace : IDisposable
     /// <summary>Resolves a source type reference; reports every identifier it crosses to <paramref name="sink"/>.</summary>
     public JType ResolveType(TypeRef r, Scope scope, IRefSink? sink)
     {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack()) return JType.Unknown; // deeply nested type arguments
         foreach (var a in r.Annotations) sink?.AnnotationRef(a, scope);
         if (r.Wild != WildKind.None)
         {
@@ -604,7 +606,7 @@ public sealed class Workspace : IDisposable
     {
         foreach (var (t, map) in Walk(recv, scope))
         {
-            var f = t.Fields.FirstOrDefault(x => x.Name == name);
+            var f = FieldNamed(t, name);
             if (f is not null) return (f, map);
         }
         return null;
@@ -616,13 +618,41 @@ public sealed class Workspace : IDisposable
         var sigs = new HashSet<string>();
         foreach (var (t, map) in Walk(recv, scope))
         {
-            foreach (var m in t.Methods.Where(x => x.Name == name))
+            foreach (var m in MethodsNamed(t, name))
             {
                 var key = string.Join(",", m.Params.Select(p => Erasure(Subst(p, map))));
                 if (sigs.Add(key)) result.Add((m, map));
             }
         }
         return result;
+    }
+
+    private readonly Dictionary<TypeInfo, (List<FieldInfo> List, int Count, Dictionary<string, FieldInfo> ByName)> _fieldsByName = [];
+
+    /// <summary>The first field named <paramref name="name"/> (indexed for types with many fields).</summary>
+    private FieldInfo? FieldNamed(TypeInfo t, string name)
+    {
+        if (t.Fields.Count < 16) return t.Fields.FirstOrDefault(x => x.Name == name);
+        if (!_fieldsByName.TryGetValue(t, out var e) || !ReferenceEquals(e.List, t.Fields) || e.Count != t.Fields.Count)
+        {
+            var byName = new Dictionary<string, FieldInfo>(StringComparer.Ordinal);
+            foreach (var f in t.Fields) byName.TryAdd(f.Name, f);
+            _fieldsByName[t] = e = (t.Fields, t.Fields.Count, byName);
+        }
+        return e.ByName.GetValueOrDefault(name);
+    }
+
+    private readonly Dictionary<TypeInfo, (List<MethodInfo> List, int Count, ILookup<string, MethodInfo> ByName)> _methodsByName = [];
+
+    /// <summary><c>t.Methods.Where(m =&gt; m.Name == name)</c>, indexed: classes with thousands of methods (generated code) made every call lookup linear.</summary>
+    private IEnumerable<MethodInfo> MethodsNamed(TypeInfo t, string name)
+    {
+        if (!_methodsByName.TryGetValue(t, out var e) || !ReferenceEquals(e.List, t.Methods) || e.Count != t.Methods.Count)
+        {
+            if (t.Methods.Count < 16) return t.Methods.Where(x => x.Name == name);
+            _methodsByName[t] = e = (t.Methods, t.Methods.Count, t.Methods.ToLookup(m => m.Name, StringComparer.Ordinal));
+        }
+        return e.ByName[name];
     }
 
     public string Erasure(JType t) => t switch

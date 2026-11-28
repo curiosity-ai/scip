@@ -204,10 +204,14 @@ public sealed class Scanner(string text)
             case 'u':
                 if (Pos < Text.Length && Text[Pos] == '{')
                 {
-                    var close = Text.IndexOf('}', Pos);
+                    // Only hex digits / white space can parse below: stop there instead of searching the rest of the file.
+                    var close = Pos + 1;
+                    while (close < Text.Length && (char.IsAsciiHexDigit(Text[close]) || char.IsWhiteSpace(Text[close]))) { close++; }
+                    if (close >= Text.Length || Text[close] != '}') { close = -1; }
                     if (close > 0 && int.TryParse(Text.AsSpan(Pos + 1, close - Pos - 1), System.Globalization.NumberStyles.HexNumber, null, out var cp) && cp <= 0x10FFFF)
                     {
-                        sb.Append(char.ConvertFromUtf32(cp));
+                        // A lone surrogate (`\u{D800}`) is valid JavaScript but not a valid UTF-32 value.
+                        if (cp is >= 0xD800 and <= 0xDFFF) { sb.Append((char)cp); } else { sb.Append(char.ConvertFromUtf32(cp)); }
                         Pos = close + 1;
                         break;
                     }
@@ -329,36 +333,45 @@ public sealed class Scanner(string text)
         Next();
     }
 
+    /// <summary>
+    /// End of the template literal whose body starts at <paramref name="i"/>, skipping nested substitutions and
+    /// templates. Iterative (an explicit stack of suspended brace depths) so deeply nested templates cannot overflow.
+    /// </summary>
     private int EndOfTemplate(int i)
     {
+        var suspended = new Stack<int>(); // brace depth of each substitution whose nested template is being scanned
+        var inTemplate = true;
+        var depth = 0;
         while (i < Text.Length)
         {
             var c = Text[i];
-            if (c == '\\') { i += 2; continue; }
-            if (c == '`') { return i + 1; }
-            if (c == '$' && i + 1 < Text.Length && Text[i + 1] == '{') { i = EndOfBraces(i + 2); continue; }
-            i++;
-        }
+            if (inTemplate)
+            {
+                if (c == '\\') { i += 2; continue; }
+                if (c == '`')
+                {
+                    i++;
+                    if (suspended.Count == 0) { return i; }
+                    depth = suspended.Pop();
+                    inTemplate = false;
+                    continue;
+                }
 
-        return Text.Length;
-    }
+                if (c == '$' && i + 1 < Text.Length && Text[i + 1] == '{') { i += 2; depth = 1; inTemplate = false; continue; }
+                i++;
+                continue;
+            }
 
-    private int EndOfBraces(int i)
-    {
-        var depth = 1;
-        while (i < Text.Length)
-        {
-            var c = Text[i];
             switch (c)
             {
-                case '`': i = EndOfTemplate(i + 1); continue;
+                case '`': suspended.Push(depth); inTemplate = true; i++; continue;
                 case '"' or '\'':
                     i++;
                     while (i < Text.Length && Text[i] != c && Text[i] != '\n') { i += Text[i] == '\\' ? 2 : 1; }
                     i++;
                     continue;
                 case '{': depth++; break;
-                case '}': if (--depth == 0) { return i + 1; } break;
+                case '}': if (--depth == 0) { inTemplate = true; } break;
             }
 
             i++;

@@ -103,15 +103,23 @@ public sealed class FileIndexer(
     }
 
     // ------------------------------------------------------------------ traversal
-    private void Visit(Node node)
+    private void Visit(Node root)
     {
-        if (node.Kind is SK.Constructor or SK.Identifier or SK.PrivateIdentifier || (node.Kind == SK.StringLiteral))
+        // Pre-order with an explicit stack: syntax trees of long chains (`a + b + ...`, `x.f().g()...`) are very deep.
+        var stack = new Stack<Node>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
-            var decls = node.Kind == SK.Constructor ? [node] : checker.SymbolAtLocation(node);
-            if (decls is { Count: > 0 }) { VisitSymbolOccurrence(node, decls); }
-        }
+            var node = stack.Pop();
+            if (node.Kind is SK.Constructor or SK.Identifier or SK.PrivateIdentifier || (node.Kind == SK.StringLiteral))
+            {
+                var decls = node.Kind == SK.Constructor ? [node] : checker.SymbolAtLocation(node);
+                if (decls is { Count: > 0 }) { VisitSymbolOccurrence(node, decls); }
+            }
 
-        foreach (var child in node.Children) { Visit(child); }
+            var children = node.Children;
+            for (var i = children.Count - 1; i >= 0; i--) { stack.Push(children[i]); }
+        }
     }
 
     private static Node? DeclarationName(Node node) => node.Kind is SK.BindingElement or SK.EnumDeclaration or SK.EnumMember or SK.VariableDeclaration
@@ -384,7 +392,7 @@ public sealed class FileIndexer(
         var visited = new HashSet<Node>();
         void Loop(Node declaration)
         {
-            if (!visited.Add(declaration)) { return; }
+            if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack() || !visited.Add(declaration)) { return; }
             var isClassLike = declaration.Kind is SK.ClassDeclaration or SK.ClassExpression;
             if (isClassLike || declaration.Kind == SK.InterfaceDeclaration) { onAncestor(declaration); }
             if (declaration.Kind == SK.ObjectLiteralExpression)
@@ -414,6 +422,8 @@ public sealed class FileIndexer(
     {
         if (globalSymbolTable.TryGetValue(node, out var fromCache) || _localSymbolTable.TryGetValue(node, out fromCache)) { return fromCache; }
         if (node.Kind == SK.Block) { return ScipSymbol.Empty; }
+        // Owners are computed recursively up the parent chain, which is very long inside deep expression chains.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack()) { return NewLocalSymbol(node); }
         if (node.Kind == SK.TsSourceFile)
         {
             if (node.File!.IsLib) { return Cached(node, LibStore.SymbolOf(node.File)); }
