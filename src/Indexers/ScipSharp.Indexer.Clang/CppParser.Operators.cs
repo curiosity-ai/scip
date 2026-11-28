@@ -189,30 +189,9 @@ public sealed partial class CppParser
 
     private bool InsideParenExpression(int a, int i)
     {
-        var depth = 0;
-        for (var k = i - 1; k >= a; k--)
-        {
-            if (_t[k].Kind != TokKind.Punct)
-            {
-                continue;
-            }
-
-            if (_t[k].Text is ")" or "]" or "}")
-            {
-                depth++;
-            }
-            else if (_t[k].Text is "(" or "[" or "{")
-            {
-                if (depth == 0)
-                {
-                    return _t[k].Text == "(" && !(k - 1 >= a && (Id(k - 1) && !Keywords.Contains(_t[k - 1].Text) || P(k - 1, ">") || P(k - 1, ")") || P(k - 1, "]")));
-                }
-
-                depth--;
-            }
-        }
-
-        return false;
+        // The innermost open bracket enclosing token i (precomputed: a backward scan per comma is quadratic in long lists).
+        var k = i < _enclosing.Length ? _enclosing[i] : -1;
+        return k >= a && _t[k].Text == "(" && !(k - 1 >= a && (Id(k - 1) && !Keywords.Contains(_t[k - 1].Text) || P(k - 1, ">") || P(k - 1, ")") || P(k - 1, "]")));
     }
 
     /// <summary>

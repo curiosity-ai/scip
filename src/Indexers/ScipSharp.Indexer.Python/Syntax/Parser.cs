@@ -27,6 +27,13 @@ public sealed class Parser
     private int _errors;
     private readonly List<(int, string)> _errorList = [];
 
+    // Nesting guard: genuinely nested constructs (brackets, unary/`not`/lambda/ternary chains, indented blocks, f-string
+    // fields) recurse here and in every tree walker, so a statement nested deeper than this (CPython itself rejects far
+    // less) is reported as a syntax error instead of overflowing the stack. Left-associative chains (`a + b + ...`,
+    // `a.b().c[0]...`, elif) are parsed iteratively and do not count.
+    private const int MaxNesting = 1000;
+    private int _nesting;
+
     private Parser(string text, List<Token> tokens)
     {
         _text = text;
@@ -125,6 +132,16 @@ public sealed class Parser
         {
             throw new ParseException($"expected '{kw}'", Peek.Start);
         }
+    }
+
+    private void EnterNesting()
+    {
+        if (_nesting >= MaxNesting || !System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new ParseException("too deeply nested", Peek.Start);
+        }
+
+        _nesting++;
     }
 
     private T Fin<T>(T node, int start)
@@ -562,6 +579,19 @@ public sealed class Parser
 
     private SuiteNode ParseSuite()
     {
+        EnterNesting();
+        try
+        {
+            return ParseSuiteCore();
+        }
+        finally
+        {
+            _nesting--;
+        }
+    }
+
+    private SuiteNode ParseSuiteCore()
+    {
         ExpectOp(":");
         var suite = new SuiteNode { Start = Peek.Start };
         if (Peek.Kind == TokenKind.Newline)
@@ -601,20 +631,37 @@ public sealed class Parser
 
     private IfNode ParseIf()
     {
-        var start = Next().Start; // `if` or `elif`
-        var node = new IfNode { Test = ParseNamedExpr() };
-        node.IfSuite = ParseSuite();
-        if (Peek.IsKw("elif"))
+        // An elif chain nests (`elif` is the else-suite of the previous if) but is parsed iteratively; every node of the
+        // chain ends where the whole statement ends.
+        var chain = new List<(IfNode Node, int Start)>();
+        IfNode? previous = null;
+        do
         {
-            node.ElseSuite = ParseIf();
+            var start = Next().Start; // `if` or `elif`
+            var node = new IfNode { Test = ParseNamedExpr() };
+            node.IfSuite = ParseSuite();
+            if (previous is not null)
+            {
+                previous.ElseSuite = node;
+            }
+
+            chain.Add((node, start));
+            previous = node;
         }
-        else if (Peek.IsKw("else"))
+        while (Peek.IsKw("elif"));
+
+        if (Peek.IsKw("else"))
         {
             Next();
-            node.ElseSuite = ParseSuite();
+            previous.ElseSuite = ParseSuite();
         }
 
-        return Fin(node, start);
+        foreach (var (node, start) in chain)
+        {
+            Fin(node, start);
+        }
+
+        return chain[0].Node;
     }
 
     private WhileNode ParseWhile()
@@ -1075,6 +1122,19 @@ public sealed class Parser
 
     private Node ParseTest()
     {
+        EnterNesting();
+        try
+        {
+            return ParseTestCore();
+        }
+        finally
+        {
+            _nesting--;
+        }
+    }
+
+    private Node ParseTestCore()
+    {
         if (Peek.IsKw("lambda"))
         {
             return ParseLambda();
@@ -1144,7 +1204,15 @@ public sealed class Parser
         if (minPrec <= 3 && Peek.IsKw("not"))
         {
             Next();
-            left = Fin(new UnaryNode { Operand = ParseBinary(3) }, start);
+            EnterNesting();
+            try
+            {
+                left = Fin(new UnaryNode { Operand = ParseBinary(3) }, start);
+            }
+            finally
+            {
+                _nesting--;
+            }
         }
         else
         {
@@ -1186,6 +1254,19 @@ public sealed class Parser
     }
 
     private Node ParseFactor()
+    {
+        EnterNesting();
+        try
+        {
+            return ParseFactorCore();
+        }
+        finally
+        {
+            _nesting--;
+        }
+    }
+
+    private Node ParseFactorCore()
     {
         var tok = Peek;
         if (tok.Kind == TokenKind.Op && tok.Text is "+" or "-" or "~")
@@ -1722,6 +1803,19 @@ public sealed class Parser
     /// <summary>Parses a replacement field whose expression begins at <paramref name="i"/>; returns the index after its <c>}</c>.</summary>
     private int ParseOneField(StringNode node, int i, int end)
     {
+        EnterNesting();
+        try
+        {
+            return ParseOneFieldCore(node, i, end);
+        }
+        finally
+        {
+            _nesting--;
+        }
+    }
+
+    private int ParseOneFieldCore(StringNode node, int i, int end)
+    {
         var exprStart = i;
         var depth = 0;
         while (i < end)
@@ -1829,7 +1923,7 @@ public sealed class Parser
 
         try
         {
-            var sub = new Parser(_text, new Tokenizer(_text, start, end).Tokenize());
+            var sub = new Parser(_text, new Tokenizer(_text, start, end).Tokenize()) { _nesting = _nesting };
             var expr = sub.ParseTestListStarExpr();
             node.Expressions.Add(expr);
         }

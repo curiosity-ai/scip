@@ -26,9 +26,10 @@ internal static class IndexCommand
             var sub = new Command(indexer.Name, $"{indexer.Languages} ({origin})") { root, output };
             // Indexer-specific options (e.g. --jobs, --project-name) are parsed by the indexer itself.
             sub.TreatUnmatchedTokensAsErrors = false;
-            sub.SetAction((parse, ct) => indexer.IndexAsync(
+            // On a large stack: deeply nested source must not overflow the parsers (see LargeStackThread).
+            sub.SetAction((parse, ct) => LargeStackThread.Run(() => indexer.IndexAsync(
                 new IndexerOptions(parse.GetRequiredValue(root).FullName, parse.GetRequiredValue(output), parse.UnmatchedTokens),
-                ct));
+                ct)));
             index.Subcommands.Add(sub);
         }
 

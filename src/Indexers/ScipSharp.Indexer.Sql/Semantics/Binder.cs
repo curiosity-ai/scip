@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Sql.Lexing;
 using ScipSharp.Indexer.Sql.Syntax;
 using Kind = ScipSharp.SymbolInformation.Types.Kind;
@@ -177,10 +178,20 @@ internal sealed partial class Binder
             {
                 BindStmt(s);
             }
-            catch (Exception e) when (e is InvalidOperationException or ArgumentException or NullReferenceException or IndexOutOfRangeException or KeyNotFoundException)
+            catch (Exception e) when (e is InvalidOperationException or ArgumentException or NullReferenceException or IndexOutOfRangeException or KeyNotFoundException
+                                           or InsufficientExecutionStackException)
             {
-                // Tolerant: a statement that trips the binder is skipped.
+                // Tolerant: a statement that trips the binder (or nests too deeply, see EnsureStack) is skipped.
             }
+        }
+    }
+
+    /// <summary>Guards the recursive walks over nested queries and expressions; caught per statement in <see cref="BindFile"/>.</summary>
+    private static void EnsureStack()
+    {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new InsufficientExecutionStackException("SQL nesting too deep");
         }
     }
 
@@ -712,6 +723,7 @@ internal sealed partial class Binder
 
     private string? BindItem(ExprItem item, Scope scope)
     {
+        EnsureStack();
         switch (item)
         {
             case NameRef n:

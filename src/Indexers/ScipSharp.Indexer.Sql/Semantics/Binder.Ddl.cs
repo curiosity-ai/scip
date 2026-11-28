@@ -25,6 +25,7 @@ internal sealed partial class Binder
 
     private void BindStmt(Stmt s)
     {
+        EnsureStack();
         switch (s)
         {
             case CreateSchemaStmt cs:

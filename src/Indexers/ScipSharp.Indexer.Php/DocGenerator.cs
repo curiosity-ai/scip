@@ -177,15 +177,19 @@ internal sealed class DocGenerator
     private static string DocComment(Node n)
     {
         var comment = n.Doc?.Text ?? "";
-        comment = Remove(@"^(\s+)?/\*\*\s", comment, 1);
-        comment = Remove(@"^(\s+)?\*\s", comment, -1);
-        comment = Remove(@"^(\s+)?\*/", comment, 1);
-        comment = Remove(@"(\s+)?\*/$", comment, 1);
+        comment = DocOpen.Replace(comment, "", 1);
+        comment = DocLinePrefix.Replace(comment, "", -1);
+        comment = DocCloseLine.Replace(comment, "", 1);
+        comment = DocClose.Replace(comment, "", 1);
         return comment.Replace("\n", "<br>", StringComparison.Ordinal);
     }
 
-    private static string Remove(string pattern, string subject, int count) =>
-        new Regex(pattern, RegexOptions.Multiline | RegexOptions.CultureInvariant).Replace(subject, "", count);
+    // Non-backtracking: `(\s+)?\*/$` tried at every offset of a long whitespace run is quadratic with backtracking.
+    private const RegexOptions DocOptions = RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
+    private static readonly Regex DocOpen = new(@"^(\s+)?/\*\*\s", DocOptions);
+    private static readonly Regex DocLinePrefix = new(@"^(\s+)?\*\s", DocOptions);
+    private static readonly Regex DocCloseLine = new(@"^(\s+)?\*/", DocOptions);
+    private static readonly Regex DocClose = new(@"(\s+)?\*/$", DocOptions);
 
     // ------------------------------------------------------------------ pretty printer
 

@@ -80,6 +80,12 @@ internal sealed class Types
     private readonly HashSet<string> _seenDepFiles = new(StringComparer.Ordinal);
     private readonly Dictionary<DocComment, DocTags> _docCache = new(ReferenceEqualityComparer.Instance);
 
+    // Memoized Type(x) of the current file's nodes. A chain `$a->b()->c()...` asks for the type of every prefix, which
+    // without the cache re-infers the whole prefix each time (quadratic, and as deep as the chain). Results depend on the
+    // collected definitions, so loading a dependency file bumps the generation and invalidates them.
+    private readonly Dictionary<Node, SType?> _typeCache = new(ReferenceEqualityComparer.Instance);
+    private int _generation;
+
     public Types(ComposerProject composer, SymbolNamer namer, PhpFs fs, Action<string>? warn = null)
     {
         _composer = composer;
@@ -141,9 +147,34 @@ internal sealed class Types
         return type == null ? null : FindDef(x, type.Flatten(), t => _namer.NameMeth(t, meth));
     }
 
+    /// <summary>Drops per-file caches (call before indexing each file: the cache holds that file's nodes).</summary>
+    public void BeginFile() => _typeCache.Clear();
+
     // ------------------------------------------------------------------ type inference
 
     private SType? Type(Node x)
+    {
+        if (_typeCache.TryGetValue(x, out var cached))
+        {
+            return cached;
+        }
+
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            return null;
+        }
+
+        var generation = _generation;
+        var type = TypeCore(x);
+        if (generation == _generation)
+        {
+            _typeCache[x] = type;
+        }
+
+        return type;
+    }
+
+    private SType? TypeCore(Node x)
     {
         switch (x)
         {
@@ -235,8 +266,13 @@ internal sealed class Types
         return def != null && _defs.TryGetValue(def, out var type) ? type : null;
     }
 
-    private string? FindDef(Node x, List<string> types, Func<string, string> name, int depth = 0)
+    /// <param name="explored">
+    /// Types whose ancestors this search already explored without success: diamond-shaped hierarchies (interfaces
+    /// extending several interfaces, traits using traits) otherwise make the walk exponential.
+    /// </param>
+    private string? FindDef(Node x, List<string> types, Func<string, string> name, int depth = 0, HashSet<string>? explored = null)
     {
+        explored ??= new HashSet<string>(StringComparer.Ordinal);
         foreach (var t in types)
         {
             var c = name(t);
@@ -250,9 +286,9 @@ internal sealed class Types
         {
             foreach (var t in types)
             {
-                if (_uppers.TryGetValue(t, out var uppers))
+                if (_uppers.TryGetValue(t, out var uppers) && explored.Add(t))
                 {
-                    var c = FindDef(x, [.. uppers], name, depth + 1);
+                    var c = FindDef(x, [.. uppers], name, depth + 1, explored);
                     if (c != null)
                     {
                         return c;
@@ -282,10 +318,11 @@ internal sealed class Types
 
             CollectDepFile(f);
             _seenDepFiles.Add(f);
+            explored.Clear(); // new definitions: what failed before may succeed now
             var type = Type(x);
             if (type != null)
             {
-                return FindDef(x, type.Flatten(), name, depth + 1);
+                return FindDef(x, type.Flatten(), name, depth + 1, explored);
             }
         }
 
@@ -296,6 +333,7 @@ internal sealed class Types
 
     public void Collect(IEnumerable<string> filenames)
     {
+        _generation++;
         foreach (var f in filenames)
         {
             var parsed = _fs.Parse(f, _warn);
@@ -308,6 +346,7 @@ internal sealed class Types
 
     private void CollectDepFile(string file)
     {
+        _generation++;
         if (file.StartsWith("stub:", StringComparison.Ordinal))
         {
             CollectStub(file[5..]);

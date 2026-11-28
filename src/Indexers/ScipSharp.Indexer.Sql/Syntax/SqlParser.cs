@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Sql.Lexing;
 
 namespace ScipSharp.Indexer.Sql.Syntax;
@@ -160,6 +161,18 @@ public sealed partial class SqlParser
     }
 
     private Token Prev => _p > 0 ? _t[_p - 1] : _eof;
+
+    /// <summary>
+    /// Guards the genuinely recursive constructs (nested parentheses, subqueries, blocks): pathological nesting must not
+    /// overflow the stack (which kills the process). The exception is caught per statement in <see cref="ParseStatements"/>.
+    /// </summary>
+    private static void EnsureStack()
+    {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new InsufficientExecutionStackException("SQL nesting too deep");
+        }
+    }
 
     private Ident MakeIdent(Token t) => t.Kind switch
     {
@@ -356,7 +369,7 @@ public sealed partial class SqlParser
             {
                 s = ParseStatement();
             }
-            catch (Exception e) when (e is ArgumentException or InvalidOperationException or IndexOutOfRangeException or NullReferenceException)
+            catch (Exception e) when (e is ArgumentException or InvalidOperationException or IndexOutOfRangeException or NullReferenceException or InsufficientExecutionStackException)
             {
                 _p = start;
                 s = null;
@@ -392,6 +405,7 @@ public sealed partial class SqlParser
 
     private Stmt? ParseStatement()
     {
+        EnsureStack();
         var t = Cur;
         if (t.Kind == TokenKind.Op)
         {

@@ -93,6 +93,10 @@ public sealed class TranslationUnitIndexer : IOccurrenceSink
         var includeDirs = CommandLineCleaner.IncludeDirs(args, cmd.Directory);
         var pp = new Preprocessor(_files, includeDirs, defines);
         pp.Run(cmd.FullPath, forced);
+        if (pp.IncludeBudgetExceeded)
+        {
+            Console.Error.WriteLine($"scip-clang: {cmd.File}: more than {Preprocessor.MaxFileEntries} file entries (recursive includes without guards?); further includes skipped.");
+        }
 
         var parser = new CppParser(pp.Output, _files, this);
         parser.Run();

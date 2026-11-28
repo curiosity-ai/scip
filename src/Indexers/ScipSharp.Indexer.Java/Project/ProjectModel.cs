@@ -469,12 +469,38 @@ public sealed class ProjectDiscovery(ArtifactLocator locator)
 
     public static IEnumerable<string> EnumerateJavaFiles(string dir)
     {
-        foreach (var f in Directory.EnumerateFiles(dir, "*.java")) yield return f;
-        foreach (var d in Directory.EnumerateDirectories(dir))
+        // Depth-first, files before subdirectories. Each real directory is visited once: a symlink cycle
+        // (`ln -s .. up`) used to recurse until the path grew too long.
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var stack = new Stack<string>();
+        stack.Push(dir);
+        while (stack.Count > 0)
         {
-            var name = System.IO.Path.GetFileName(d);
-            if (name.StartsWith('.') || IgnoredDirs.Contains(name)) continue;
-            foreach (var f in EnumerateJavaFiles(d)) yield return f;
+            var current = stack.Pop();
+            if (!visited.Add(DirectoryKey(current))) continue;
+            foreach (var f in Directory.EnumerateFiles(current, "*.java")) yield return f;
+            var subdirs = new List<string>();
+            foreach (var d in Directory.EnumerateDirectories(current))
+            {
+                var name = System.IO.Path.GetFileName(d);
+                if (name.StartsWith('.') || IgnoredDirs.Contains(name)) continue;
+                subdirs.Add(d);
+            }
+            for (var i = subdirs.Count - 1; i >= 0; i--) stack.Push(subdirs[i]);
         }
+    }
+
+    /// <summary>Identity of a directory for cycle detection: a symbolic link stands for its final target.</summary>
+    private static string DirectoryKey(string dir)
+    {
+        try
+        {
+            if (new DirectoryInfo(dir).ResolveLinkTarget(returnFinalTarget: true) is { } target) return System.IO.Path.GetFullPath(target.FullName).TrimEnd('/', '\\');
+        }
+        catch (IOException)
+        {
+            // dangling or looping link: use the path itself
+        }
+        return System.IO.Path.GetFullPath(dir).TrimEnd('/', '\\');
     }
 }

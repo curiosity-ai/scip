@@ -313,7 +313,7 @@ internal sealed class RubyLexer
                         _pos++;
                     }
                 }
-                else
+                else if (_pos < _s.Length)
                 {
                     _pos++;
                 }
@@ -560,7 +560,10 @@ internal sealed class RubyLexer
                 continue;
             }
 
-            if (interpolate && c == '#' && At(1) == '{')
+            if (interpolate && c == '#' && At(1) == '{'
+                // Interpolation recurses (string -> Run -> string ...): on pathological nesting stop descending and
+                // treat the rest of the literal as plain text rather than overflow the stack.
+                && System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
             {
                 if (!interpolated)
                 {

@@ -54,7 +54,20 @@ public sealed partial class Parser
             Restore(snap);
             SkipStatement();
         }
+        catch (InsufficientExecutionStackException)
+        {
+            // Nesting too deep for the recursive descent (see EnsureStack): skip the statement instead of overflowing.
+            _file.Diagnostics.Add((snap.State.TokenStart, "statement is nested too deeply"));
+            Restore(snap);
+            SkipStatement();
+        }
     }
+
+    /// <summary>
+    /// Guard at the recursive entry points: throws <see cref="InsufficientExecutionStackException"/> (which speculative
+    /// parses do not catch) before the stack overflows, so <see cref="ParseStatementRecovering"/> skips the statement.
+    /// </summary>
+    private static void EnsureStack() => System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
 
     private void SkipStatement()
     {
@@ -82,7 +95,7 @@ public sealed partial class Parser
             {
                 var snap = Save();
                 try { ParseTemplate(); consumed = true; continue; }
-                catch (SyntaxException) { Restore(snap); _s.SkipRawTemplate(); consumed = true; continue; }
+                catch (Exception e) when (e is SyntaxException or InsufficientExecutionStackException) { Restore(snap); _s.SkipRawTemplate(); consumed = true; continue; }
             }
 
             _s.Next();
@@ -95,13 +108,20 @@ public sealed partial class Parser
         (n.Kind == SK.ImportEqualsDeclaration && n.Expression?.Kind == SK.ExternalModuleReference) ||
         n.Has(Mods.Export);
 
-    private static void SetParents(Node node, TsSourceFile file)
+    private static void SetParents(Node root, TsSourceFile file)
     {
-        node.File = file;
-        foreach (var child in node.Children)
+        // Iterative: trees of long left-associative chains (`a + b + ...`, `x.f().g()...`) are far deeper than the parser's stack.
+        var stack = new Stack<Node>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
-            child.Parent = node;
-            SetParents(child, file);
+            var node = stack.Pop();
+            node.File = file;
+            foreach (var child in node.Children)
+            {
+                child.Parent = node;
+                stack.Push(child);
+            }
         }
     }
 

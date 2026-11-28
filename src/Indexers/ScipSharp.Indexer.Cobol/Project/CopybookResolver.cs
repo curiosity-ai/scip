@@ -21,6 +21,7 @@ internal sealed class CopybookResolver
     private readonly Dictionary<string, List<string>> _byStem = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> _dirsByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Dictionary<string, string>> _listings = new(StringComparer.Ordinal);
+    private readonly HashSet<(List<string> List, string Value)> _added = [];
 
     public CopybookResolver(string root, IReadOnlyList<string> copybookDirs, IReadOnlyList<string> copybookExtensions,
         IReadOnlyList<string> programExtensions, IEnumerable<string> projectFiles)
@@ -64,14 +65,15 @@ internal sealed class CopybookResolver
         }
     }
 
-    private static void Add(Dictionary<string, List<string>> map, string key, string value)
+    private void Add(Dictionary<string, List<string>> map, string key, string value)
     {
         if (!map.TryGetValue(key, out var list))
         {
             map[key] = list = [];
         }
 
-        if (!list.Contains(value, StringComparer.Ordinal))
+        // Duplicate check through a set: list.Contains was quadratic when many directories share a name (mod*/cpy).
+        if (_added.Add((list, value)))
         {
             list.Add(value);
         }

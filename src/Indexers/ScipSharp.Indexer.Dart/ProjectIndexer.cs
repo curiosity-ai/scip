@@ -74,7 +74,16 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
         var documents = new List<Document>();
         foreach (var rel in _files.Keys.Order(StringComparer.Ordinal))
         {
-            documents.Add(BuildDocument(_files[rel], sources[rel]));
+            try
+            {
+                documents.Add(BuildDocument(_files[rel], sources[rel]));
+            }
+            catch (Exception e) when (e is ArgumentException or InvalidOperationException or IndexOutOfRangeException or NullReferenceException
+                or KeyNotFoundException or InsufficientExecutionStackException)
+            {
+                // One malformed file must not abort the whole index.
+                Console.Error.WriteLine($"WARNING: {rel}: indexing failed: {e.Message}");
+            }
         }
 
         // Implicit (synthetic) default constructors referenced from any file need a SymbolInformation in the declaring file.
@@ -379,19 +388,19 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
     {
         foreach (var t in SuperTypes(cls).Prepend(cls))
         {
-            var m = t.Members.FirstOrDefault(x => x.Name == name && x.Kind is DeclKind.Field or DeclKind.Property or DeclKind.Method);
+            var m = t.MembersNamed(name).FirstOrDefault(x => x.Kind is DeclKind.Field or DeclKind.Property or DeclKind.Method);
             if (m is not null)
             {
                 return m;
             }
         }
 
-        return ObjectDecl is { } o && cls != o ? o.Members.FirstOrDefault(x => x.Name == name && x.Kind is DeclKind.Field or DeclKind.Property or DeclKind.Method) : null;
+        return ObjectDecl is { } o && cls != o ? o.MembersNamed(name).FirstOrDefault(x => x.Kind is DeclKind.Field or DeclKind.Property or DeclKind.Method) : null;
     }
 
     private Decl ConstructorOf(Decl cls, string name)
     {
-        var existing = cls.Members.FirstOrDefault(m => m.Kind == DeclKind.Constructor && m.Name == name);
+        var existing = cls.MembersNamed(name).FirstOrDefault(m => m.Kind == DeclKind.Constructor);
         if (existing is not null)
         {
             return existing;
@@ -417,8 +426,128 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
         return d;
     }
 
-    private static Decl? EnclosingType(FileModel f, int offset) =>
-        f.TopLevel.FirstOrDefault(d => d.IsTypeLike && d.BodyStart >= 0 && offset >= d.BodyStart && offset < d.BodyEnd);
+    private Decl? EnclosingType(FileModel f, int offset)
+    {
+        if (!_typeBodies.TryGetValue(f, out var bodies))
+        {
+            bodies = SpanIndex.Create(f.TopLevel.Where(d => d.IsTypeLike && d.BodyStart >= 0), static d => (d.BodyStart, d.BodyEnd));
+            _typeBodies[f] = bodies;
+        }
+
+        return bodies.At(offset);
+    }
+
+    private readonly Dictionary<FileModel, SpanIndex> _typeBodies = [];
+    private readonly Dictionary<FileModel, SpanIndex> _topLevelSpans = [];
+    private readonly Dictionary<Decl, List<Decl>> _genericMembers = [];
+
+    /// <summary>
+    /// First declaration (in list order) whose [start, end) range contains an offset. These lookups run once per
+    /// identifier token; a linear scan of the file's declarations made large (generated) files quadratic. Top-level
+    /// ranges are sorted and disjoint, which allows a binary search; otherwise the linear scan is kept.
+    /// </summary>
+    private sealed class SpanIndex
+    {
+        private readonly List<Decl> _decls;
+        private readonly int[] _starts;
+        private readonly int[] _ends;
+        private readonly bool _disjoint;
+
+        private SpanIndex(List<Decl> decls, Func<Decl, (int Start, int End)> range)
+        {
+            _decls = decls;
+            _starts = new int[decls.Count];
+            _ends = new int[decls.Count];
+            _disjoint = true;
+            var reach = int.MinValue;
+            for (var i = 0; i < decls.Count; i++)
+            {
+                (_starts[i], _ends[i]) = range(decls[i]);
+                if (_starts[i] < reach)
+                {
+                    _disjoint = false;
+                }
+
+                reach = Math.Max(reach, Math.Max(_starts[i], _ends[i]));
+            }
+        }
+
+        public static SpanIndex Create(IEnumerable<Decl> decls, Func<Decl, (int Start, int End)> range) => new([.. decls], range);
+
+        public Decl? At(int offset)
+        {
+            if (!_disjoint)
+            {
+                for (var i = 0; i < _decls.Count; i++)
+                {
+                    if (offset >= _starts[i] && offset < _ends[i])
+                    {
+                        return _decls[i];
+                    }
+                }
+
+                return null;
+            }
+
+            int lo = 0, hi = _starts.Length;
+            while (lo < hi)
+            {
+                var mid = (lo + hi) >>> 1;
+                if (_starts[mid] <= offset)
+                {
+                    lo = mid + 1;
+                }
+                else
+                {
+                    hi = mid;
+                }
+            }
+
+            return lo > 0 && offset < _ends[lo - 1] ? _decls[lo - 1] : null;
+        }
+    }
+
+    /// <summary>
+    /// The innermost (shortest, then first in list order) declaration containing an offset, for queries with
+    /// non-decreasing offsets (a sweep over the token stream). Replaces a filter-and-sort of all callables per token.
+    /// </summary>
+    private sealed class InnermostSweep(List<Decl> decls)
+    {
+        private readonly int[] _order = [.. Enumerable.Range(0, decls.Count).OrderBy(i => decls[i].EnclosingStart)];
+        private readonly PriorityQueue<int, (long Length, int Index)> _active = new();
+        private int _next;
+        private int _last = int.MinValue;
+
+        public Decl? At(int offset)
+        {
+            if (offset < _last)
+            {
+                _active.Clear();
+                _next = 0;
+            }
+
+            _last = offset;
+            while (_next < _order.Length && decls[_order[_next]].EnclosingStart <= offset)
+            {
+                var i = _order[_next++];
+                _active.Enqueue(i, ((long)decls[i].EnclosingEnd - decls[i].EnclosingStart, i));
+            }
+
+            // Every queued declaration starts at or before the offset; drop those that end before it (they also
+            // end before any later offset).
+            while (_active.TryPeek(out var top, out _))
+            {
+                if (offset < decls[top].EnclosingEnd)
+                {
+                    return decls[top];
+                }
+
+                _active.Dequeue();
+            }
+
+            return null;
+        }
+    }
 
     // ---- document ---------------------------------------------------------------------------------------
 
@@ -647,21 +776,26 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
 
     // ---- references --------------------------------------------------------------------------------------
 
+    // Out-of-range neighbour of a token. Not `default`: that reads as an identifier with a null text (a file starting
+    // with `.x` crashed the whole run with ArgumentNullException).
+    private static readonly Token NoToken = new(TokenKind.Punctuation, "", -1, 0);
+
     private void ResolveReferences(FileModel f, List<Occ> occs)
     {
         var t = f.Tokens;
 
         foreach (var r in f.ThisFieldRefs)
         {
-            var field = r.Class.Members.FirstOrDefault(m => m.Name == r.Name.Text && m.Kind is DeclKind.Field or DeclKind.Property);
+            var field = r.Class.MembersNamed(r.Name.Text).FirstOrDefault(m => m.Kind is DeclKind.Field or DeclKind.Property);
             if (field is not null)
             {
                 occs.Add(new Occ(r.Name.Offset, r.Name.Length, field, null, false));
             }
         }
 
-        var shadowed = LocallyDeclaredNames(t, f);
-        var callables = f.AllDecls.Where(d => d.Kind is DeclKind.Method or DeclKind.Function or DeclKind.Constructor or DeclKind.Property or DeclKind.Variable or DeclKind.Field).ToList();
+        var callableList = f.AllDecls.Where(d => d.Kind is DeclKind.Method or DeclKind.Function or DeclKind.Constructor or DeclKind.Property or DeclKind.Variable or DeclKind.Field).ToList();
+        var shadowed = LocallyDeclaredNames(t, f, callableList);
+        var callables = new InnermostSweep(callableList);
         var thisRefOffsets = f.ThisFieldRefs.Select(r => r.Name.Offset).ToHashSet();
         for (var k = 0; k < t.Count; k++)
         {
@@ -671,8 +805,8 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 continue;
             }
 
-            var prev = k > 0 ? t[k - 1] : default;
-            var next = k + 1 < t.Count ? t[k + 1] : default;
+            var prev = k > 0 ? t[k - 1] : NoToken;
+            var next = k + 1 < t.Count ? t[k + 1] : NoToken;
             var afterDot = prev.Is(".") || prev.Is("?.");
             if (prev.Is("..") || (next.Is(":") && (prev.Is("(") || prev.Is(","))))
             {
@@ -689,8 +823,8 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             Decl? prefixedTarget = null;
             if (afterDot)
             {
-                var q = k >= 2 ? t[k - 2] : default;
-                var beforeQ = k >= 3 ? t[k - 3] : default;
+                var q = k >= 2 ? t[k - 2] : NoToken;
+                var beforeQ = k >= 3 ? t[k - 3] : NoToken;
                 if (q.Is("this") && !beforeQ.Is(".") && EnclosingType(f, tk.Offset) is { } cls)
                 {
                     if (FindInstanceMember(cls, tk.Text) is { } m)
@@ -716,7 +850,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 }
                 else if (q.Kind == TokenKind.Identifier && !beforeQ.Is(".") && LookupType(q.Text, f) is { } type)
                 {
-                    var member = type.Members.FirstOrDefault(m => m.Name == tk.Text && (m.Kind == DeclKind.Constructor || m.IsStatic));
+                    var member = type.MembersNamed(tk.Text).FirstOrDefault(m => m.Kind == DeclKind.Constructor || m.IsStatic);
                     if (member is not null)
                     {
                         occs.Add(new Occ(tk.Offset, tk.Length, member, null, false));
@@ -765,7 +899,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             }
 
             var callIdx = next.Is("<") ? SkipAngleTokens(t, k + 1) : k + 1;
-            var callTok = callIdx < t.Count ? t[callIdx] : default;
+            var callTok = callIdx < t.Count ? t[callIdx] : NoToken;
             if (target.Kind == DeclKind.Extension && callTok.Is("("))
             {
                 continue; // extension override `Ext(x).member`; not indexed upstream
@@ -789,6 +923,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
     private Dictionary<int, Decl> _chainOcc = [];
     private FileModel? _chainFile;
     private readonly Dictionary<FileModel, List<Decl>> _extensionLists = [];
+    private List<Decl>? _projectExtensions;
 
     private Decl? TypeOf(Decl d)
     {
@@ -850,7 +985,9 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             return cached;
         }
 
-        var list = _files.Values.SelectMany(x => x.TopLevel).Where(d => d.Kind == DeclKind.Extension).ToList();
+        // The project's extensions are the same for every file: collect them once, not once per file.
+        _projectExtensions ??= _files.Values.SelectMany(x => x.TopLevel).Where(d => d.Kind == DeclKind.Extension).ToList();
+        var list = new List<Decl>(_projectExtensions);
         list.AddRange(ScopeOf(f).Names.Values.Where(d => d.Kind == DeclKind.Extension && d.External is not null));
         _extensionLists[f] = list;
         return list;
@@ -871,7 +1008,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 continue;
             }
 
-            var m = ext.Members.FirstOrDefault(x => x.Name == name && x.Kind is DeclKind.Method or DeclKind.Property or DeclKind.Field && !x.IsStatic);
+            var m = ext.MembersNamed(name).FirstOrDefault(x => x.Kind is DeclKind.Method or DeclKind.Property or DeclKind.Field && !x.IsStatic);
             if (m is not null)
             {
                 return m;
@@ -881,7 +1018,48 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
         return null;
     }
 
-    private static int MatchClose(List<Token> t, int open)
+    private List<Token>? _closeOfTokens;
+    private int[] _closeOf = [];
+
+    /// <summary>
+    /// <see cref="MatchCloseScan"/> for every opener of <paramref name="t"/>, computed once per token list: chain walks
+    /// ask for the same nested argument lists over and over.
+    /// </summary>
+    private int MatchClose(List<Token> t, int open)
+    {
+        if (open < 0 || open >= t.Count || t[open].Kind != TokenKind.Punctuation || t[open].Text is not ("(" or "[" or "{"))
+        {
+            return MatchCloseScan(t, open);
+        }
+
+        if (!ReferenceEquals(_closeOfTokens, t))
+        {
+            _closeOfTokens = t;
+            _closeOf = new int[t.Count];
+            var stack = new Stack<int>();
+            for (var i = 0; i < t.Count; i++)
+            {
+                if (t[i].Kind != TokenKind.Punctuation)
+                {
+                    continue;
+                }
+
+                if (t[i].Text is "(" or "[" or "{")
+                {
+                    _closeOf[i] = -1;
+                    stack.Push(i);
+                }
+                else if (t[i].Text is ")" or "]" or "}" && stack.Count > 0)
+                {
+                    _closeOf[stack.Pop()] = i;
+                }
+            }
+        }
+
+        return _closeOf[open];
+    }
+
+    private static int MatchCloseScan(List<Token> t, int open)
     {
         var depth = 0;
         for (var i = open; i < t.Count; i++)
@@ -944,6 +1122,9 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             }
         }
 
+        // Members added by a walk in a state equal to the one a fresh walk from them would start in; skipping them keeps
+        // a long `a.b().c()...` chain linear instead of re-walking its tail from every member.
+        var covered = new HashSet<int>();
         for (var n = 0; n < occs.Count; n++)
         {
             var o = occs[n];
@@ -952,11 +1133,16 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 continue;
             }
 
-            WalkChain(k, target, occs, have);
+            if (covered.Contains(o.Start))
+            {
+                continue; // a member a chain walk already passed through: re-walking it would repeat that walk
+            }
+
+            WalkChain(k, target, occs, have, covered);
         }
     }
 
-    private (Decl? Type, bool TypeHead, int End) WalkChain(int k, Decl target, List<Occ>? occs, HashSet<int>? have)
+    private (Decl? Type, bool TypeHead, int End) WalkChain(int k, Decl target, List<Occ>? occs, HashSet<int>? have, HashSet<int>? covered = null)
     {
         var t = _chainTokens;
         var idx = k + 1;
@@ -1111,6 +1297,10 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 {
                     occs.Add(new Occ(name.Offset, name.Length, member, null, false));
                     _chainOcc[name.Offset] = member;
+                    if (!cascading && member.Kind != DeclKind.Function)
+                    {
+                        covered?.Add(name.Offset);
+                    }
                 }
 
                 cur = member;
@@ -1131,7 +1321,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
     {
         foreach (var tp in SuperTypes(type).Prepend(type))
         {
-            var m = tp.Members.FirstOrDefault(x => x.Name == name && (x.Kind == DeclKind.Constructor || x.IsStatic));
+            var m = tp.MembersNamed(name).FirstOrDefault(x => x.Kind == DeclKind.Constructor || x.IsStatic);
             if (m is not null)
             {
                 return m;
@@ -1172,16 +1362,24 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
     }
 
     /// <summary>Finds a type parameter named <paramref name="name"/> visible at <paramref name="offset"/> (innermost first).</summary>
-    private static Decl? TypeParameterAt(FileModel f, string name, int offset)
+    private Decl? TypeParameterAt(FileModel f, string name, int offset)
     {
-        foreach (var top in f.TopLevel)
+        if (!_topLevelSpans.TryGetValue(f, out var spans))
         {
-            if (offset < top.EnclosingStart || offset >= top.EnclosingEnd)
+            spans = SpanIndex.Create(f.TopLevel, static d => (d.EnclosingStart, d.EnclosingEnd));
+            _topLevelSpans[f] = spans;
+        }
+
+        if (spans.At(offset) is { } top)
+        {
+            // Only members that declare type parameters can match.
+            if (!_genericMembers.TryGetValue(top, out var generic))
             {
-                continue;
+                generic = [.. top.Members.Where(static m => m.TypeParameters.Count > 0)];
+                _genericMembers[top] = generic;
             }
 
-            foreach (var member in top.Members.Where(m => offset >= m.EnclosingStart && offset < m.EnclosingEnd))
+            foreach (var member in generic.Where(m => offset >= m.EnclosingStart && offset < m.EnclosingEnd))
             {
                 if (member.TypeParameters.FirstOrDefault(p => p.Name == name) is { } mp)
                 {
@@ -1196,12 +1394,9 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
     }
 
     /// <summary>True when <paramref name="tk"/> is likely shadowed by a parameter or local variable of the enclosing member.</summary>
-    private static bool IsShadowed(Token tk, List<Decl> callables, Dictionary<string, List<(int Start, int End)>> locals)
+    private static bool IsShadowed(Token tk, InnermostSweep callables, Dictionary<string, List<(int Start, int End)>> locals)
     {
-        var owner = callables
-            .Where(c => tk.Offset >= c.EnclosingStart && tk.Offset < c.EnclosingEnd)
-            .OrderBy(c => c.EnclosingEnd - c.EnclosingStart)
-            .FirstOrDefault();
+        var owner = callables.At(tk.Offset);
         if (owner is null)
         {
             return false;
@@ -1222,8 +1417,9 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
     /// Names that look like local variable declarations (<c>Type name =</c>, <c>var name;</c>) outside declaration
     /// headers. Used to avoid resolving such names to same-named top-level declarations.
     /// </summary>
-    private static Dictionary<string, List<(int Start, int End)>> LocallyDeclaredNames(List<Token> t, FileModel f)
+    private static Dictionary<string, List<(int Start, int End)>> LocallyDeclaredNames(List<Token> t, FileModel f, List<Decl> callables)
     {
+        var owners = new InnermostSweep(callables);
         var result = new Dictionary<string, List<(int Start, int End)>>();
         for (var k = 1; k + 1 < t.Count; k++)
         {
@@ -1238,11 +1434,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
             var prevIsType = (prev.Kind == TokenKind.Identifier && !NotATypeBefore.Contains(prev.Text)) || prev.Is(">") || prev.Is("?");
             if (prevIsType && (next.Is("=") || next.Is(";") || next.Is(",") || next.Is("in")))
             {
-                var owner = f.AllDecls
-                    .Where(c => c.Kind is DeclKind.Method or DeclKind.Function or DeclKind.Constructor or DeclKind.Property or DeclKind.Variable or DeclKind.Field
-                        && tk.Offset >= c.EnclosingStart && tk.Offset < c.EnclosingEnd)
-                    .OrderBy(c => c.EnclosingEnd - c.EnclosingStart)
-                    .FirstOrDefault();
+                var owner = owners.At(tk.Offset);
                 if (owner is not null)
                 {
                     if (!result.TryGetValue(tk.Text, out var ranges))
@@ -1291,7 +1483,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
         var docable = f.AllDecls
             .Where(d => d.Kind is DeclKind.Class or DeclKind.Mixin or DeclKind.Enum or DeclKind.TypeAlias or DeclKind.Extension or DeclKind.Constructor
                 or DeclKind.Method or DeclKind.Function or DeclKind.Variable or DeclKind.Field or DeclKind.Property
-                && (d.Kind != DeclKind.Function || f.TopLevel.Contains(d)))
+                && (d.Kind != DeclKind.Function || f.IsTopLevel(d)))
             .OrderBy(d => d.EnclosingStart)
             .ToList();
         foreach (var segments in f.DocRefs)
@@ -1333,7 +1525,7 @@ internal sealed class ProjectIndexer(string root, Action<string>? log)
                 else if (target.IsTypeLike)
                 {
                     target = SuperTypes(target).Prepend(target)
-                        .Select(t => t.Members.FirstOrDefault(m => m.Name == name && m.Kind != DeclKind.Parameter))
+                        .Select(t => t.MembersNamed(name).FirstOrDefault(m => m.Kind != DeclKind.Parameter))
                         .FirstOrDefault(m => m is not null);
                 }
                 else

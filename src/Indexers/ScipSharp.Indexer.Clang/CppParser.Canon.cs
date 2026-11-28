@@ -248,6 +248,7 @@ public sealed partial class CppParser
                 if (_members.TryGetValue(c.Name, out var mem))
                 {
                     mem.Remove(shadow);
+                    _memberCands.Remove(c.Name);
                 }
             }
             else if (c.Kind != EKind.Func)

@@ -49,7 +49,18 @@ public sealed class SymbolNamer
         return t;
     }
 
+    private readonly Dictionary<TypeInfo, string> _bareTypes = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Memoised: recomputing the owner chain for every reference was cubic in the nesting depth of member classes.</summary>
     public string BareType(TypeInfo t)
+    {
+        if (_bareTypes.TryGetValue(t, out var cached)) return cached;
+        var bare = BareTypeCore(t);
+        _bareTypes[t] = bare;
+        return bare;
+    }
+
+    private string BareTypeCore(TypeInfo t)
     {
         if (t.IsAnonymous) return Local(t);
         if (t.IsLocal && t.LocalOwner is { } lo)
@@ -94,14 +105,44 @@ public sealed class SymbolNamer
 
     public static string Disambiguator(MethodInfo m)
     {
+        var methods = m.Owner.Methods;
+        int index;
+        if (methods.Count < 16) index = OverloadIndex(methods, m);
+        else
+        {
+            // Indexed per method list: a linear scan per method symbol was quadratic in large (generated) classes.
+            if (!OverloadIndexes.TryGetValue(methods, out var cached) || cached.Count != methods.Count)
+            {
+                var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+                var map = new Dictionary<MethodInfo, int>(ReferenceEqualityComparer.Instance);
+                foreach (var x in methods)
+                {
+                    counts.TryGetValue(x.Name, out var c);
+                    map.TryAdd(x, c);
+                    counts[x.Name] = c + 1;
+                }
+                cached = new OverloadIndexCache(methods.Count, map);
+                OverloadIndexes.AddOrUpdate(methods, cached);
+            }
+            index = cached.Index.TryGetValue(m, out var i) ? i : OverloadIndex(methods, m);
+        }
+        return index == 0 ? "()" : $"(+{index.ToString(CultureInfo.InvariantCulture)})";
+    }
+
+    private static int OverloadIndex(List<MethodInfo> methods, MethodInfo m)
+    {
         var index = 0;
-        foreach (var x in m.Owner.Methods)
+        foreach (var x in methods)
         {
             if (x == m) break;
             if (x.Name == m.Name) index++;
         }
-        return index == 0 ? "()" : $"(+{index.ToString(CultureInfo.InvariantCulture)})";
+        return index;
     }
+
+    private sealed record OverloadIndexCache(int Count, Dictionary<MethodInfo, int> Index);
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<List<MethodInfo>, OverloadIndexCache> OverloadIndexes = new();
 
     public string BareMethod(MethodInfo m)
     {

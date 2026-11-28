@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 namespace ScipSharp.Indexer.Delphi.Syntax;
 
 /// <summary>
@@ -210,6 +211,62 @@ internal sealed class Parser(IReadOnlyList<Token> tokens)
             return SkipAsm(i);
         }
 
+        // Memoised: the walker asks for the end of the same (often unterminated, in broken code) block from every
+        // statement inside it, which re-scanned to the end of the file each time (quadratic).
+        if (i >= 0 && i < tokens.Count && IsBlockOpener(Tok(i)))
+        {
+            _blockEnds ??= BlockEnds();
+            if (_blockEnds[i] >= 0)
+            {
+                return _blockEnds[i];
+            }
+        }
+
+        return MatchEndScan(i);
+    }
+
+    /// <summary>For each <c>begin</c>/<c>try</c>/<c>case</c> outside <c>asm</c> blocks: the result of <see cref="MatchEndScan"/> (else -1).</summary>
+    private int[]? _blockEnds;
+
+    private int[] BlockEnds()
+    {
+        var ends = new int[tokens.Count];
+        Array.Fill(ends, -1);
+        var open = new Stack<int>();
+        var i = 0;
+        while (i < tokens.Count && !tokens[i].IsEof)
+        {
+            var t = tokens[i];
+            if (t.IsKeyword("asm"))
+            {
+                i = SkipAsm(i);
+                continue;
+            }
+
+            if (IsBlockOpener(t))
+            {
+                open.Push(i);
+            }
+            else if (t.IsKeyword("end") && open.Count > 0)
+            {
+                ends[open.Pop()] = i + 1;
+            }
+
+            i++;
+        }
+
+        // Unterminated blocks end where the scan stops: the first end-of-file token.
+        var eof = Math.Min(i, tokens.Count - 1);
+        foreach (var o in open)
+        {
+            ends[o] = eof;
+        }
+
+        return ends;
+    }
+
+    private int MatchEndScan(int i)
+    {
         var depth = 0;
         while (!Tok(i).IsEof)
         {
@@ -328,6 +385,7 @@ internal sealed class Parser(IReadOnlyList<Token> tokens)
 
     public void ParseDeclarations(List<Decl> list, DeclContext ctx)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deeply nested source: the file is skipped with a warning
         while (!IsDeclTerminator())
         {
             var start = Pos;
@@ -657,6 +715,55 @@ internal sealed class Parser(IReadOnlyList<Token> tokens)
     /// <summary>Given the index of an opening bracket, returns the index just past the matching closer.</summary>
     public int SkipParens(int i)
     {
+        var t0 = Tok(i);
+        if (i >= 0 && i < tokens.Count && (t0.IsSymbol("(") || t0.IsSymbol("[")))
+        {
+            // Memoised: the walker skips every nested group of a deep expression, which re-scanned it once per level.
+            _bracketEnds ??= BracketEnds();
+            return _bracketEnds[i];
+        }
+
+        return SkipParensScan(i);
+    }
+
+    /// <summary>For each <c>(</c>/<c>[</c>: the index just past its matching closer (same result as the scan in <see cref="SkipParens"/>).</summary>
+    private int[]? _bracketEnds;
+
+    private int[] BracketEnds()
+    {
+        var ends = new int[tokens.Count];
+        var open = new Stack<int>();
+        var i = 0;
+        for (; i < tokens.Count && !tokens[i].IsEof; i++)
+        {
+            var t = tokens[i];
+            if (t.IsSymbol("(") || t.IsSymbol("["))
+            {
+                open.Push(i);
+            }
+            else if ((t.IsSymbol(")") || t.IsSymbol("]")) && open.Count > 0)
+            {
+                ends[open.Pop()] = i + 1;
+            }
+        }
+
+        // Unclosed groups (and anything after the first end-of-file token) end at the end-of-file token.
+        var eof = Math.Min(i, tokens.Count - 1);
+        foreach (var o in open)
+        {
+            ends[o] = eof;
+        }
+
+        for (var k = i; k < tokens.Count; k++)
+        {
+            ends[k] = SkipParensScan(k);
+        }
+
+        return ends;
+    }
+
+    private int SkipParensScan(int i)
+    {
         var depth = 0;
         while (!Tok(i).IsEof)
         {
@@ -889,6 +996,7 @@ internal sealed class Parser(IReadOnlyList<Token> tokens)
 
     public TypeNode ParseType()
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deeply nested source: the file is skipped with a warning
         var start = Pos;
         var t = Cur;
         TypeNode node;

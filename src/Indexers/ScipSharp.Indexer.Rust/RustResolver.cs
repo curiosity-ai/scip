@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace ScipSharp.Indexer.Rust;
@@ -111,6 +112,7 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
     private readonly HashSet<int> _emitted = [];
     private readonly Dictionary<string, RType?> _localTypes = [];
     private readonly HashSet<string> _typing = [];
+    private readonly Dictionary<int, (RType? Type, int Next)> _typeOnly = [];
 
     private static readonly HashSet<string> Keywords =
     [
@@ -129,6 +131,11 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
 
     private int SkipBalanced(int i)
     {
+        if (_file.SkipGroup(i) is { } after)
+        {
+            return after;
+        }
+
         var depth = 0;
         for (; i < _t.Count; i++)
         {
@@ -215,7 +222,13 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
 
     public void Run()
     {
-        var uses = fi.File.Uses.ToDictionary(u => u.Start, u => u.End);
+        // a `use` can be recorded twice (item re-scanned from a body in malformed input): keep the first
+        Dictionary<int, int> uses = [];
+        foreach (var (start, end) in fi.File.Uses)
+        {
+            uses.TryAdd(start, end);
+        }
+
         for (var i = 0; i < _t.Count; i++)
         {
             var tk = _t[i];
@@ -414,6 +427,28 @@ internal sealed class RustResolver(RustWorld world, FileInfo fi, Dictionary<stri
     /// </summary>
     private RType? EvalExpr(int i, bool emit, out int next)
     {
+        // nested constructor arguments / local-type chains recurse: give up typing rather than overflow the stack
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            next = i + 1;
+            return null;
+        }
+
+        // Typing-only evaluation has no side effects; memoise it (outside local-type cycles, whose results depend on
+        // the cycle guard) so that `Some(Some(Some(..)))` is not re-typed from every nested token (quadratic).
+        if (!emit && _typing.Count == 0)
+        {
+            if (_typeOnly.TryGetValue(i, out var memo))
+            {
+                next = memo.Next;
+                return memo.Type;
+            }
+
+            var typed = EvalExprInner(i, emit: false, out next);
+            _typeOnly[i] = (typed, next);
+            return typed;
+        }
+
         var ty = EvalExprInner(i, emit, out next);
         if (emit && ty?.Def is { } d && d == world.Primitive("bool"))
         {

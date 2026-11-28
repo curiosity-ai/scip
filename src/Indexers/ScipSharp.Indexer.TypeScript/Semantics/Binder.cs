@@ -71,7 +71,28 @@ public sealed class Binder
         }
     }
 
-    private void Bind(Node n, Scope scope, Scope varScope)
+    /// <summary>
+    /// Binds the subtree under <paramref name="root"/> in pre-order. Iterative (explicit stack, children pushed in reverse)
+    /// because syntax trees of long expression chains are much deeper than the call stack allows.
+    /// </summary>
+    private void Bind(Node root, Scope rootScope, Scope rootVarScope)
+    {
+        // Entries with Post set declare a named function expression in its own scope after its body was bound.
+        var stack = new Stack<(Node Node, Scope Scope, Scope VarScope, bool Post)>();
+        stack.Push((root, rootScope, rootVarScope, false));
+        while (stack.Count > 0)
+        {
+            var (n, scope, varScope, post) = stack.Pop();
+            if (post) { scope.Declare(n.Name!.Text, n); continue; }
+            if (BindNode(n, scope, varScope) is not var (childScope, childVarScope)) { continue; }
+            if (n.Kind == SK.FunctionExpression && n.Name is not null) { stack.Push((n, childScope, childVarScope, true)); }
+            var children = n.Children;
+            for (var i = children.Count - 1; i >= 0; i--) { stack.Push((children[i], childScope, childVarScope, false)); }
+        }
+    }
+
+    /// <summary>Binds one node; returns the scopes its children are bound in, or null when they are not bound.</summary>
+    private (Scope Scope, Scope VarScope)? BindNode(Node n, Scope scope, Scope varScope)
     {
         switch (n.Kind)
         {
@@ -84,31 +105,23 @@ public sealed class Binder
 
             case SK.FunctionDeclaration:
                 if (n.Name is not null) { scope.Declare(n.Name.Text, n); }
-                BindFunctionLike(n, scope);
-                return;
+                return FunctionScope(n, scope);
             case SK.FunctionExpression or SK.ArrowFunction or SK.MethodDeclaration or SK.Constructor or SK.GetAccessor or SK.SetAccessor
                 or SK.MethodSignature or SK.CallSignature or SK.ConstructSignature or SK.FunctionType or SK.ConstructorType or SK.IndexSignature:
-            {
-                var fs = BindFunctionLike(n, scope, declareParametersOnly: true);
-                if (n.Kind == SK.FunctionExpression && n.Name is not null) { fs.Declare(n.Name.Text, n); }
-                return;
-            }
-
+                return FunctionScope(n, scope);
             case SK.ClassDeclaration or SK.ClassExpression:
             {
                 if (n.Kind == SK.ClassDeclaration && n.Name is not null) { scope.Declare(n.Name.Text, n); }
                 var cs = NewScope(n, scope);
                 if (n.Kind == SK.ClassExpression && n.Name is not null) { cs.Declare(n.Name.Text, n); }
-                foreach (var c in n.Children) { Bind(c, cs, cs); }
-                return;
+                return (cs, cs);
             }
 
             case SK.InterfaceDeclaration or SK.TypeAliasDeclaration:
             {
                 if (n.Name is not null) { scope.Declare(n.Name.Text, n); }
                 var ts = NewScope(n, scope);
-                foreach (var c in n.Children) { Bind(c, ts, ts); }
-                return;
+                return (ts, ts);
             }
 
             case SK.EnumDeclaration:
@@ -122,13 +135,12 @@ public sealed class Binder
                 var ms = NewScope(n, scope);
                 var implicitExports = n.Parent?.Has(Mods.Declare) == true || File.FileName.EndsWith(".d.ts", StringComparison.Ordinal);
                 CollectExports(n.Parent!, n.Elements, implicitExports);
-                foreach (var c in n.Children) { Bind(c, ms, ms); }
-                return;
+                return (ms, ms);
             }
 
             case SK.ImportSpecifier or SK.NamespaceImport or SK.NamespaceExport when n.Kind != SK.NamespaceExport:
                 if (n.Name is not null) { scope.Declare(n.Name.Text, n); }
-                return;
+                return null;
             case SK.ImportClause:
                 if (n.Name is not null) { scope.Declare(n.Name.Text, n); }
                 break;
@@ -136,25 +148,18 @@ public sealed class Binder
                 if (n.Name is not null) { scope.Declare(n.Name.Text, n); }
                 break;
             case SK.Block or SK.CaseBlock or SK.ForStatement or SK.ForInStatement or SK.ForOfStatement:
-            {
-                var bs = NewScope(n, scope);
-                foreach (var c in n.Children) { Bind(c, bs, varScope); }
-                return;
-            }
-
+                return (NewScope(n, scope), varScope);
             case SK.CatchClause:
             {
                 var cs = NewScope(n, scope);
                 if (n.Initializer is { } decl) { DeclareNames(decl.Name, cs, decl); }
-                foreach (var c in n.Children) { Bind(c, cs, varScope); }
-                return;
+                return (cs, varScope);
             }
 
             case SK.ConditionalType or SK.MappedType:
             {
                 var cs = NewScope(n, scope);
-                foreach (var c in n.Children) { Bind(c, cs, cs); }
-                return;
+                return (cs, cs);
             }
 
             case SK.TypeParameter:
@@ -165,15 +170,13 @@ public sealed class Binder
                 break;
         }
 
-        foreach (var c in n.Children) { Bind(c, scope, varScope); }
+        return (scope, varScope);
     }
 
-    private Scope BindFunctionLike(Node n, Scope parent, bool declareParametersOnly = false)
+    private (Scope, Scope) FunctionScope(Node n, Scope parent)
     {
-        _ = declareParametersOnly;
         var fs = NewScope(n, parent);
-        foreach (var c in n.Children) { Bind(c, fs, fs); }
-        return fs;
+        return (fs, fs);
     }
 
     // ------------------------------------------------------------------ exports
@@ -249,11 +252,29 @@ public sealed class Binder
         _ => Meaning.Any,
     };
 
-    public List<Node>? Lookup(Node from, string name, Meaning meaning)
+    /// <summary>Innermost scope enclosing (or owned by) a node, memoised: walking up the parents of every identifier is
+    /// quadratic in long expression chains. A scope's <see cref="Scope.Parent"/> is the scope of its nearest scoped ancestor.</summary>
+    private readonly Dictionary<Node, Scope?> _innermostScope = [];
+
+    private Scope? InnermostScope(Node from)
     {
+        Scope? found = null;
+        List<Node>? path = null;
         for (var n = from; n is not null; n = n.Parent)
         {
-            if (_scopeOf.TryGetValue(n, out var scope) && scope.Table.TryGetValue(name, out var decls) && HasMeaning(decls, meaning))
+            if (_scopeOf.TryGetValue(n, out found) || _innermostScope.TryGetValue(n, out found)) { break; }
+            (path ??= []).Add(n);
+        }
+
+        foreach (var n in path ?? []) { _innermostScope[n] = found; }
+        return found;
+    }
+
+    public List<Node>? Lookup(Node from, string name, Meaning meaning)
+    {
+        for (var scope = InnermostScope(from); scope is not null; scope = scope.Parent)
+        {
+            if (scope.Table.TryGetValue(name, out var decls) && HasMeaning(decls, meaning))
             {
                 // Top-level lib declarations merge across the lib files (`interface ObjectConstructor` in es5 and es2015.core).
                 if (File.IsLib && ReferenceEquals(scope, FileScope) && File.Libs?.Lookup(name, meaning) is { } merged) { return merged; }

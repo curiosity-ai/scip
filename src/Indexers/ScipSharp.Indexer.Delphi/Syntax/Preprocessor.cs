@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace ScipSharp.Indexer.Delphi.Syntax;
 
@@ -266,6 +267,10 @@ internal sealed class Preprocessor
         return false;
     }
 
+    private const int MaxIncludeExpansions = 10_000;
+
+    private int _includeExpansions;
+
     private void Include(string arg, string path, int depth)
     {
         var name = arg.Trim();
@@ -289,10 +294,14 @@ internal sealed class Preprocessor
         }
 
         var resolved = _resolveInclude(path, name);
-        if (resolved is not { } inc || !_includeChain.Add(inc.FileId))
+        // The chain guard stops cycles; the expansion budget stops diamonds (a file including another twice, 16 levels
+        // deep, would be expanded 2^16 times).
+        if (resolved is not { } inc || _includeExpansions >= MaxIncludeExpansions || !_includeChain.Add(inc.FileId))
         {
             return;
         }
+
+        _includeExpansions++;
 
         IncludedFiles.Add(inc.FileId);
         var tokens = Lexer.Tokenize(inc.Text, inc.FileId);
@@ -337,6 +346,15 @@ internal sealed class ConditionEvaluator(string expression, Preprocessor pp)
 
     private Token Cur => _tokens[Math.Min(_p, _tokens.Count - 1)];
 
+    /// <summary>Deeply nested <c>(</c>/<c>not</c>: give up (the condition evaluates to false) rather than overflow the stack.</summary>
+    private static void EnsureStack()
+    {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new FormatException("expression nested too deeply");
+        }
+    }
+
     public CondValue Parse()
     {
         var v = Or();
@@ -372,6 +390,7 @@ internal sealed class ConditionEvaluator(string expression, Preprocessor pp)
 
     private CondValue Not()
     {
+        EnsureStack();
         if (Cur.IsKeyword("not"))
         {
             _p++;
@@ -445,6 +464,7 @@ internal sealed class ConditionEvaluator(string expression, Preprocessor pp)
 
     private CondValue Factor()
     {
+        EnsureStack();
         var t = Cur;
         if (t.IsSymbol("("))
         {

@@ -62,6 +62,7 @@ public sealed partial class Parser
 
     private Node ParseJsxElementRaw()
     {
+        EnsureStack();
         var start = _s.TokenStart;
         ExpectP("<");
         if (IsP(">"))

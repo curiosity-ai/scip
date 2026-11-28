@@ -17,7 +17,7 @@ public class TypeTableKey
             {
                 foreach (var c in node.FindAllExpressions<FieldSub>())
                 {
-                    var concat = new Regex(@"^!", RegexOptions.ECMAScript).Replace(c.ConcatTokens(), "", 1);
+                    var concat = c.ConcatTokens() is var ct && ct.StartsWith('!') ? ct.Substring(1) : ct; // TS replace(/^!/, "")
                     if (concat.Contains("-", StringComparison.Ordinal) == false && ((StructureType)rowType).GetComponentByName(concat) == null && JsUtils.ToUpper(concat) != "TABLE_LINE")
                     {
                         return new UnknownType($"Field {concat} not part of structure");

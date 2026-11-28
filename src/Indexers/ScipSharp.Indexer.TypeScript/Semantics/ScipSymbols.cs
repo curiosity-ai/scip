@@ -205,10 +205,16 @@ public static class JsDocTypeParser
         }
     }
 
-    private static void Reparent(Node node, TsSourceFile file)
+    private static void Reparent(Node root, TsSourceFile file)
     {
-        node.File = file;
-        node.Synthetic = true;
-        foreach (var c in node.Children) { Reparent(c, file); }
+        var stack = new Stack<Node>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            var node = stack.Pop();
+            node.File = file;
+            node.Synthetic = true;
+            foreach (var c in node.Children) { stack.Push(c); }
+        }
     }
 }

@@ -100,7 +100,16 @@ internal sealed class PliProjectIndexer
         var occurrences = new List<(Unit Unit, List<RawOccurrence> Occurrences)>();
         foreach (var u in units)
         {
-            occurrences.Add((u, resolver.Resolve(u)));
+            try
+            {
+                occurrences.Add((u, resolver.Resolve(u)));
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // One malformed unit must not abort the whole project: index its siblings.
+                _warn?.Invoke($"{u.File.RelativePath}: skipped, {e.GetType().Name}: {e.Message}");
+            }
+
             foreach (var w in u.Warnings)
             {
                 _warn?.Invoke(w);

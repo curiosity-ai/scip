@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Java.Syntax;
 
 namespace ScipSharp.Indexer.Java.Semantics;
@@ -15,6 +16,7 @@ public sealed partial class DocumentIndexer
 
     private void VisitStmt(Stmt stmt, Scope scope)
     {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack()) return; // absurdly deep nesting (else-if chains, blocks)
         switch (stmt)
         {
             case Block b:

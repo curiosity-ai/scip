@@ -111,9 +111,10 @@ internal sealed class Workspace
     {
         var cur = scope;
         var guard = 0;
+        Dictionary<(Scope, string), int>? seen = null;
         while (cur is not null && guard++ < 64)
         {
-            var e = Local(cur, name, ctx) ?? FromUses(cur, name, ctx, 0);
+            var e = Local(cur, name, ctx) ?? FromUses(cur, name, ctx, 0, ref seen);
             if (e is not null)
             {
                 return e;
@@ -167,7 +168,7 @@ internal sealed class Workspace
         }
     }
 
-    private Entity? FromUses(Scope s, string name, LookupCtx ctx, int depth)
+    private Entity? FromUses(Scope s, string name, LookupCtx ctx, int depth, ref Dictionary<(Scope, string), int>? seen)
     {
         if (s.Uses.Count == 0 || depth > 24)
         {
@@ -199,7 +200,7 @@ internal sealed class Workspace
                 remote = name;
             }
 
-            var e = Export(u, remote, ctx, depth);
+            var e = Export(u, remote, ctx, depth, ref seen);
             if (e is not null)
             {
                 return e;
@@ -210,7 +211,13 @@ internal sealed class Workspace
     }
 
     /// <summary>The entity <paramref name="name"/> made accessible by a USE statement.</summary>
-    public Entity? Export(UseInfo u, string name, LookupCtx ctx, int depth = 0)
+    public Entity? Export(UseInfo u, string name, LookupCtx ctx)
+    {
+        Dictionary<(Scope, string), int>? seen = null;
+        return Export(u, name, ctx, 0, ref seen);
+    }
+
+    private Entity? Export(UseInfo u, string name, LookupCtx ctx, int depth, ref Dictionary<(Scope, string), int>? seen)
     {
         if (!Modules.TryGetValue(u.Module, out var module) || u.Intrinsic)
         {
@@ -222,17 +229,31 @@ internal sealed class Workspace
             return u.Intrinsic || IntrinsicModules.Contains(u.Module) ? IntrinsicEntity : UnknownMember(u.Module, name);
         }
 
-        return ModuleExport(module.Body!, name, ctx, depth + 1);
+        return ModuleExport(module.Body!, name, ctx, depth + 1, ref seen);
     }
 
-    private Entity? ModuleExport(Scope m, string name, LookupCtx ctx, int depth)
+    private Entity? ModuleExport(Scope m, string name, LookupCtx ctx, int depth, ref Dictionary<(Scope, string), int>? seen)
     {
         if (depth > 24 || IsPrivate(m, name))
         {
             return null;
         }
 
-        return Local(m, name, ctx) ?? FromUses(m, name, ctx, depth);
+        if (Local(m, name, ctx) is { } local)
+        {
+            return local;
+        }
+
+        // A diamond-shaped USE graph would otherwise be re-walked once per path (exponential in its depth). A miss
+        // for (module, name) at some depth is a miss at any greater depth, so only shallower revisits are explored.
+        seen ??= [];
+        if (seen.TryGetValue((m, name), out var prev) && prev <= depth)
+        {
+            return null;
+        }
+
+        seen[(m, name)] = depth;
+        return FromUses(m, name, ctx, depth, ref seen);
     }
 
     public static bool IsPrivate(Scope m, string name) => m.Access.TryGetValue(name, out var pub) ? !pub : m.DefaultPrivate;
@@ -240,11 +261,12 @@ internal sealed class Workspace
     /// <summary>True when some USE in scope (or its hosts) imports an unknown or intrinsic module wholesale: undeclared names may come from it.</summary>
     public bool HasOpaqueUse(Scope scope)
     {
+        Dictionary<Scope, int>? seen = null;
         for (var cur = scope; cur is not null; cur = cur.IsInterfaceBody ? null : cur.Parent)
         {
             foreach (var u in cur.Uses)
             {
-                if (u.Only is null && (u.Intrinsic || !Modules.TryGetValue(u.Module, out var m) || ModuleHasOpaqueUse(m.Body!, 0)))
+                if (u.Only is null && (u.Intrinsic || !Modules.TryGetValue(u.Module, out var m) || ModuleHasOpaqueUse(m.Body!, 0, seen ??= [])))
                 {
                     return true;
                 }
@@ -254,16 +276,19 @@ internal sealed class Workspace
         return false;
     }
 
-    private bool ModuleHasOpaqueUse(Scope m, int depth)
+    private bool ModuleHasOpaqueUse(Scope m, int depth, Dictionary<Scope, int> seen)
     {
-        if (depth > 16)
+        // Visited modules (at the same or a shallower depth) already answered false: keeps diamonds linear.
+        if (depth > 16 || (seen.TryGetValue(m, out var prev) && prev <= depth))
         {
             return false;
         }
 
+        seen[m] = depth;
+
         foreach (var u in m.Uses)
         {
-            if (u.Only is null && (u.Intrinsic || !Modules.TryGetValue(u.Module, out var inner) || ModuleHasOpaqueUse(inner.Body!, depth + 1)))
+            if (u.Only is null && (u.Intrinsic || !Modules.TryGetValue(u.Module, out var inner) || ModuleHasOpaqueUse(inner.Body!, depth + 1, seen)))
             {
                 return true;
             }

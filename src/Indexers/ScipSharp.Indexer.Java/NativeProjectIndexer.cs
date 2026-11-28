@@ -40,6 +40,10 @@ public static class NativeProjectIndexer
             {
                 reporter.Warning($"{rel}: cannot parse ({e.Message} at offset {e.Offset}); file skipped");
             }
+            catch (InsufficientExecutionStackException)
+            {
+                reporter.Warning($"{rel}: cannot parse (nested too deeply); file skipped");
+            }
         }
         if (sources.Count == 0 && !reporter.HasErrors)
         {
@@ -73,7 +77,7 @@ public static class NativeProjectIndexer
                         documents.Add(di.Index());
                         indexers.Add(di);
                     }
-                    catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException or ArgumentException or NullReferenceException or InvalidCastException)
+                    catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException or ArgumentException or NullReferenceException or InvalidCastException or InsufficientExecutionStackException)
                     {
                         reporter.Warning($"{file.RelativePath}: indexing failed ({e.GetType().Name}: {e.Message}); emitting an empty document");
                         documents.Add(new Document { Language = "java", RelativePath = file.RelativePath, PositionEncoding = PositionEncoding.Utf16CodeUnitOffsetFromLineStart });

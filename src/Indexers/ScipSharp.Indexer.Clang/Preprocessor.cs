@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace ScipSharp.Indexer.Clang;
@@ -50,6 +51,20 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
     private readonly HashSet<int> _once = [];
     private readonly Dictionary<string, string?> _defines = new(defines);
 
+    // Per-TU caches: a header included many times is read, lexed and resolved once.
+    private readonly Dictionary<int, (List<Tok> Toks, int[] Directives)> _lexed = [];
+    private readonly Dictionary<(string Name, string Dir, bool Quoted), string?> _resolved = [];
+    private int _filesEntered;
+
+    /// <summary>
+    /// Upper bound on file entries per translation unit. Headers without include guards that include each other (or
+    /// themselves) form diamonds whose naive expansion is exponential; past this budget further includes are skipped.
+    /// </summary>
+    public const int MaxFileEntries = 50_000;
+
+    /// <summary>Set when <see cref="MaxFileEntries"/> was hit and includes were skipped.</summary>
+    public bool IncludeBudgetExceeded { get; private set; }
+
     public List<Tok> Output { get; } = [];
 
     public List<IncludeEvent> Includes { get; } = [];
@@ -81,12 +96,39 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
     {
         var id = files.Id(path);
         var virtualHeader = BuiltinHeaders.IsVirtual(path);
-        if (depth > 100 || _once.Contains(id) || (!virtualHeader && !File.Exists(path)))
+        if (depth > 100 || _once.Contains(id))
         {
             return;
         }
 
-        var toks = Lexer.Lex(virtualHeader ? BuiltinHeaders.Read(path) : File.ReadAllBytes(path), id);
+        if (!_lexed.TryGetValue(id, out var lexed))
+        {
+            if (!virtualHeader && !File.Exists(path))
+            {
+                return;
+            }
+
+            var lexedToks = Lexer.Lex(virtualHeader ? BuiltinHeaders.Read(path) : File.ReadAllBytes(path), id);
+            var dirs = new List<int>();
+            for (var k = 0; k < lexedToks.Count; k++)
+            {
+                if (lexedToks[k] is { Bol: true, Kind: TokKind.Punct, Text: "#" })
+                {
+                    dirs.Add(k);
+                }
+            }
+
+            _lexed[id] = lexed = (lexedToks, [.. dirs]);
+        }
+
+        if (++_filesEntered > MaxFileEntries)
+        {
+            IncludeBudgetExceeded = true;
+            return;
+        }
+
+        var (toks, directives) = lexed;
+        var nextDir = 0; // cursor into `directives`: inactive regions jump straight to the next directive
         var conds = new List<(bool ParentActive, bool Taken, bool Active)>();
         bool Active() => conds.Count == 0 || conds[^1].Active;
 
@@ -109,7 +151,12 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
 
             if (!Active())
             {
-                i++;
+                while (nextDir < directives.Length && directives[nextDir] <= i)
+                {
+                    nextDir++;
+                }
+
+                i = nextDir < directives.Length ? directives[nextDir] : toks.Count;
                 continue;
             }
 
@@ -292,6 +339,16 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
 
     public string? ResolveInclude(string name, string includingDir, bool quoted)
     {
+        if (!_resolved.TryGetValue((name, includingDir, quoted), out var found))
+        {
+            _resolved[(name, includingDir, quoted)] = found = ResolveIncludeUncached(name, includingDir, quoted);
+        }
+
+        return found;
+    }
+
+    private string? ResolveIncludeUncached(string name, string includingDir, bool quoted)
+    {
         IEnumerable<string> dirs = quoted ? includeDirs.Prepend(includingDir) : includeDirs;
         foreach (var dir in dirs)
         {
@@ -311,7 +368,7 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
     private int TryExpand(List<Tok> src, int at, Macro m, HashSet<string> hide, out List<Tok> result)
     {
         result = [];
-        if (hide.Contains(m.Name))
+        if (hide.Contains(m.Name) || !RuntimeHelpers.TryEnsureSufficientExecutionStack())
         {
             return 0;
         }
@@ -405,7 +462,25 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
 
     private List<Tok> Substitute(Macro m, List<List<Tok>> args, Tok site, HashSet<string> hide)
     {
+        // A parameter used several times is pre-expanded once (nested MAX(MAX(..)) would otherwise be 4^n, not 2^n).
+        Dictionary<string, List<Tok>>? expanded = null;
         List<Tok> Arg(string p, bool expand)
+        {
+            if (expand && expanded?.TryGetValue(p, out var cached) == true)
+            {
+                return cached;
+            }
+
+            var result = ArgUncached(p, expand);
+            if (expand)
+            {
+                (expanded ??= [])[p] = result;
+            }
+
+            return result;
+        }
+
+        List<Tok> ArgUncached(string p, bool expand)
         {
             var ix = m.Params!.IndexOf(p);
             var a = ix >= 0 && ix < args.Count ? args[ix] : [];
@@ -527,7 +602,8 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
         {
             return Ternary(toks, ref p);
         }
-        catch (Exception e) when (e is IndexOutOfRangeException or ArgumentOutOfRangeException or FormatException or DivideByZeroException or OverflowException)
+        catch (Exception e) when (e is IndexOutOfRangeException or ArgumentOutOfRangeException or FormatException or DivideByZeroException or OverflowException
+            or InsufficientExecutionStackException)
         {
             return 0;
         }
@@ -633,6 +709,7 @@ public sealed class Preprocessor(FileTable files, IReadOnlyList<string> includeD
 
     private static long Unary(List<Tok> t, ref int p)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // `#if ((((...` / `!!!!...`: give up on the expression, not the process
         var s = At(t, p);
         switch (s)
         {

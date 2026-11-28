@@ -17,6 +17,7 @@ public sealed class Checker(TsProgram program)
 
     private const int MaxDepth = 40;
     private const int MaxNest = 160;
+    private const int MaxVisitedContainers = 10_000;
     [ThreadStatic] private static int _nest;
     [ThreadStatic] private static HashSet<(Node, int)>? _activeSet;
     private static HashSet<(Node, int)> Active => _activeSet ??= [];
@@ -264,7 +265,8 @@ public sealed class Checker(TsProgram program)
 
     private List<Node>? LookupExportCore(TsSourceFile file, string name, HashSet<TsSourceFile> visited, bool keepAlias = false)
     {
-        if (!visited.Add(file)) { return null; }
+        // Recurses once per `export * from` hop; give up on absurdly long re-export chains rather than overflow.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack() || !visited.Add(file)) { return null; }
         var b = Program.BinderFor(file);
         var table = b.ExportTable(file.Root);
         if (table is not null)
@@ -506,7 +508,18 @@ public sealed class Checker(TsProgram program)
         }
     }
 
-    public List<Cont> TypeConts(Node t, Env? env, int depth) => Guarded(t, 3, depth, () => TypeContsCore(t, env, depth));
+    private readonly Dictionary<Node, List<Cont>> _typeCache = [];
+
+    public List<Cont> TypeConts(Node t, Env? env, int depth)
+    {
+        // Memoised like ValueConts (environment-free, uncut results only): aliases referring to the same alias several
+        // times (`type T2 = T1 | T1`, `T3 = T2 & T2` ...) were re-expanded once per path, exponential in their depth.
+        if (env is null && _typeCache.TryGetValue(t, out var cached)) { return cached; }
+        var before = _cuts;
+        var result = Guarded(t, 3, depth, () => TypeContsCore(t, env, depth));
+        if (env is null && _cuts == before) { _typeCache[t] = result; }
+        return result;
+    }
 
     private List<Cont> TypeContsCore(Node t, Env? env, int depth)
     {
@@ -534,12 +547,13 @@ public sealed class Checker(TsProgram program)
                 return [new Cont(t, env)];
             case SK.ParenthesizedType or SK.OptionalType or SK.RestType or SK.NamedTupleMember:
                 return t.Type is null ? [] : TypeConts(t.Type, env, depth + 1);
+            // Distinct: aliases that repeat an operand (`type T2 = T1 | T1 & T1`) otherwise grow exponentially with depth.
             case SK.UnionType:
-                return t.Elements.SelectMany(e => TypeConts(e, env, depth + 1)).Select(c => c with { Alt = true }).ToList();
+                return t.Elements.SelectMany(e => TypeConts(e, env, depth + 1)).Select(c => c with { Alt = true }).Distinct().ToList();
             case SK.IntersectionType:
             {
                 var group = ++_groups;
-                return t.Elements.SelectMany(e => TypeConts(e, env, depth + 1)).Select(c => c with { Group = group }).ToList();
+                return t.Elements.SelectMany(e => TypeConts(e, env, depth + 1)).Select(c => c with { Group = group }).Distinct().ToList();
             }
 
             case SK.TypeQuery:
@@ -791,7 +805,9 @@ public sealed class Checker(TsProgram program)
 
     private List<Hit> Members(List<Cont> containers, string name, HashSet<Cont> visited, int depth)
     {
-        if (depth > MaxDepth || ++_nest > MaxNest) { _nest--; _cuts++; return []; }
+        // Generic diamonds (`interface I1<T> extends I0<T>, J0<T>` ...) bind fresh type-argument environments on every
+        // path, so `visited` does not dedupe them: a lookup that fails walks 2^depth containers without this budget.
+        if (depth > MaxDepth || visited.Count > MaxVisitedContainers || ++_nest > MaxNest) { _nest--; _cuts++; return []; }
         try { return MembersCore(containers, name, visited, depth); }
         finally { _nest--; }
     }
@@ -1373,14 +1389,17 @@ public sealed class Checker(TsProgram program)
         if (fn.Body is null) { return []; }
         if (fn.Body.Kind != SK.Block) { return ValueConts(fn.Body, depth + 1); }
         var result = new List<Cont>();
-        void Walk(Node n)
+        // Pre-order walk with an explicit stack (else-if chains nest arbitrarily deep).
+        var stack = new Stack<Node>();
+        for (var i = fn.Body.Children.Count - 1; i >= 0; i--) { stack.Push(fn.Body.Children[i]); }
+        while (stack.Count > 0)
         {
-            if (n.Kind is SK.FunctionDeclaration or SK.FunctionExpression or SK.ArrowFunction or SK.MethodDeclaration or SK.ClassDeclaration or SK.ClassExpression) { return; }
-            if (n.Kind == SK.ReturnStatement && n.Expression is not null) { result.AddRange(ValueConts(n.Expression, depth + 1)); return; }
-            foreach (var c in n.Children) { Walk(c); }
+            var n = stack.Pop();
+            if (n.Kind is SK.FunctionDeclaration or SK.FunctionExpression or SK.ArrowFunction or SK.MethodDeclaration or SK.ClassDeclaration or SK.ClassExpression) { continue; }
+            if (n.Kind == SK.ReturnStatement && n.Expression is not null) { result.AddRange(ValueConts(n.Expression, depth + 1)); continue; }
+            for (var i = n.Children.Count - 1; i >= 0; i--) { stack.Push(n.Children[i]); }
         }
 
-        foreach (var c in fn.Body.Children) { Walk(c); }
         return result;
     }
 

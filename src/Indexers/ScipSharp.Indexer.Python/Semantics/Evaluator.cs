@@ -30,6 +30,16 @@ public sealed record ExternalEntity(string Module, string Name, bool IsClass) : 
 public sealed class Evaluator(ModuleSystem modules)
 {
     private readonly HashSet<Node> _inProgress = [];
+    private readonly HashSet<ClassNode> _basesInProgress = [];
+    private readonly Dictionary<FunctionNode, List<ReturnNode>> _returns = [];
+
+    // Work limits for one top-level evaluation. The depth parameters reset when evaluation crosses an import or a base
+    // class, so chains of re-exports with alternatives (`try: from a import X except ImportError: from b import X`)
+    // otherwise branch exponentially, and long import/assignment chains recurse without bound.
+    private const int MaxEvalNesting = 200;
+    private const int MaxEvalSteps = 2_000;
+    private int _evalNesting;
+    private int _evalSteps;
     private readonly Dictionary<ModuleKey, Entity?> _moduleCache = [];
 
     private readonly record struct ModuleKey(string Dotted, int Dots, string From);
@@ -102,7 +112,7 @@ public sealed class Evaluator(ModuleSystem modules)
 
             if (current.Symbols.TryGetValue(name, out var sym))
             {
-                var decls = sym.Declarations.Where(d => d.MemberOwner is null).ToArray();
+                var decls = sym.NonMemberDeclarations;
                 if (decls.Length > 0)
                 {
                     return decls;
@@ -280,10 +290,8 @@ public sealed class Evaluator(ModuleSystem modules)
 
         if (resolved.FilePath is not null && Modules.Load(resolved.FilePath) is { } target)
         {
-            var decls = target.ModuleScope.Symbols.TryGetValue(name, out var sym)
-                ? sym.Declarations.Where(d => d.MemberOwner is null).ToList()
-                : [];
-            if (decls.Count > 0)
+            var decls = target.ModuleScope.Symbols.TryGetValue(name, out var sym) ? sym.NonMemberDeclarations : [];
+            if (decls.Length > 0)
             {
                 var first = decls[0];
                 if (first.Kind == DeclKind.Alias)
@@ -447,6 +455,30 @@ public sealed class Evaluator(ModuleSystem modules)
             return null;
         }
 
+        if (_evalNesting == 0)
+        {
+            _evalSteps = 0;
+        }
+
+        if (_evalNesting >= MaxEvalNesting || ++_evalSteps > MaxEvalSteps
+            || !System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            return null;
+        }
+
+        _evalNesting++;
+        try
+        {
+            return EvalExpressionCore(module, node, depth);
+        }
+        finally
+        {
+            _evalNesting--;
+        }
+    }
+
+    private Entity? EvalExpressionCore(SourceModule module, Node node, int depth)
+    {
         switch (node)
         {
             case NameNode n:
@@ -465,41 +497,7 @@ public sealed class Evaluator(ModuleSystem modules)
             }
 
             case MemberAccessNode ma:
-            {
-                var left = EvalExpression(module, ma.Left, depth + 1);
-                if (left is ModuleEntity m)
-                {
-                    if (m.Remaining.Count > 0 && m.Remaining[0] == ma.Member.Value)
-                    {
-                        var dotted = m.Dotted + "." + ma.Member.Value;
-                        var resolved = Modules.Resolve(dotted.Split('.'), 0, module);
-                        SourceModule? src = null;
-                        if (resolved?.FilePath is not null)
-                        {
-                            src = Modules.Load(resolved.FilePath);
-                        }
-
-                        return new ModuleEntity(dotted, src, resolved, m.Remaining.Skip(1).ToList());
-                    }
-
-                    if (m.Source is null && Hardcoded.IsStdlibSubmodule(m.Dotted + "." + ma.Member.Value))
-                    {
-                        return new ModuleEntity(m.Dotted + "." + ma.Member.Value, null, new ResolvedModule(null, false, true, null), []);
-                    }
-                }
-
-                foreach (var d in MembersOf(module, left, ma.Member.Value).Take(3))
-                {
-                    var e = EntityOfDeclaration(d, depth + 1);
-                    if (e is not null)
-                    {
-                        return e;
-                    }
-                }
-
-                return null;
-            }
-
+                return EvalMember(module, ma, EvalExpression(module, ma.Left, depth + 1), depth);
             case StringListNode sl:
                 return new BuiltinInstanceEntity(sl.Strings.Count > 0 && IsBytesLiteral(module, sl.Strings[0]) ? "bytes" : "str");
             case SequenceNode { Kind: NodeKind.List }:
@@ -508,12 +506,29 @@ public sealed class Evaluator(ModuleSystem modules)
                 return new BuiltinInstanceEntity("set");
             case DictionaryNode:
                 return new BuiltinInstanceEntity("dict");
-            case CallNode { Left: MemberAccessNode bma } when EvalExpression(module, bma.Left, depth + 1) is BuiltinInstanceEntity bi:
-                return BuiltinMembers.Methods.TryGetValue(bi.Class, out var bm) && bm.TryGetValue(bma.Member.Value, out var retClass) && retClass.Length > 0
-                    ? new BuiltinInstanceEntity(retClass)
-                    : null;
             case CallNode call:
-                return EvalExpression(module, call.Left, depth + 1) switch
+            {
+                Entity? callee;
+                if (call.Left is MemberAccessNode bma)
+                {
+                    // The receiver is evaluated once and reused for the callee: evaluating `bma` again would evaluate its
+                    // receiver twice per link, i.e. 2^depth work on a fluent chain `a.b().c().d()...`.
+                    var receiver = EvalExpression(module, bma.Left, depth + 1);
+                    if (receiver is BuiltinInstanceEntity bi)
+                    {
+                        return BuiltinMembers.Methods.TryGetValue(bi.Class, out var bm) && bm.TryGetValue(bma.Member.Value, out var retClass) && retClass.Length > 0
+                            ? new BuiltinInstanceEntity(retClass)
+                            : null;
+                    }
+
+                    callee = depth + 1 > 12 ? null : EvalMember(module, bma, receiver, depth + 1);
+                }
+                else
+                {
+                    callee = EvalExpression(module, call.Left, depth + 1);
+                }
+
+                return callee switch
                 {
                     ExternalEntity { Module: "builtins", IsClass: true, Name: "str" or "bytes" or "list" or "dict" or "set" or "frozenset" or "tuple" or "int" or "float" } b => new BuiltinInstanceEntity(b.Name),
                     ClassEntity c => new InstanceEntity(c),
@@ -522,6 +537,8 @@ public sealed class Evaluator(ModuleSystem modules)
                     FunctionEntity f => InferReturn(f, depth + 1),
                     _ => null,
                 };
+            }
+
             case TernaryNode t:
                 return EvalExpression(module, t.IfExpression, depth + 1) ?? EvalExpression(module, t.ElseExpression, depth + 1);
             case AssignmentExpressionNode we:
@@ -529,6 +546,42 @@ public sealed class Evaluator(ModuleSystem modules)
             default:
                 return null;
         }
+    }
+
+    /// <summary>The member <paramref name="ma"/> of the already evaluated receiver <paramref name="left"/>.</summary>
+    private Entity? EvalMember(SourceModule module, MemberAccessNode ma, Entity? left, int depth)
+    {
+        if (left is ModuleEntity m)
+        {
+            if (m.Remaining.Count > 0 && m.Remaining[0] == ma.Member.Value)
+            {
+                var dotted = m.Dotted + "." + ma.Member.Value;
+                var resolved = Modules.Resolve(dotted.Split('.'), 0, module);
+                SourceModule? src = null;
+                if (resolved?.FilePath is not null)
+                {
+                    src = Modules.Load(resolved.FilePath);
+                }
+
+                return new ModuleEntity(dotted, src, resolved, m.Remaining.Skip(1).ToList());
+            }
+
+            if (m.Source is null && Hardcoded.IsStdlibSubmodule(m.Dotted + "." + ma.Member.Value))
+            {
+                return new ModuleEntity(m.Dotted + "." + ma.Member.Value, null, new ResolvedModule(null, false, true, null), []);
+            }
+        }
+
+        foreach (var d in MembersOf(module, left, ma.Member.Value).Take(3))
+        {
+            var e = EntityOfDeclaration(d, depth + 1);
+            if (e is not null)
+            {
+                return e;
+            }
+        }
+
+        return null;
     }
 
     private static bool IsBytesLiteral(SourceModule module, StringNode str)
@@ -556,26 +609,7 @@ public sealed class Evaluator(ModuleSystem modules)
 
         try
         {
-            var stack = new Stack<Node>();
-            stack.Push(f.Node.Suite);
-            var returns = new List<ReturnNode>();
-            while (stack.Count > 0)
-            {
-                var n = stack.Pop();
-                foreach (var c in n.Children().Where(c => c is not null).Reverse())
-                {
-                    if (c is ReturnNode r)
-                    {
-                        returns.Add(r);
-                    }
-                    else if (c is not (FunctionNode or ClassNode or LambdaNode))
-                    {
-                        stack.Push(c!);
-                    }
-                }
-            }
-
-            foreach (var r in returns.OrderBy(r => r.Start))
+            foreach (var r in ReturnsOf(f.Node))
             {
                 if (r.Value is not null && EvalExpression(f.Module, r.Value, depth + 1) is { } e)
                 {
@@ -589,6 +623,38 @@ public sealed class Evaluator(ModuleSystem modules)
         {
             _inProgress.Remove(f.Node);
         }
+    }
+
+    /// <summary>The function's own <c>return</c> statements in source order (cached: called for every call site).</summary>
+    private List<ReturnNode> ReturnsOf(FunctionNode fn)
+    {
+        if (_returns.TryGetValue(fn, out var cached))
+        {
+            return cached;
+        }
+
+        var stack = new Stack<Node>();
+        stack.Push(fn.Suite);
+        var returns = new List<ReturnNode>();
+        while (stack.Count > 0)
+        {
+            var n = stack.Pop();
+            foreach (var c in n.Children().Where(c => c is not null).Reverse())
+            {
+                if (c is ReturnNode r)
+                {
+                    returns.Add(r);
+                }
+                else if (c is not (FunctionNode or ClassNode or LambdaNode))
+                {
+                    stack.Push(c!);
+                }
+            }
+        }
+
+        returns = [.. returns.OrderBy(r => r.Start)];
+        _returns[fn] = returns;
+        return returns;
     }
 
     // ------------------------------------------------------------------ members
@@ -630,13 +696,27 @@ public sealed class Evaluator(ModuleSystem modules)
             return sym.Declarations;
         }
 
-        foreach (var b in BaseClasses(cls))
+        // `seen` only covers this lookup: evaluating a base expression such as `A.x` in `class A(A.x)` starts a new one, so
+        // classes whose bases are being searched are tracked too. The stack check bounds absurdly deep hierarchies.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack() || !_basesInProgress.Add(cls.Node))
         {
-            var found = ClassMembers(b, name, seen);
-            if (found.Count > 0)
+            return [];
+        }
+
+        try
+        {
+            foreach (var b in BaseClasses(cls))
             {
-                return found;
+                var found = ClassMembers(b, name, seen);
+                if (found.Count > 0)
+                {
+                    return found;
+                }
             }
+        }
+        finally
+        {
+            _basesInProgress.Remove(cls.Node);
         }
 
         return [];

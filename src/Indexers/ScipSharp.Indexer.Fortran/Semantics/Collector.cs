@@ -80,6 +80,13 @@ internal sealed partial class Collector(Workspace ws, Func<string, SourceDoc, So
     private SourceDoc _doc = null!;
     private List<Stmt> _out = null!;
     private int _includeDepth;
+    private int _nestedIncludes;
+
+    /// <summary>
+    /// Nested expansions allowed below one top-level INCLUDE. Includes are spliced textually (cpp guards are not
+    /// evaluated by default), so a diamond-shaped include graph would otherwise expand exponentially in its depth.
+    /// </summary>
+    internal const int MaxNestedIncludes = 1000;
     private readonly HashSet<string> _activeIncludes = new(StringComparer.Ordinal);
 
     private Scope Current
@@ -168,7 +175,21 @@ internal sealed partial class Collector(Workspace ws, Func<string, SourceDoc, So
     private void Include(string path, SourceDoc from)
     {
         var target = resolveInclude(path, from);
-        if (target is null || _includeDepth > 16 || !_activeIncludes.Add(target.AbsolutePath))
+        if (target is null || _includeDepth > 16)
+        {
+            return;
+        }
+
+        if (_includeDepth == 0)
+        {
+            _nestedIncludes = 0;
+        }
+        else if (++_nestedIncludes > MaxNestedIncludes)
+        {
+            return;
+        }
+
+        if (!_activeIncludes.Add(target.AbsolutePath))
         {
             return;
         }
@@ -344,6 +365,14 @@ internal sealed partial class Collector(Workspace ws, Func<string, SourceDoc, So
         var t = st.Tokens;
         if (i >= t.Count)
         {
+            return;
+        }
+
+        // Logical IF / WHERE re-dispatch their action statement recursively; a pathological chain must not overflow
+        // the stack: resolve the remaining tokens as a plain expression instead.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            Walk(st, i, t.Count, Current);
             return;
         }
 

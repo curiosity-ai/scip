@@ -201,9 +201,10 @@ internal sealed class RubyProject(GemMetadata gem)
             return cached;
         }
 
-        if (!_computing.Add(start))
+        // Re-entrant lookup while resolving this type's own ancestry: be conservative. The same answer on (absurdly)
+        // deep superclass/mixin chains: resolution runs after the per-file error handling, so it must not overflow.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack() || !_computing.Add(start))
         {
-            // Re-entrant lookup while resolving this type's own ancestry: be conservative.
             return [start];
         }
 
@@ -213,6 +214,12 @@ internal sealed class RubyProject(GemMetadata gem)
         {
             if (!seen.Add(t))
             {
+                return;
+            }
+
+            if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            {
+                result.Add(t);
                 return;
             }
 
@@ -459,6 +466,9 @@ internal sealed class RubyProject(GemMetadata gem)
 
     private int _typeDepth;
 
+    /// <summary>Current nesting of <see cref="Guarded"/> evaluations.</summary>
+    public int TypeDepth => _typeDepth;
+
     /// <summary>Evaluates a lazily-resolved type, cutting self-referential field assignments (<c>@a = @a</c>).</summary>
     public RType? Guarded(Func<RType?> f)
     {
@@ -558,6 +568,11 @@ internal sealed class RubyProject(GemMetadata gem)
         var mixins = new HashSet<TypeInfo>();
         void Mix(TypeInfo t)
         {
+            if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            {
+                return;
+            }
+
             foreach (var spec in t.Prepends.Concat(t.Includes))
             {
                 if (ResolveType(spec) is { } m && m != start && mixins.Add(m))

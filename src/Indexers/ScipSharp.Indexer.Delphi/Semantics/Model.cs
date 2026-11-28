@@ -157,7 +157,16 @@ internal sealed class Model
         }
 
         var visible = VisibleUnits(unitScope);
-        for (var k = partToks.Count - 1; k >= 2; k--)
+
+        // No visible unit name has more parts than the longest one: bounding k keeps a.b.c... (thousands of members)
+        // linear instead of joining every prefix.
+        if (!_maxUnitParts.TryGetValue(unitScope, out var maxParts))
+        {
+            maxParts = visible.Keys.Select(static n => n.AsSpan().Count('.') + 1).DefaultIfEmpty(0).Max();
+            _maxUnitParts[unitScope] = maxParts;
+        }
+
+        for (var k = Math.Min(partToks.Count - 1, maxParts); k >= 2; k--)
         {
             var name = string.Join(".", partToks.Take(k).Select(t => tokens[t].Text));
             if (visible.TryGetValue(name, out var u))
@@ -204,6 +213,8 @@ internal sealed class Model
     }
 
     private readonly Dictionary<UnitScope, Dictionary<string, Entity>> _visibleUnits = [];
+
+    private readonly Dictionary<UnitScope, int> _maxUnitParts = [];
 
     public Dictionary<string, Entity> VisibleUnits(UnitScope scope)
     {

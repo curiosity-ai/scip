@@ -21,6 +21,7 @@ public sealed partial class Parser
 
     private Node ParseAssignment(bool noIn = false)
     {
+        EnsureStack();
         var arrow = TryParseArrow();
         if (arrow is not null) { return arrow; }
 
@@ -62,7 +63,23 @@ public sealed partial class Parser
         return left;
     }
 
+    /// <summary>
+    /// Positions where <see cref="TryParseArrow"/> already failed. Without this, nested parenthesised expressions whose
+    /// speculation fails late (`(a = (b = (c = ...)))`) re-parse their contents once per enclosing level: 2^depth.
+    /// </summary>
+    private readonly HashSet<(int, bool)> _notArrow = [];
+
     private Node? TryParseArrow()
+    {
+        if (_s.Kind != T.Punct && !IsK("async")) { return TryParseArrowCore(); }
+        var start = _s.TokenStart;
+        if (_notArrow.Contains((start, _noConditional))) { return null; }
+        var result = TryParseArrowCore();
+        if (result is null) { _notArrow.Add((start, _noConditional)); }
+        return result;
+    }
+
+    private Node? TryParseArrowCore()
     {
         var isAsync = false;
         var start = _s.TokenStart;
@@ -191,6 +208,7 @@ public sealed partial class Parser
 
     private Node ParseUnary()
     {
+        EnsureStack();
         if (_s.Kind == T.Punct)
         {
             if (_s.TokenText is "!" or "~" or "+" or "-" or "++" or "--")
@@ -247,17 +265,34 @@ public sealed partial class Parser
         return Fin(n);
     }
 
+    /// <summary>
+    /// Positions where type arguments failed to parse. `a &lt; b &lt; c &lt; ...` speculatively parses the whole rest of
+    /// the chain as nested type arguments at every `&lt;`; remembering failures keeps that linear.
+    /// </summary>
+    private readonly HashSet<(int, bool)> _failedTypeArguments = [];
+
     private void ParseTypeArguments(Node owner)
     {
-        if (IsP("<<")) { _s.SplitFirstChar(); }
-        ExpectP("<");
-        while (!IsP(">") && _s.Kind != T.Eof)
+        var key = (_s.TokenStart, _noConditional);
+        if (_failedTypeArguments.Contains(key)) { Fail("type arguments expected"); }
+        var ok = false;
+        try
         {
-            owner.TypeArguments.Add(ParseType());
-            if (!EatP(",")) { break; }
-        }
+            if (IsP("<<")) { _s.SplitFirstChar(); }
+            ExpectP("<");
+            while (!IsP(">") && _s.Kind != T.Eof)
+            {
+                owner.TypeArguments.Add(ParseType());
+                if (!EatP(",")) { break; }
+            }
 
-        ExpectP(">");
+            ExpectP(">");
+            ok = true;
+        }
+        finally
+        {
+            if (!ok) { _failedTypeArguments.Add(key); }
+        }
     }
 
     private void ParseArguments(Node call)
@@ -433,6 +468,7 @@ public sealed partial class Parser
             return Fin(meta);
         }
 
+        EnsureStack();
         Node callee = IsK("new") ? ParseNew() : ParsePrimary();
         while (true)
         {

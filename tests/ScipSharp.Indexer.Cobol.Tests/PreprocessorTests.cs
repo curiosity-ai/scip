@@ -5,12 +5,12 @@ namespace ScipSharp.Indexer.Cobol.Tests;
 /// <summary>COPY / REPLACING / REPLACE on token streams (no files: copybooks come from an in-memory map).</summary>
 public class PreprocessorTests
 {
-    private static PreprocessedSource Run(string main, Dictionary<string, string> books, List<string>? warnings = null)
+    private static PreprocessedSource Run(string main, Dictionary<string, string> books, List<string>? warnings = null, int maxExpandedTokens = Preprocessor.MaxExpandedTokens)
     {
         var names = books.Keys.ToList();
         IReadOnlyList<Token> LexBook(int id) => Lexer.Lex(books[names[id - 1]], id, SourceFormat.Free);
         int Resolve(string name, string? library, int includer) => names.FindIndex(n => n.Equals(name, StringComparison.OrdinalIgnoreCase)) is >= 0 and var i ? i + 1 : -1;
-        var pre = new Preprocessor(LexBook, Resolve, warnings is null ? null : warnings.Add);
+        var pre = new Preprocessor(LexBook, Resolve, warnings is null ? null : warnings.Add, maxExpandedTokens);
         return pre.Process(0, Lexer.Lex(main, 0, SourceFormat.Free));
     }
 
@@ -121,5 +121,22 @@ public class PreprocessorTests
     {
         var result = Run("EJECT\nMOVE A TO B.\nSKIP2\nTITLE 'X'.\nDISPLAY B.", []);
         await Assert.That(Text(result)).IsEqualTo("MOVE A TO B . DISPLAY B .");
+    }
+
+    [Test]
+    public async Task DiamondCopyGraphIsBoundedInsteadOfExpandingExponentially()
+    {
+        // Each copybook copies the next one twice: 2^40 copies without the expansion budget.
+        var books = new Dictionary<string, string>();
+        for (var d = 0; d < 40; d++)
+        {
+            books[$"C{d}"] = d < 39 ? $"01 V{d} PIC X. COPY C{d + 1}. COPY C{d + 1}." : $"01 V{d} PIC X.";
+        }
+
+        var warnings = new List<string>();
+        var result = Run("COPY C0. 01 LAST-ONE PIC X.", books, warnings, maxExpandedTokens: 20_000);
+        await Assert.That(result.Tokens.Count).IsLessThanOrEqualTo(20_000 + 10);
+        await Assert.That(result.Tokens[^4].Text).IsEqualTo("LAST-ONE");
+        await Assert.That(warnings.Any(w => w.Contains("copybook tokens expanded", StringComparison.Ordinal))).IsTrue();
     }
 }

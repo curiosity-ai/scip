@@ -71,6 +71,15 @@ internal sealed class Lexer(string src)
     private int _pos;
     private DocComment? _pendingDoc;
 
+    // Interpolations (`"{$a["{$b}"]}"`) are lexed recursively; malformed input such as many unclosed `"{$x` nests one
+    // level per occurrence, so the depth is capped (a parse error: the file is skipped) instead of overflowing the stack.
+    private const int MaxNesting = 256;
+    private int _nesting;
+
+    // Heredoc labels for which no closing marker exists at or after the given offset (so a file with many unterminated
+    // `<<<X` does not rescan the rest of the file for each).
+    private readonly Dictionary<string, int> _noHeredocEnd = new(StringComparer.Ordinal);
+
     public List<Token> Tokenize()
     {
         var tokens = new List<Token>();
@@ -186,6 +195,16 @@ internal sealed class Lexer(string src)
         }
     }
 
+    private void EnterNesting(int at)
+    {
+        if (_nesting >= MaxNesting || !System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new ParseException($"string interpolation nested too deeply at offset {at}", at);
+        }
+
+        _nesting++;
+    }
+
     private bool StartsWithIgnoreCase(int at, string s) =>
         at + s.Length <= src.Length && string.Compare(src, at, s, 0, s.Length, StringComparison.OrdinalIgnoreCase) == 0;
 
@@ -196,11 +215,15 @@ internal sealed class Lexer(string src)
         return t;
     }
 
-    /// <summary>Lexes PHP code until end of input (or the unbalanced closing brace when <paramref name="stopAtBrace"/>).</summary>
-    private void LexPhpInto(List<Token> tokens, bool stopAtBrace)
+    /// <summary>
+    /// Lexes PHP code until end of input (or the unbalanced closing brace when <paramref name="stopAtBrace"/>), but not
+    /// past <paramref name="limit"/> (the end of the enclosing string for an interpolation).
+    /// </summary>
+    private void LexPhpInto(List<Token> tokens, bool stopAtBrace, int limit = int.MaxValue)
     {
         var depth = 0;
-        while (_i < src.Length)
+        var end = Math.Min(limit, src.Length);
+        while (_i < end)
         {
             var c = src[_i];
             if (IsWs(c))
@@ -511,6 +534,19 @@ internal sealed class Lexer(string src)
     /// <summary>Skips a <c>{$expr}</c> interpolation starting at the brace, including nested string literals; returns the index after the closing brace.</summary>
     private int SkipBraceExpr(int j)
     {
+        EnterNesting(j);
+        try
+        {
+            return SkipBraceExprCore(j);
+        }
+        finally
+        {
+            _nesting--;
+        }
+    }
+
+    private int SkipBraceExprCore(int j)
+    {
         var depth = 0;
         while (j < src.Length)
         {
@@ -654,6 +690,11 @@ internal sealed class Lexer(string src)
         j++;
         var bodyStart = j;
 
+        if (_noHeredocEnd.TryGetValue(id, out var noEndFrom) && bodyStart >= noEndFrom)
+        {
+            return false;
+        }
+
         // Find the closing marker: at the start of a line, optionally indented, not followed by an identifier char.
         var lineStart = bodyStart;
         var bodyEnd = -1;
@@ -684,6 +725,7 @@ internal sealed class Lexer(string src)
 
         if (end < 0)
         {
+            _noHeredocEnd[id] = bodyStart;
             return false;
         }
 
@@ -720,6 +762,19 @@ internal sealed class Lexer(string src)
 
     /// <summary>Splits the body of an interpolated string into literal and expression parts.</summary>
     private List<TplPart> ScanTemplate(int from, int to, bool heredoc)
+    {
+        EnterNesting(from);
+        try
+        {
+            return ScanTemplateCore(from, to, heredoc);
+        }
+        finally
+        {
+            _nesting--;
+        }
+    }
+
+    private List<TplPart> ScanTemplateCore(int from, int to, bool heredoc)
     {
         _ = heredoc;
         var parts = new List<TplPart>();
@@ -829,7 +884,7 @@ internal sealed class Lexer(string src)
                 var tokens = new List<Token>();
                 _i = inner;
                 var savedDoc = _pendingDoc;
-                LexPhpInto(tokens, stopAtBrace: true);
+                LexPhpInto(tokens, stopAtBrace: true, limit: to);
                 _pendingDoc = savedDoc;
                 var close = _i;
                 _i = saveI;

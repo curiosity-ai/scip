@@ -50,10 +50,7 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
     public List<AbstractToken> GetTokens()
     {
         var tokens = new List<AbstractToken>();
-        foreach (var c in GetChildren())
-        {
-            ToTokens(c, tokens);
-        }
+        NodeWalk.Tokens(GetChildren(), tokens);
         return tokens;
     }
 
@@ -72,16 +69,13 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
     public List<TokenNode> GetTokenNodes()
     {
         var tokens = new List<TokenNode>();
-        foreach (var c in GetChildren())
-        {
-            ToTokenNodes(c, tokens);
-        }
+        NodeWalk.TokenNodes(GetChildren(), tokens);
         return tokens;
     }
 
     public string ConcatTokens()
     {
-        var str = "";
+        var str = new System.Text.StringBuilder();
         AbstractToken? prev = null;
         foreach (var token in GetTokens())
         {
@@ -89,27 +83,27 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
             {
                 continue;
             }
-            if (str == "")
+            if (str.Length == 0)
             {
-                str = token.GetStr();
+                str.Append(token.GetStr());
             }
             else if (prev != null && prev.GetStr().Length + prev.GetCol() == token.GetCol()
                 && prev.GetRow() == token.GetRow())
             {
-                str = str + token.GetStr();
+                str.Append(token.GetStr());
             }
             else
             {
-                str = str + " " + token.GetStr();
+                str.Append(' ').Append(token.GetStr());
             }
             prev = token;
         }
-        return str;
+        return str.ToString();
     }
 
     public string ConcatTokensVirtual()
     {
-        var str = "";
+        var str = new System.Text.StringBuilder();
         AbstractToken? prev = null;
         foreach (var token in GetTokens())
         {
@@ -119,28 +113,28 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
             }
             var vprev = prev?.GetStart() as VirtualPosition;
             var vtoke = token.GetStart() as VirtualPosition;
-            if (str == "")
+            if (str.Length == 0)
             {
-                str = token.GetStr();
+                str.Append(token.GetStr());
             }
             else if (prev != null && vprev != null && vtoke != null
                 && prev.GetStr().Length + vprev.vcol == vtoke.vcol
                 && vprev.vrow == vtoke.vrow)
             {
-                str = str + token.GetStr();
+                str.Append(token.GetStr());
             }
             else
             {
-                str = str + " " + token.GetStr();
+                str.Append(' ').Append(token.GetStr());
             }
             prev = token;
         }
-        return str;
+        return str.ToString();
     }
 
     public string ConcatTokensWithoutStringsAndComments()
     {
-        var str = "";
+        var str = new System.Text.StringBuilder();
         AbstractToken? prev = null;
         foreach (var token in GetTokens())
         {
@@ -153,46 +147,36 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
             {
                 continue;
             }
-            if (str == "")
+            if (str.Length == 0)
             {
-                str = token.GetStr();
+                str.Append(token.GetStr());
             }
             else if (prev != null && prev.GetStr().Length + prev.GetCol() == token.GetCol()
                 && prev.GetRow() == token.GetRow())
             {
-                str = str + token.GetStr();
+                str.Append(token.GetStr());
             }
             else
             {
-                str = str + " " + token.GetStr();
+                str.Append(' ').Append(token.GetStr());
             }
             prev = token;
         }
-        return str;
+        return str.ToString();
     }
 
     public string GetTerminator() => GetLastToken().GetStr();
 
     public override AbstractToken GetFirstToken()
     {
-        foreach (var child in GetChildren())
+        if (GetChildren().Count == 0)
         {
-            return child.GetFirstToken();
+            throw new InvalidOperationException("StatementNode, getFirstToken, no children, " + Get().GetType().Name);
         }
-        throw new InvalidOperationException("StatementNode, getFirstToken, no children, " + Get().GetType().Name);
+        return NodeWalk.FirstToken(this, "StatementNode");
     }
 
-    public override AbstractToken GetLastToken()
-    {
-        var child = GetLastChild();
-
-        if (child != null)
-        {
-            return child.GetLastToken();
-        }
-
-        throw new InvalidOperationException("StatementNode, getLastToken, no children");
-    }
+    public override AbstractToken GetLastToken() => NodeWalk.LastToken(this, "StatementNode");
 
     public ExpressionNode? FindDirectExpression<T>() where T : IStatementRunnable => FindDirectExpression(typeof(T));
 
@@ -253,26 +237,7 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
 
     public ExpressionNode? FindFirstExpression(Type type)
     {
-        foreach (var child in GetChildren())
-        {
-            if (child is not ExpressionNode en)
-            {
-                continue;
-            }
-            else if (NodeTypeCheck.Is(en.Get(), type))
-            {
-                return en;
-            }
-            else
-            {
-                var res = en.FindFirstExpression(type);
-                if (res != null)
-                {
-                    return res;
-                }
-            }
-        }
-        return null;
+        return NodeWalk.FirstExpression(GetChildren(), type);
     }
 
     public List<ExpressionNode> FindAllExpressions<T>() where T : IStatementRunnable => FindAllExpressions(typeof(T));
@@ -280,21 +245,7 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
     public List<ExpressionNode> FindAllExpressions(Type type)
     {
         var ret = new List<ExpressionNode>();
-        foreach (var child in GetChildren())
-        {
-            if (child is not ExpressionNode en)
-            {
-                continue;
-            }
-            else if (NodeTypeCheck.Is(en.Get(), type))
-            {
-                ret.Add(en);
-            }
-            else
-            {
-                ret.AddRange(en.FindAllExpressions(type));
-            }
-        }
+        NodeWalk.Expressions(GetChildren(), [type], static matches => matches == 0, ret);
         return ret;
     }
 
@@ -303,43 +254,14 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
     public List<ExpressionNode> FindAllExpressionsRecursive(Type type)
     {
         var ret = new List<ExpressionNode>();
-        foreach (var child in GetChildren())
-        {
-            if (child is not ExpressionNode en)
-            {
-                continue;
-            }
-            else if (NodeTypeCheck.Is(en.Get(), type))
-            {
-                ret.Add(en);
-            }
-            ret.AddRange(en.FindAllExpressionsRecursive(type));
-        }
+        NodeWalk.Expressions(GetChildren(), [type], static _ => true, ret);
         return ret;
     }
 
     public List<ExpressionNode> FindAllExpressionsMulti(Type[] type, bool recursive = false)
     {
         var ret = new List<ExpressionNode>();
-        foreach (var child in GetChildren())
-        {
-            if (child is not ExpressionNode en)
-            {
-                continue;
-            }
-            var before = ret.Count;
-            foreach (var t in type)
-            {
-                if (NodeTypeCheck.Is(en.Get(), t))
-                {
-                    ret.Add(en);
-                }
-            }
-            if (before == ret.Count || recursive)
-            {
-                ret.AddRange(en.FindAllExpressionsMulti(type, recursive));
-            }
-        }
+        NodeWalk.Expressions(GetChildren(), type, matches => matches == 0 || recursive, ret);
         return ret;
     }
 
@@ -412,50 +334,6 @@ public class StatementNode : AbstractNode<IExpressionOrTokenNode>, IStructureOrS
         }
 
         return ret;
-    }
-
-    ////////////////////////////////
-
-    private static void ToTokens(INode b, List<AbstractToken> tokens)
-    {
-        if (b is TokenNode tn)
-        {
-            tokens.Add(tn.Get());
-            return;
-        }
-
-        foreach (var c in b.GetChildren())
-        {
-            if (c is TokenNode ctn)
-            {
-                tokens.Add(ctn.Get());
-            }
-            else
-            {
-                ToTokens(c, tokens);
-            }
-        }
-    }
-
-    private static void ToTokenNodes(INode b, List<TokenNode> tokens)
-    {
-        if (b is TokenNode tn)
-        {
-            tokens.Add(tn);
-            return;
-        }
-
-        foreach (var c in b.GetChildren())
-        {
-            if (c is TokenNode ctn)
-            {
-                tokens.Add(ctn);
-            }
-            else
-            {
-                ToTokenNodes(c, tokens);
-            }
-        }
     }
 
     public override string ToString() => "StatementNode " + statement.GetType().Name + " " + ConcatTokens();

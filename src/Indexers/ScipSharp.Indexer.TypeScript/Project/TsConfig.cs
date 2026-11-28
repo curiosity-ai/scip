@@ -291,12 +291,15 @@ public static class TsConfig
     private static IEnumerable<string> EnumerateFiles(string root, List<Regex> excludes)
     {
         var stack = new Stack<string>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
         stack.Push(root);
         while (stack.Count > 0)
         {
             var dir = stack.Pop();
             var norm = dir.Replace('\\', '/');
             if (excludes.Any(r => r.IsMatch(norm))) { continue; }
+            // Like TypeScript's matchFiles, visit each real directory once: symlink cycles (`ln -s .. up`) would never end.
+            if (!visited.Add(DirectoryKey(dir))) { continue; }
             string[] files;
             string[] dirs;
             try
@@ -304,7 +307,7 @@ public static class TsConfig
                 files = Directory.GetFiles(dir);
                 dirs = Directory.GetDirectories(dir);
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception e) when (e is UnauthorizedAccessException or IOException)
             {
                 continue;
             }
@@ -312,6 +315,21 @@ public static class TsConfig
             foreach (var f in files) { yield return f; }
             foreach (var d in dirs) { stack.Push(d); }
         }
+    }
+
+    /// <summary>Identity of a directory for cycle detection: a symbolic link stands for its final target.</summary>
+    internal static string DirectoryKey(string dir)
+    {
+        try
+        {
+            if (new DirectoryInfo(dir).ResolveLinkTarget(returnFinalTarget: true) is { } target) { return Path.GetFullPath(target.FullName).Replace('\\', '/').TrimEnd('/'); }
+        }
+        catch (IOException)
+        {
+            // dangling or looping link: fall back to the path itself
+        }
+
+        return Path.GetFullPath(dir).Replace('\\', '/').TrimEnd('/');
     }
 
     // ------------------------------------------------------------------ port of inferTsconfig.ts

@@ -238,12 +238,43 @@ internal sealed class Lexer(SourceText source)
     private void SkipBraceComment()
     {
         var start = _pos;
-        if (!SkipBraceComment(NestedComments))
+        if (!SkipBraceComment(NestedComments && !NestingFails(start)))
         {
             // Unbalanced nesting would swallow the rest of the file: treat this comment as non-nesting.
             _pos = start;
+            _braceDepth ??= BraceDepths(out _braceSuffixMin);
             SkipBraceComment(false);
         }
+    }
+
+    /// <summary>Brace depth before each offset (count of '{' minus '}'), and its suffix minimum.</summary>
+    private int[]? _braceDepth;
+
+    private int[]? _braceSuffixMin;
+
+    /// <summary>
+    /// After one nested scan failed (ran to EOF), predicts in O(1) whether a nested scan from <paramref name="start"/>
+    /// would fail too: it does iff the brace depth never drops back to its value at <paramref name="start"/>. Without
+    /// this, every later comment containing a stray '{' re-scans to the end of the file (quadratic).
+    /// </summary>
+    private bool NestingFails(int start) => _braceDepth is not null && _braceSuffixMin![start + 1] > _braceDepth[start];
+
+    private int[] BraceDepths(out int[] suffixMin)
+    {
+        var depth = new int[_text.Length + 1];
+        for (var i = 0; i < _text.Length; i++)
+        {
+            depth[i + 1] = depth[i] + (_text[i] == '{' ? 1 : _text[i] == '}' ? -1 : 0);
+        }
+
+        suffixMin = new int[_text.Length + 1];
+        suffixMin[_text.Length] = depth[_text.Length];
+        for (var i = _text.Length - 1; i >= 0; i--)
+        {
+            suffixMin[i] = Math.Min(depth[i], suffixMin[i + 1]);
+        }
+
+        return depth;
     }
 
     private bool SkipBraceComment(bool nested)

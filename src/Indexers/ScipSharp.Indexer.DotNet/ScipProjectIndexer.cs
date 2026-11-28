@@ -250,6 +250,19 @@ internal sealed partial class ScipProjectIndexer
                 continue;
             }
 
+            // Roslyn's parser recurses without a guard on some deeply nested syntax (e.g. thousands of nested
+            // parentheses) and overflows the stack, which kills the process. Compiling any document parses all of
+            // them, so such files are taken out of the project up front.
+            foreach (var document in project.Documents.ToList())
+            {
+                if (await MaxBracketNestingAsync(document, cancellationToken) > MaxBracketNesting)
+                {
+                    Console.Error.WriteLine(
+                        $"warning: Skipping document {document.FilePath} because its brackets nest more than {MaxBracketNesting} levels deep");
+                    project = project.RemoveDocument(document.Id);
+                }
+            }
+
             var globals = new Dictionary<ISymbol, ScipSymbol>(SymbolEqualityComparer.Default);
             foreach (var document in project.Documents)
             {
@@ -259,6 +272,32 @@ internal sealed partial class ScipProjectIndexer
                 }
             }
         }
+    }
+
+    private const int MaxBracketNesting = 1000;
+
+    /// <summary>Deepest nesting of <c>( [ {</c> in the document's tokens (lexing, unlike parsing, does not recurse).</summary>
+    private static async Task<int> MaxBracketNestingAsync(Document document, CancellationToken cancellationToken)
+    {
+        var text = (await document.GetTextAsync(cancellationToken)).ToString();
+        var tokens = document.Project.Language == LanguageNames.CSharp
+            ? Microsoft.CodeAnalysis.CSharp.SyntaxFactory.ParseTokens(text)
+            : Microsoft.CodeAnalysis.VisualBasic.SyntaxFactory.ParseTokens(text);
+        int depth = 0, max = 0;
+        foreach (var token in tokens)
+        {
+            switch (token.Text)
+            {
+                case "(" or "[" or "{":
+                    max = Math.Max(max, ++depth);
+                    break;
+                case ")" or "]" or "}":
+                    depth = Math.Max(0, depth - 1);
+                    break;
+            }
+        }
+
+        return max;
     }
 
     private async Task<ScipSharp.Document> IndexDocument(
@@ -286,13 +325,26 @@ internal sealed partial class ScipProjectIndexer
 
         var indexer = new ScipDocumentIndexer(doc, options, globals, ExternalSymbols, DefinedSymbols, _emittedRelationships);
         var root = await document.GetSyntaxRootAsync(cancellationToken);
-        if (language == "C#")
+        if (root is null)
         {
-            new ScipCSharpSyntaxWalker(indexer, semanticModel).Visit(root);
+            return doc;
         }
-        else
+
+        try
         {
-            new ScipVisualBasicSyntaxWalker(indexer, semanticModel).Visit(root);
+            if (language == "C#")
+            {
+                new ScipCSharpSyntaxWalker(indexer, semanticModel).Walk(root);
+            }
+            else
+            {
+                new ScipVisualBasicSyntaxWalker(indexer, semanticModel).Walk(root);
+            }
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            // Roslyn's binder guards its recursion with this exception: keep what was indexed and go on.
+            Console.Error.WriteLine($"warning: {document.FilePath} is nested too deeply to index completely");
         }
 
         return doc;

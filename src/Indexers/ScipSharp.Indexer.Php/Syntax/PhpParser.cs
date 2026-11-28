@@ -48,6 +48,12 @@ internal sealed class PhpParser
     private int _p;
     private int _prevEnd;
 
+    // Nesting guard: nested expressions and statements recurse here (several frames per level), so input nested deeper
+    // than this, or deep enough to exhaust the stack, is a parse error (the file is skipped) rather than a process crash.
+    // Left-associative chains (`$a->b()->c()`, `'a' . 'b' . ...`, elseif) are parsed in loops and do not count.
+    private const int MaxNesting = 2000;
+    private int _nesting;
+
     // Name resolution context.
     private string? _ns;
     private Dictionary<string, string> _classAliases = new(StringComparer.OrdinalIgnoreCase);
@@ -60,6 +66,7 @@ internal sealed class PhpParser
         _toks = toks;
         if (parent != null)
         {
+            _nesting = parent._nesting;
             _ns = parent._ns;
             _classAliases = parent._classAliases;
             _funcAliases = parent._funcAliases;
@@ -82,15 +89,37 @@ internal sealed class PhpParser
         return file;
     }
 
-    private static void Connect(Node n)
+    private static void Connect(Node root)
     {
+        // Iterative (long chains make deep trees), assigning parents in the same pre-order as a recursive walk.
+        var stack = new Stack<(Node Node, Node? Parent)>();
         var kids = new List<Node>();
-        n.Children(kids);
-        foreach (var k in kids)
+        stack.Push((root, null));
+        while (stack.Count > 0)
         {
-            k.Parent = n;
-            Connect(k);
+            var (n, parent) = stack.Pop();
+            if (parent != null)
+            {
+                n.Parent = parent;
+            }
+
+            kids.Clear();
+            n.Children(kids);
+            for (var i = kids.Count - 1; i >= 0; i--)
+            {
+                stack.Push((kids[i], n));
+            }
         }
+    }
+
+    private void EnterNesting()
+    {
+        if (_nesting >= MaxNesting || !System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw Error("nesting too deep");
+        }
+
+        _nesting++;
     }
 
     // ---------------------------------------------------------------- token helpers
@@ -339,6 +368,19 @@ internal sealed class PhpParser
     }
 
     private Stmt? ParseStatement()
+    {
+        EnterNesting();
+        try
+        {
+            return ParseStatementCore();
+        }
+        finally
+        {
+            _nesting--;
+        }
+    }
+
+    private Stmt? ParseStatementCore()
     {
         var t = Cur;
         switch (t.Kind)
@@ -1581,6 +1623,19 @@ internal sealed class PhpParser
     private static readonly HashSet<string> AssignOps = ["=", "+=", "-=", "*=", "/=", ".=", "%=", "&=", "|=", "^=", "<<=", ">>=", "**=", "??="];
 
     private Expr ParseExpr(int minPrec)
+    {
+        EnterNesting();
+        try
+        {
+            return ParseExprCore(minPrec);
+        }
+        finally
+        {
+            _nesting--;
+        }
+    }
+
+    private Expr ParseExprCore(int minPrec)
     {
         var start = Cur;
         var left = ParseUnary();

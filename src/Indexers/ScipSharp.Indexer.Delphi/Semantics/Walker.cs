@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Delphi.Emit;
 using ScipSharp.Indexer.Delphi.Syntax;
 
@@ -83,7 +84,7 @@ internal sealed class Walker
             {
                 VisitDecl(d, scope);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or KeyNotFoundException)
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or KeyNotFoundException or InsufficientExecutionStackException)
             {
                 // Never let one declaration abort the whole file.
             }
@@ -92,6 +93,7 @@ internal sealed class Walker
 
     private void VisitDecl(Decl d, Scope scope)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deeply nested source: caught per declaration / per file
         VisitAttributes(d.Attributes, scope);
         switch (d)
         {
@@ -388,6 +390,7 @@ internal sealed class Walker
 
     private void VisitType(TypeNode? node, Scope scope, Entity? owner = null)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deeply nested source: caught per declaration / per file
         switch (node)
         {
             case null:
@@ -519,6 +522,7 @@ internal sealed class Walker
     /// <summary>Walks the tokens <c>[start, end)</c>, resolving every name found.</summary>
     public void Walk(int start, int end, Scope scope)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deeply nested source: caught per declaration / per file
         var stack = new List<(int End, Scope Saved)>();
         var i = start;
         var guard = 0;
@@ -601,9 +605,8 @@ internal sealed class Walker
             return 0;
         }
 
-        var depth = 0;
         var count = 1;
-        for (var j = open; j < _t.Count; j++)
+        for (var j = open + 1; j < _t.Count; j++)
         {
             var t = T(j);
             if (t.IsEof)
@@ -613,17 +616,14 @@ internal sealed class Walker
 
             if (t.IsSymbol("(") || t.IsSymbol("["))
             {
-                depth++;
+                // Jump over nested groups (instead of tracking depth): f(f(f(...))) stays linear, not quadratic.
+                j = _parser.SkipParens(j) - 1;
             }
             else if (t.IsSymbol(")") || t.IsSymbol("]"))
             {
-                depth--;
-                if (depth == 0)
-                {
-                    break;
-                }
+                break;
             }
-            else if (depth == 1 && t.IsSymbol(","))
+            else if (t.IsSymbol(","))
             {
                 count++;
             }
@@ -900,19 +900,15 @@ internal sealed class Walker
         var close = Math.Min(_parser.SkipParens(i), end);
         var innerEnd = close - 1;
         var asIdx = -1;
-        var depth = 0;
         for (var k = i + 1; k < innerEnd; k++)
         {
             var t = T(k);
             if (t.IsSymbol("(") || t.IsSymbol("["))
             {
-                depth++;
+                // Jump over nested groups (instead of tracking depth): deep nesting stays linear, not quadratic.
+                k = _parser.SkipParens(k) - 1;
             }
-            else if (t.IsSymbol(")") || t.IsSymbol("]"))
-            {
-                depth--;
-            }
-            else if (depth == 0 && t.IsKeyword("as"))
+            else if (t.IsKeyword("as"))
             {
                 asIdx = k;
             }
@@ -1074,6 +1070,8 @@ internal sealed class Walker
         return limit;
     }
 
+    private const int MaxWithScopes = 32;
+
     private int WalkWith(int i, int end, ref Scope scope, List<(int End, Scope Saved)> stack)
     {
         var j = i + 1;
@@ -1110,11 +1108,30 @@ internal sealed class Walker
             return j;
         }
 
+        // Every name looked up inside searches all enclosing with-scopes: in malformed input (no `;`/`end`/`do`)
+        // thousands pile up and lookups turn quadratic. Real code never nests this deep, so further ones are ignored.
+        var withDepth = 0;
+        for (var s = scope; s is not null && withDepth < MaxWithScopes; s = s.Parent)
+        {
+            if (s is WithScope)
+            {
+                withDepth++;
+            }
+        }
+
+        if (withDepth >= MaxWithScopes)
+        {
+            return j + 1;
+        }
+
         var stmtEnd = StatementEnd(j + 1, end);
         stack.Add((stmtEnd, scope));
         foreach (var ty in types)
         {
-            scope = new WithScope(ty, _model, scope);
+            if (withDepth++ < MaxWithScopes)
+            {
+                scope = new WithScope(ty, _model, scope);
+            }
         }
 
         return j + 1;
@@ -1353,6 +1370,14 @@ internal sealed class Walker
         VisitType(rd.Return, scope);
         if (rd.Body is { } body)
         {
+            // An anonymous method lies inside the region being walked. In broken code its parse (an unterminated
+            // `begin`) runs past it; walking that tail here and again in every enclosing walk multiplied the work.
+            body.Locals.RemoveAll(d => d.Start >= end);
+            if (body.Block.End > end)
+            {
+                body.Block = new TokRange(body.Block.Start, Math.Max(body.Block.Start, end));
+            }
+
             VisitBody(rd, body, e, OwnerTypeOf(scope), scope);
         }
 

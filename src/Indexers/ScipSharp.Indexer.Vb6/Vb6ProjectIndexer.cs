@@ -54,7 +54,7 @@ public sealed class Vb6ProjectIndexer(string projectRoot, Vb6Options? options = 
 
         foreach (var project in ws.Projects.Where(p => p.Vbp is not null))
         {
-            var builder = ProjectDocument(project, ws.ProjectSources[project]);
+            var builder = ProjectDocument(project, ws.ProjectSources[project], ws.Listings);
             Emit(builder, ws.ProjectSources[project]);
         }
 
@@ -64,7 +64,7 @@ public sealed class Vb6ProjectIndexer(string projectRoot, Vb6Options? options = 
             var dir = Path.GetDirectoryName(group.Path)!;
             foreach (var (raw, span) in group.Projects)
             {
-                var path = Workspace.ResolvePath(dir, raw);
+                var path = Workspace.ResolvePath(dir, raw, ws.Listings);
                 var project = ws.Projects.FirstOrDefault(p => p.Vbp is not null && string.Equals(p.Vbp.Path, path, StringComparison.OrdinalIgnoreCase));
                 if (project is not null)
                 {
@@ -114,7 +114,7 @@ public sealed class Vb6ProjectIndexer(string projectRoot, Vb6Options? options = 
     }
 
     /// <summary>The .vbp document: the project name defines the project symbol; module lines and Startup reference modules.</summary>
-    private static DocumentBuilder ProjectDocument(ProjectInfo project, SourceText source)
+    private static DocumentBuilder ProjectDocument(ProjectInfo project, SourceText source, Dictionary<string, Dictionary<string, string>?> listings)
     {
         var vbp = project.Vbp!;
         var builder = new DocumentBuilder(project.VbpRelativePath!, "Ini");
@@ -126,11 +126,16 @@ public sealed class Vb6ProjectIndexer(string projectRoot, Vb6Options? options = 
 
         builder.Define(project.Sym);
         var dir = Path.GetDirectoryName(vbp.Path)!;
+        var modulesByPath = new Dictionary<string, ModuleInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in project.Modules)
+        {
+            modulesByPath.TryAdd(m.AbsolutePath, m);
+        }
+
         foreach (var item in vbp.Items)
         {
-            var path = Workspace.ResolvePath(dir, item.RawPath);
-            var module = project.Modules.FirstOrDefault(m => string.Equals(m.AbsolutePath, path, StringComparison.OrdinalIgnoreCase));
-            if (module is null)
+            var path = Workspace.ResolvePath(dir, item.RawPath, listings);
+            if (path is null || !modulesByPath.TryGetValue(path, out var module))
             {
                 continue;
             }
@@ -165,7 +170,7 @@ public sealed class Vb6ProjectIndexer(string projectRoot, Vb6Options? options = 
 
         foreach (var r in vbp.References.Where(r => r.ProjectPathSpan is not null))
         {
-            var path = Workspace.ResolvePath(dir, r.ProjectPath!);
+            var path = Workspace.ResolvePath(dir, r.ProjectPath!, listings);
             var referenced = project.References.FirstOrDefault(p => string.Equals(p.Vbp?.Path, path, StringComparison.OrdinalIgnoreCase));
             if (referenced is not null)
             {

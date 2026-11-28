@@ -58,7 +58,7 @@ internal sealed partial class DartParser
             }
 
             var key = string.Join('\u0001', d.Path.Select(x => x.Name + (int)x.Suffix));
-            if (!seen.Add(key) || (d.Kind is DeclKind.Parameter or DeclKind.TypeParameter && d.Parent is { IsLocal: true, Kind: DeclKind.Function } && !model.TopLevel.Contains(d.Parent)))
+            if (!seen.Add(key) || (d.Kind is DeclKind.Parameter or DeclKind.TypeParameter && d.Parent is { IsLocal: true, Kind: DeclKind.Function } && !model.IsTopLevel(d.Parent)))
             {
                 d.IsLocal = true;
             }
@@ -1092,9 +1092,36 @@ internal sealed partial class DartParser
         }
     }
 
+    // SkipBalanced results for every opener (any closer closes any opener, exactly as the scan below counts depth):
+    // the parser skips the same nested argument lists many times (`const A(child: const A(...))`), which was quadratic.
+    private int[]? _balancedEnd;
+
     /// <summary>Index after the bracket matching the opener at <paramref name="i"/>.</summary>
     private int SkipBalanced(int i)
     {
+        if (i >= 0 && i < _t.Count && IsOpener(_t[i]))
+        {
+            if (_balancedEnd is null)
+            {
+                _balancedEnd = new int[_t.Count];
+                var open = new Stack<int>();
+                for (var k = 0; k < _t.Count; k++)
+                {
+                    if (IsOpener(_t[k]))
+                    {
+                        _balancedEnd[k] = _t.Count; // unmatched
+                        open.Push(k);
+                    }
+                    else if ((_t[k].Is(")") || _t[k].Is("]") || _t[k].Is("}")) && open.Count > 0)
+                    {
+                        _balancedEnd[open.Pop()] = k + 1;
+                    }
+                }
+            }
+
+            return _balancedEnd[i];
+        }
+
         var depth = 0;
         while (i < _t.Count)
         {
@@ -1117,6 +1144,8 @@ internal sealed partial class DartParser
 
         return i;
     }
+
+    private static bool IsOpener(Token tk) => tk.Is("(") || tk.Is("[") || tk.Is("{");
 
     private int SkipAngle(int i)
     {

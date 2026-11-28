@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace ScipSharp.Indexer.Pascal.Syntax;
 
@@ -26,6 +27,9 @@ internal sealed class Preprocessor
 {
     private const int MaxIncludeDepth = 16;
 
+    /// <summary>Bound on include expansions per unit: a file including another twice, 16 levels deep, is 2^16 expansions.</summary>
+    private const int MaxIncludeExpansions = 10_000;
+
     private static readonly HashSet<string> IsoWords = new(StringComparer.Ordinal)
     {
         "and", "array", "begin", "case", "const", "div", "do", "downto", "else", "end", "file", "for", "function",
@@ -51,6 +55,10 @@ internal sealed class Preprocessor
     private readonly List<Token> _tokens = [];
     private readonly Stack<CondState> _conds = new();
     private int _includeDepth;
+    private int _includeExpansions;
+
+    /// <summary>Files being processed (the include stack): re-including one of them is a cycle (a compile error in FPC).</summary>
+    private readonly HashSet<SourceText> _active = new(ReferenceEqualityComparer.Instance);
 
     private bool _nested;
 
@@ -110,6 +118,7 @@ internal sealed class Preprocessor
     public static (List<Token> Tokens, Preprocessor State) Run(SourceText source, PascalMode mode, IEnumerable<string> defines, IncludeResolver include, bool modeIsExplicit = false)
     {
         var pp = new Preprocessor(mode, defines, include, modeIsExplicit);
+        pp._active.Add(source);
         pp.Process(source);
         var eofAt = source.Text.Length;
         pp._tokens.Add(new Token(TokenKind.Eof, "", source, eofAt, eofAt));
@@ -295,18 +304,25 @@ internal sealed class Preprocessor
             return;
         }
 
+        if (_active.Contains(included) || ++_includeExpansions > MaxIncludeExpansions)
+        {
+            return;
+        }
+
         if (!Includes.Contains(included))
         {
             Includes.Add(included);
         }
 
         _includeDepth++;
+        _active.Add(included);
         try
         {
             Process(included);
         }
         finally
         {
+            _active.Remove(included);
             _includeDepth--;
         }
     }
@@ -465,6 +481,11 @@ internal sealed class Preprocessor
 
         private object? Unary()
         {
+            if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            {
+                throw new FormatException("expression nested too deeply"); // evaluates to false
+            }
+
             if (Word("not"))
             {
                 return !Truthy(Unary());

@@ -83,10 +83,12 @@ public static class Workspaces
         var result = new List<string>();
         var root = Path.GetFullPath(directory);
         var stack = new Stack<string>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
         stack.Push(root);
         while (stack.Count > 0)
         {
             var dir = stack.Pop();
+            if (!visited.Add(TsConfig.DirectoryKey(dir))) { continue; } // symlink cycles
             foreach (var sub in Directory.GetDirectories(dir))
             {
                 var name = Path.GetFileName(sub);

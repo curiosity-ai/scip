@@ -17,6 +17,9 @@ internal sealed partial class DartParser
     ];
 
     private int[] _match = [];
+
+    /// <summary>Per token: the greatest index of a matched opener before it that is still open there, or -1.</summary>
+    private int[] _innermostOpen = [];
     private Dictionary<int, int> _indexByOffset = [];
 
     private void ScanLocals()
@@ -47,7 +50,7 @@ internal sealed partial class DartParser
         }
 
         var callables = _m.AllDecls.Where(c => c.Kind is DeclKind.Method or DeclKind.Function or DeclKind.Constructor or DeclKind.Property).ToList();
-        foreach (var lf in _m.AllDecls.Where(c => c.Kind == DeclKind.Function && !_m.TopLevel.Contains(c) && c.Parent is null).ToList())
+        foreach (var lf in _m.AllDecls.Where(c => c.Kind == DeclKind.Function && c.Parent is null && !_m.IsTopLevel(c)).ToList())
         {
             var outer = callables
                 .Where(c => c != lf && c.EnclosingStart <= lf.EnclosingStart && lf.EnclosingEnd <= c.EnclosingEnd)
@@ -147,6 +150,23 @@ internal sealed partial class DartParser
                     _match[o] = i;
                     _match[i] = o;
                 }
+            }
+        }
+
+        // Openers are pushed in index order, so the top (after dropping closed ones) is the greatest still-open index.
+        _innermostOpen = new int[_t.Count];
+        var openers = new Stack<int>();
+        for (var i = 0; i < _t.Count; i++)
+        {
+            while (openers.Count > 0 && _match[openers.Peek()] <= i)
+            {
+                openers.Pop();
+            }
+
+            _innermostOpen[i] = openers.Count > 0 ? openers.Peek() : -1;
+            if (_match[i] > i && _t[i].Kind == TokenKind.Punctuation && _t[i].Text is "(" or "[" or "{")
+            {
+                openers.Push(i);
             }
         }
     }
@@ -512,13 +532,11 @@ internal sealed partial class DartParser
         }
 
         var open = _match[b - 1];
-        // no bracket opened between the brace and the candidate may still be pending
-        for (var i = b + 1; i < k; i++)
+        // no bracket opened between the brace and the candidate may still be pending (precomputed: a scan here was
+        // quadratic in long lists of closures)
+        if (_innermostOpen[k] > b)
         {
-            if (_t[i].Kind == TokenKind.Punctuation && _t[i].Text is "(" or "[" or "{" && _match[i] > k)
-            {
-                return false;
-            }
+            return false;
         }
 
         return At(open - 1).Is("switch");

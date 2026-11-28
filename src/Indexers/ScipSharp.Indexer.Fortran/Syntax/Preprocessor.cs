@@ -267,6 +267,11 @@ internal sealed class Preprocessor(bool evaluate, IReadOnlyDictionary<string, st
 
         private long ParseUnary()
         {
+            if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            {
+                throw new FormatException("#if expression nested too deeply"); // evaluates to 0
+            }
+
             if (Accept("!"))
             {
                 return ParseUnary() == 0 ? 1 : 0;

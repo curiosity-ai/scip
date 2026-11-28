@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Pli.Syntax;
 
 namespace ScipSharp.Indexer.Pli.Semantics;
@@ -53,6 +54,12 @@ internal sealed class Resolver(SymbolNamer namer, Func<string, string> normalize
 
     private void Scan(RefSite s, int from, int to, bool attributes, bool depth0, bool first)
     {
+        // Parentheses and call arguments recurse: on pathological nesting leave the inner names unresolved.
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            return;
+        }
+
         var t = s.Tokens;
         var j = from;
         var isFirstChain = first;

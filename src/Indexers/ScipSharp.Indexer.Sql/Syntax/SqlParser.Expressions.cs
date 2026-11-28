@@ -13,6 +13,7 @@ public sealed partial class SqlParser
     /// </summary>
     private Expr ParseExpr(bool paren = false)
     {
+        EnsureStack();
         var items = new List<ExprItem>();
         var caseDepth = 0;
         var operand = false;

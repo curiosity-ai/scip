@@ -53,18 +53,32 @@ public sealed class TreeVisitor
 
     private PythonPackage Stdlib => _state.StdlibPackage;
 
-    public void Walk(Node node)
+    /// <summary>Pre-order walk. Iterative, so that long chains (<c>a + b + ...</c>, <c>a.b().c</c>, elif) do not recurse per link.</summary>
+    public void Walk(Node root)
     {
-        if (!Visit(node))
+        var stack = new Stack<Node>();
+        var children = new List<Node>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
-            return;
-        }
-
-        foreach (var child in node.Children())
-        {
-            if (child is not null)
+            var node = stack.Pop();
+            if (!Visit(node))
             {
-                Walk(child);
+                continue;
+            }
+
+            children.Clear();
+            foreach (var child in node.Children())
+            {
+                if (child is not null)
+                {
+                    children.Add(child);
+                }
+            }
+
+            for (var i = children.Count - 1; i >= 0; i--)
+            {
+                stack.Push(children[i]);
             }
         }
     }

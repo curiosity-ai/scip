@@ -110,13 +110,13 @@ public sealed class ExpandMacros
                 {
                     prog.Parse(release, globalMacros, reg, languageVersion);
                     var includeMainFile = prog.GetMainABAPFile();
-                    // an include that is already on the current include path is not walked again
-                    if (includeMainFile != null && !includePath.Contains(includeMainFile.GetFilename()))
+                    // Not in abaplint: an include is walked once per walk, not once per path to it. Includes that include
+                    // the same includes (a diamond) were otherwise walked 2^depth times; a second walk adds nothing,
+                    // AddMacro keeps the first definition of a name.
+                    if (includeMainFile != null && includePath.Add(includeMainFile.GetFilename()))
                     {
-                        includePath.Add(includeMainFile.GetFilename());
                         // slow, this copies everything,
                         Find(includeMainFile.GetStatements().ToList(), includeMainFile, false, includePath);
-                        includePath.Remove(includeMainFile.GetFilename());
                     }
                 }
             }

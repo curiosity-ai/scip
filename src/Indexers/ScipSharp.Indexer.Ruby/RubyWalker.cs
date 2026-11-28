@@ -46,9 +46,21 @@ internal sealed class DocModel(string relativePath, string text)
 internal sealed class LocalScope(LocalScope? parent)
 {
     private readonly Dictionary<string, int> _ids = [];
+    private readonly LocalScope? _parent = parent;
 
-    public int? Lookup(string name) =>
-        _ids.TryGetValue(name, out var id) ? id : parent?.Lookup(name);
+    public int? Lookup(string name)
+    {
+        // Iterative: block scopes can nest arbitrarily deep in (malformed) input.
+        for (var s = this; s is not null; s = s._parent)
+        {
+            if (s._ids.TryGetValue(name, out var id))
+            {
+                return id;
+            }
+        }
+
+        return null;
+    }
 
     public void Declare(string name, int id) => _ids[name] = id;
 
@@ -836,8 +848,9 @@ internal sealed partial class RubyWalker
         }
 
         var nameTok = toks[^1];
-        // `class A::B` presupposes that `A` exists, even when it is defined outside the indexed files.
-        for (var k = 1; k < fullPath.Length; k++)
+        // `class A::B` presupposes that `A` exists, even when it is defined outside the indexed files. The enclosing
+        // namespace's own prefixes were marked when it was opened, so start there (else deep nesting is cubic).
+        for (var k = Math.Max(1, ns.Length); k < fullPath.Length; k++)
         {
             _project.Type(fullPath[..k]).Defined = true;
         }

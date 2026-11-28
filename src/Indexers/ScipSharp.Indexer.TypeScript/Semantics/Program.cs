@@ -54,6 +54,11 @@ public sealed class TsProgram
         {
             Warn?.Invoke($"warning: cannot read {fileName}: {e.Message}");
         }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or IndexOutOfRangeException or NullReferenceException or InsufficientExecutionStackException)
+        {
+            // A parser bug on one file must not abort the whole project.
+            Warn?.Invoke($"warning: cannot parse {fileName}: {e.GetType().Name}: {e.Message}");
+        }
 
         _files[fileName] = parsed;
         return parsed;
