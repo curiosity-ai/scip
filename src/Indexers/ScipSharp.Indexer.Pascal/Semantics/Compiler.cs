@@ -270,7 +270,10 @@ internal sealed partial class Compiler
     /// <summary>Doc comment above the token at <paramref name="start"/>.</summary>
     private string? DocFor(Token start)
     {
-        var idx = _toks.IndexOf(start, Math.Max(0, _i - 64));
+        // A bounded window: a start token further back than 64 tokens was never found, but searching for it scanned to
+        // the end of the file (quadratic for declarations whose name precedes a large type or nested records).
+        var lo = Math.Max(0, _i - 64);
+        var idx = _toks.IndexOf(start, lo, Math.Min(_toks.Count, _i + 65) - lo);
         var prevEnd = 0;
         if (idx > 0 && ReferenceEquals(_toks[idx - 1].Source, start.Source))
         {
@@ -683,7 +686,11 @@ internal sealed partial class Compiler
     {
         var parts = new List<string> { Cur.Text };
         var k = 1;
-        while (Peek(2 * k - 1).IsSymbol(".") && Peek(2 * k).Kind is TokenKind.Identifier or TokenKind.Keyword)
+
+        // No unit name has more parts than the longest candidate: bounding the chain keeps a.b.c... (thousands of
+        // members) linear instead of joining every prefix.
+        var maxParts = MaxUnitNameParts();
+        while (k < maxParts && Peek(2 * k - 1).IsSymbol(".") && Peek(2 * k).Kind is TokenKind.Identifier or TokenKind.Keyword)
         {
             parts.Add(Peek(2 * k).Text);
             k++;
@@ -701,6 +708,23 @@ internal sealed partial class Compiler
         }
 
         return (null, 0);
+    }
+
+    private int MaxUnitNameParts()
+    {
+        static int Parts(string name) => name.AsSpan().Count('.') + 1;
+        var max = Math.Max(Parts(_unit.Name), 1);
+        foreach (var u in _implUses)
+        {
+            max = Math.Max(max, Parts(u.Name));
+        }
+
+        foreach (var u in _intfUses)
+        {
+            max = Math.Max(max, Parts(u.Name));
+        }
+
+        return max;
     }
 
     private CompileUnit? FindUnitByName(string name)

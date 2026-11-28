@@ -97,12 +97,12 @@ internal sealed class DelphiProjectIndexer
         ParseLibraries(settings);
         foreach (var src in _sources)
         {
-            _binder.DeclareUnit(src, _package, external: false);
+            DeclareUnit(src, _package, external: false);
         }
 
         foreach (var (src, package) in _libraries)
         {
-            _binder.DeclareUnit(src, package, external: true);
+            DeclareUnit(src, package, external: true);
         }
 
         foreach (var src in _stubs.Concat(_libraries.Select(l => l.Source)).Concat(_sources))
@@ -133,7 +133,7 @@ internal sealed class DelphiProjectIndexer
             {
                 new Walker(_model, _binder, sink, src, _usesTargets).Run();
             }
-            catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or KeyNotFoundException or InvalidCastException)
+            catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or KeyNotFoundException or InvalidCastException or InsufficientExecutionStackException)
             {
                 _warn($"warning: {src.RelativePath}: indexing stopped early: {e.Message}");
             }
@@ -325,7 +325,10 @@ internal sealed class DelphiProjectIndexer
         return null;
     }
 
-    private static string? FindFileCaseInsensitive(string path)
+    /// <summary>Directory listings keyed by file name (case-insensitively; first in listing order wins).</summary>
+    private readonly Dictionary<string, Dictionary<string, string>> _dirListings = new(StringComparer.Ordinal);
+
+    private string? FindFileCaseInsensitive(string path)
     {
         if (File.Exists(path))
         {
@@ -338,8 +341,25 @@ internal sealed class DelphiProjectIndexer
             return null;
         }
 
-        var name = Path.GetFileName(path);
-        return Directory.EnumerateFiles(dir).FirstOrDefault(f => string.Equals(Path.GetFileName(f), name, StringComparison.OrdinalIgnoreCase));
+        // Cached: enumerating the directory for every unresolved include/uses-in path was O(files) per lookup.
+        if (!_dirListings.TryGetValue(dir, out var listing))
+        {
+            listing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir))
+                {
+                    listing.TryAdd(Path.GetFileName(f), f);
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+            }
+
+            _dirListings[dir] = listing;
+        }
+
+        return listing.GetValueOrDefault(Path.GetFileName(path));
     }
 
     private void ParseSources(CompilerSettings settings)
@@ -358,7 +378,7 @@ internal sealed class DelphiProjectIndexer
                 var syntax = Parser.ParseFile(tokens);
                 _sources.Add(new SourceInfo(id, path, Relative(path), syntax));
             }
-            catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException)
+            catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or InsufficientExecutionStackException)
             {
                 _warn($"warning: {Relative(path)}: cannot parse: {e.Message}");
             }
@@ -395,7 +415,7 @@ internal sealed class DelphiProjectIndexer
                     var tokens = new Preprocessor(settings, ResolveInclude).Process(Lexer.Tokenize(ReadText(id), id), file, id);
                     _libraries.Add((new SourceInfo(id, file, file, Parser.ParseFile(tokens)), package));
                 }
-                catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException)
+                catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or InsufficientExecutionStackException)
                 {
                     _warn($"warning: {file}: cannot parse: {e.Message}");
                 }
@@ -441,6 +461,19 @@ internal sealed class DelphiProjectIndexer
             }
 
             _stubs.Add(src);
+        }
+    }
+
+    private void DeclareUnit(SourceInfo src, PackageInfo package, bool external)
+    {
+        try
+        {
+            _binder.DeclareUnit(src, package, external);
+        }
+        catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or KeyNotFoundException or InsufficientExecutionStackException)
+        {
+            // The unit entity and its scopes exist (they are registered first); only some declarations are missing.
+            _warn($"warning: {src.RelativePath}: declarations incomplete: {e.Message}");
         }
     }
 
@@ -595,7 +628,7 @@ internal sealed class DelphiProjectIndexer
             {
                 IndexForm(form, sink);
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or IndexOutOfRangeException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or IndexOutOfRangeException or InsufficientExecutionStackException)
             {
                 _warn($"warning: {Relative(form)}: {e.Message}");
             }
@@ -653,6 +686,7 @@ internal sealed class DelphiProjectIndexer
 
     private void VisitFormObject(DfmObject obj, Entity? type, Entity? owner, Scope scope, int fileId, OccurrenceSink sink)
     {
+        System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack(); // absurdly deep forms: IndexForms warns
         if (type is not null && obj.TypeName.Length > 0)
         {
             var simple = obj.TypeName.Split('.')[^1];

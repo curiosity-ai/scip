@@ -106,26 +106,44 @@ internal sealed class SourceText
         var line = LineOf(offset);
         var start = _lineStarts[line];
         var col = offset - start;
-        if (Encoding == SourceEncoding.Utf8)
+        if (Encoding == SourceEncoding.Utf8 && !IsAsciiLine(line))
         {
-            var span = Text.AsSpan(start, col);
-            var ascii = true;
-            foreach (var c in span)
+            // Incremental from the previous position on the same line: occurrences arrive mostly in source order, so
+            // a long non-ASCII line is not re-measured from its start for every token (quadratic on one-line files).
+            var from = start;
+            var bytes = 0;
+            if (_utf8Line == line && _utf8Offset <= offset && (_utf8Offset >= Text.Length || !char.IsLowSurrogate(Text[_utf8Offset])))
             {
-                if (c >= 0x80)
-                {
-                    ascii = false;
-                    break;
-                }
+                from = _utf8Offset;
+                bytes = _utf8Bytes;
             }
 
-            if (!ascii)
-            {
-                col = System.Text.Encoding.UTF8.GetByteCount(span);
-            }
+            bytes += System.Text.Encoding.UTF8.GetByteCount(Text.AsSpan(from, offset - from));
+            (_utf8Line, _utf8Offset, _utf8Bytes) = (line, offset, bytes);
+            col = bytes;
         }
 
         return new Position(line, col);
+    }
+
+    private int _utf8Line = -1;
+    private int _utf8Offset;
+    private int _utf8Bytes;
+
+    /// <summary>Per line: 0 = not yet scanned, 1 = ASCII only, 2 = contains non-ASCII characters.</summary>
+    private byte[]? _lineAscii;
+
+    private bool IsAsciiLine(int line)
+    {
+        _lineAscii ??= new byte[_lineStarts.Length];
+        if (_lineAscii[line] == 0)
+        {
+            var start = _lineStarts[line];
+            var end = line + 1 < _lineStarts.Length ? _lineStarts[line + 1] : Text.Length;
+            _lineAscii[line] = System.Text.Ascii.IsValid(Text.AsSpan(start, end - start)) ? (byte)1 : (byte)2;
+        }
+
+        return _lineAscii[line] == 1;
     }
 
     public ScipRange RangeOf(int start, int end) => new(PositionOf(start), PositionOf(end));

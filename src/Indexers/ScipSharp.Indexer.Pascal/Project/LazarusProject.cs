@@ -28,7 +28,7 @@ internal sealed class LazarusProject
 
     public List<string> Defines { get; } = [];
 
-    public List<string> Files { get; } = [];
+    public HashSet<string> Files { get; } = new(StringComparer.Ordinal);
 
     public PascalMode? Mode { get; set; }
 

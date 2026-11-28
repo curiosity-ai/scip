@@ -50,7 +50,7 @@ internal sealed class Workspace
     private readonly Dictionary<CompileUnit, IReadOnlyList<CompileUnit>> _usedUnits = [];
     private readonly List<LazarusProject> _projects = [];
     private readonly List<string> _lfmFiles = [];
-    private readonly Dictionary<string, string[]> _dirListing = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<string, string>> _dirListing = new(StringComparer.Ordinal);
 
     public Workspace(PascalOptions options, Action<string>? warn = null)
     {
@@ -241,7 +241,7 @@ internal sealed class Workspace
         // A package listing the file wins; otherwise the nearest project/package in an ancestor directory.
         foreach (var p in _projects)
         {
-            if (p.IsPackage && p.Files.Contains(path, StringComparer.Ordinal))
+            if (p.IsPackage && p.Files.Contains(path))
             {
                 return p;
             }
@@ -251,7 +251,7 @@ internal sealed class Workspace
         foreach (var p in _projects)
         {
             if (path.StartsWith(p.Directory + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                && (best is null || p.Directory.Length > best.Directory.Length || (p.Directory.Length == best.Directory.Length && p.Files.Contains(path, StringComparer.Ordinal))))
+                && (best is null || p.Directory.Length > best.Directory.Length || (p.Directory.Length == best.Directory.Length && p.Files.Contains(path))))
             {
                 best = p;
             }
@@ -349,20 +349,24 @@ internal sealed class Workspace
 
         if (!_dirListing.TryGetValue(parent, out var listing))
         {
+            // Keyed by file name, case-insensitively (first in listing order wins): a linear scan per lookup was
+            // O(files x uses) on large flat directories.
+            listing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                listing = Directory.GetFiles(parent);
+                foreach (var f in Directory.GetFiles(parent))
+                {
+                    listing.TryAdd(Path.GetFileName(f), f);
+                }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                listing = [];
             }
 
             _dirListing[parent] = listing;
         }
 
-        var fileName = Path.GetFileName(candidate);
-        return listing.FirstOrDefault(f => string.Equals(Path.GetFileName(f), fileName, StringComparison.OrdinalIgnoreCase));
+        return listing.GetValueOrDefault(Path.GetFileName(candidate));
     }
 
     // ---------------------------------------------------------------- units
@@ -502,7 +506,7 @@ internal sealed class Workspace
         {
             action();
         }
-        catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or KeyNotFoundException or InvalidCastException or FormatException or OverflowException)
+        catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException or KeyNotFoundException or InvalidCastException or FormatException or OverflowException or InsufficientExecutionStackException)
         {
             _warn?.Invoke($"{unit.Path}: indexing stopped early: {e.GetType().Name}: {e.Message}");
             unit.State = UnitState.Done;

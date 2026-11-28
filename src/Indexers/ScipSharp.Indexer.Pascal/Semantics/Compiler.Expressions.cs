@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Pascal.Syntax;
 using ScipKind = ScipSharp.SymbolInformation.Types.Kind;
 
@@ -83,6 +84,7 @@ internal sealed partial class Compiler
 
     private ExprInfo Factor()
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deep nesting: Workspace.Guard skips the rest of the unit
         var t = Cur;
         switch (t.Kind)
         {

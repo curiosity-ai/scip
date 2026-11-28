@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Pascal.Syntax;
 using ScipKind = ScipSharp.SymbolInformation.Types.Kind;
 
@@ -44,6 +45,7 @@ internal sealed partial class Compiler
 
     private void Statement()
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deep nesting: Workspace.Guard skips the rest of the unit
         // Labels: 10: stmt / done: stmt
         if ((IsIdent || Cur.Kind == TokenKind.Number) && Peek().IsSymbol(":") && !Peek().IsSymbol(":="))
         {

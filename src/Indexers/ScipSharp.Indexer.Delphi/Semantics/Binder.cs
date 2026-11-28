@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Delphi.Syntax;
 
 namespace ScipSharp.Indexer.Delphi.Semantics;
@@ -90,6 +91,7 @@ internal sealed class Binder(Model model)
 
     public void Declare(List<Decl> decls, Entity parent, MemberTable table, Scope scope, SourceInfo src, bool implementation)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deeply nested source: caught per declaration / per file
         foreach (var d in decls)
         {
             switch (d)

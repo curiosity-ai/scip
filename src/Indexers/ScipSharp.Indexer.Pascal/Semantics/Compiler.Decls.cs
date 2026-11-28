@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ScipSharp.Indexer.Pascal.Syntax;
 using ScipKind = ScipSharp.SymbolInformation.Types.Kind;
 
@@ -13,6 +14,7 @@ internal sealed partial class Compiler
 
     private void Declarations(Ctx ctx)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deep nesting: Workspace.Guard skips the rest of the unit
         while (!AtEof)
         {
             var before = _i;
@@ -535,6 +537,7 @@ internal sealed partial class Compiler
     /// <summary>Parses a type. <paramref name="decl"/> is the type symbol being declared (null for anonymous types).</summary>
     private (PType Type, bool Forward) TypeSpec(Sym? decl, Ctx ctx, PType? reuse = null)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack(); // deep nesting: Workspace.Guard skips the rest of the unit
         if (IsSym("("))
         {
             return (EnumType(decl, ctx), false);
