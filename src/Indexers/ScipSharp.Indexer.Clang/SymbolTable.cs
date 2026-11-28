@@ -124,7 +124,9 @@ public sealed class Scope(Scope? parent, SKind kind)
         return s;
     }
 
-    public void Add(Entity e, string? key = null)
+    /// <param name="isNew">The entity was just created, so it cannot be in the list yet (skips an O(n) duplicate check
+    /// that made thousands of redeclarations of one name quadratic).</param>
+    public void Add(Entity e, string? key = null, bool isNew = false)
     {
         var k = key ?? e.Name;
         if (!Names.TryGetValue(k, out var list))
@@ -132,7 +134,7 @@ public sealed class Scope(Scope? parent, SKind kind)
             Names[k] = list = [];
         }
 
-        if (!list.Contains(e))
+        if (isNew || !list.Contains(e))
         {
             list.Add(e);
         }
@@ -141,8 +143,7 @@ public sealed class Scope(Scope? parent, SKind kind)
     /// <summary>Looks a name up in this scope only, following base classes and using-directives.</summary>
     public List<Entity>? LookupHere(string name, HashSet<Scope>? seen = null)
     {
-        seen ??= [];
-        if (!seen.Add(this))
+        if (seen is not null && !seen.Add(this))
         {
             return null;
         }
@@ -151,6 +152,15 @@ public sealed class Scope(Scope? parent, SKind kind)
         {
             return l;
         }
+
+        // Fast path (no allocation): most scopes, e.g. the block scopes of a long else-if chain, have neither bases nor
+        // using-directives, and Lookup walks every enclosing scope for every identifier.
+        if (Usings.Count == 0 && !(Kind == SKind.Class && Owner is { Bases.Count: > 0 }))
+        {
+            return null;
+        }
+
+        seen ??= [this];
 
         if (Kind == SKind.Class && Owner is { } cls)
         {

@@ -41,6 +41,9 @@ internal sealed class CrateData(string name, PackageInformation package, string 
 
     /// <summary>macro_rules macros by name (textual scoping is approximated crate-wide).</summary>
     public Dictionary<string, Item> Macros { get; } = [];
+
+    /// <summary>Every name some item of this crate has a member under (lets lookups of unknown names stop early).</summary>
+    public HashSet<string> MemberNames { get; } = [];
 }
 
 /// <summary>A nameable definition (module, type, function, ...).</summary>
@@ -96,6 +99,7 @@ internal sealed class Item(string name, string symbol, Kind kind, CrateData crat
 
     public void AddMemberAs(string name, Item child)
     {
+        Crate.MemberNames.Add(name);
         if (!Members.TryGetValue(name, out var list))
         {
             Members[name] = list = [];

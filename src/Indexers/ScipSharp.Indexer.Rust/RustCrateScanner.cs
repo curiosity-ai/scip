@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace ScipSharp.Indexer.Rust;
@@ -47,6 +48,60 @@ public sealed class SourceFileResult(string path, byte[] bytes, List<RustToken> 
 
     /// <summary>Resolved crate this file belongs to (set by the scanner owner).</summary>
     public object? Crate { get; set; }
+
+    private int[]? _closer;
+
+    /// <summary>
+    /// Index just past the bracket closing the opener at <paramref name="i"/> (any bracket kind closes any, as in the
+    /// scanners' depth counting), or the token count when unclosed; null when <paramref name="i"/> is not an opener.
+    /// Precomputed once per file so that skipping a group is O(1) (rescanning nested groups was quadratic).
+    /// </summary>
+    public int? SkipGroup(int i)
+    {
+        if (i < 0 || i >= Tokens.Count || !IsBracket(i, out var open) || !open)
+        {
+            return null;
+        }
+
+        if (_closer is null)
+        {
+            var closer = new int[Tokens.Count];
+            Array.Fill(closer, -1);
+            var stack = new Stack<int>();
+            for (var k = 0; k < Tokens.Count; k++)
+            {
+                if (IsBracket(k, out var isOpen))
+                {
+                    if (isOpen)
+                    {
+                        stack.Push(k);
+                    }
+                    else if (stack.Count > 0)
+                    {
+                        closer[stack.Pop()] = k;
+                    }
+                }
+            }
+
+            _closer = closer;
+        }
+
+        return _closer[i] < 0 ? Tokens.Count : _closer[i] + 1;
+    }
+
+    private bool IsBracket(int i, out bool open)
+    {
+        var t = Tokens[i];
+        open = false;
+        if (t.Kind != RustTokenKind.Punct || t.End - t.Start != 1)
+        {
+            return false;
+        }
+
+        var c = Bytes[t.Start];
+        open = c is (byte)'(' or (byte)'[' or (byte)'{';
+        return open || c is (byte)')' or (byte)']' or (byte)'}';
+    }
 }
 
 /// <summary>An <c>impl</c> block: token range of the whole item and of the self type / trait path.</summary>
@@ -105,8 +160,19 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
         var bytes = File.ReadAllBytes(path);
         var file = new SourceFileResult(path, bytes, RustLexer.Lex(bytes));
         Files.Add(file);
-        new FileScanner(this, file, rootModule).ScanModuleFile(moduleCtx);
+        try
+        {
+            new FileScanner(this, file, rootModule).ScanModuleFile(moduleCtx);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // Malformed/truncated source (or pathological nesting): keep what was scanned, report, carry on.
+            Errors.Add($"{path}: scan incomplete: {e.GetType().Name}: {e.Message}");
+        }
     }
+
+    /// <summary>Files that could not be scanned completely (their partial results are kept).</summary>
+    public List<string> Errors { get; } = [];
 
     internal static string Utf8(byte[] bytes, RustToken t) => Encoding.UTF8.GetString(bytes, t.Start, t.End - t.Start);
 
@@ -130,6 +196,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
         /// <summary>Index just past the bracket matching the opener at <paramref name="i"/>.</summary>
         private int SkipBalanced(int i)
         {
+            if (file.SkipGroup(i) is { } after)
+            {
+                return after;
+            }
+
             var depth = 0;
             for (; i < _t.Count; i++)
             {
@@ -298,7 +369,8 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
         private void EndDef(Def d, int nameTok, Kind kind, int startTok, int endTokExclusive, List<string> docs, string? signature, string displayName, bool occurrence = true)
         {
             var nt = _t[nameTok];
-            (int, int)? enclosing = (_t[startTok].Start, _t[Math.Max(startTok, endTokExclusive - 1)].End);
+            // truncated input can leave the item end past the last token
+            (int, int)? enclosing = (_t[startTok].Start, _t[Math.Clamp(endTokExclusive - 1, startTok, _t.Count - 1)].End);
             if (occurrence)
             {
                 file.Occurrences.Add(new(nt.Start, nt.End, d.Symbol, true, enclosing));
@@ -448,6 +520,13 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
 
         private void ParseItem(ScanContext ctx)
         {
+            // Items nest (mod/fn/impl bodies); on pathological depth stop descending instead of overflowing the stack.
+            // The callers' loops then step over the remaining tokens.
+            if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            {
+                return;
+            }
+
             var start = _i;
             List<string> docs = [];
             string? pathAttr = null;
@@ -528,6 +607,11 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 {
                     break;
                 }
+            }
+
+            if (_i >= _t.Count)
+            {
+                return; // `pub` / qualifiers at end of file
             }
 
             var kw = _t[_i].Kind == RustTokenKind.Ident ? Text(_i) : "";
@@ -1491,6 +1575,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                 var blockDepth = 0;
                 var itemCtx = new ScanContext(modulePrefix, modulePrefix, dir, AssocKind.None);
                 List<(int From, int To, List<(string Name, string Symbol)> Bindings)> regions = [];
+                Dictionary<int, List<int>> regionsByFrom = [];
                 List<int> active = [];
                 for (var i = open; i < end; i++)
                 {
@@ -1500,9 +1585,10 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                         scopes.RemoveAt(scopes.Count - 1);
                     }
 
-                    for (var r = 0; r < regions.Count; r++)
+                    // (indexed by start token: scanning all match-arm regions at every token was quadratic)
+                    if (regionsByFrom.TryGetValue(i, out var starting))
                     {
-                        if (regions[r].From == i)
+                        foreach (var r in starting)
                         {
                             scopes.Add([.. regions[r].Bindings]);
                             active.Add(regions[r].To);
@@ -1512,7 +1598,17 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                     var t = s._t[i];
                     if (t.Kind == RustTokenKind.Ident && s.Text(i) == "match" && !s.Is(i - 1, ".") && !s.Is(i - 1, "::"))
                     {
+                        var known = regions.Count;
                         ScanMatchArms(i, end, regions, skip);
+                        for (var r = known; r < regions.Count; r++)
+                        {
+                            if (!regionsByFrom.TryGetValue(regions[r].From, out var list))
+                            {
+                                regionsByFrom[regions[r].From] = list = [];
+                            }
+
+                            list.Add(r);
+                        }
                     }
 
                     if (t.Kind == RustTokenKind.Punct)
@@ -1551,6 +1647,7 @@ public sealed class RustCrateScanner(CargoPackage package, CargoTarget target, I
                                 j++;
                             }
 
+                            j = Math.Min(j, end - 1); // no closing `|` (truncated input): stop at the last token
                             var partStart = i + 1;
                             var pd = 0;
                             for (var k = i + 1; k <= j; k++)

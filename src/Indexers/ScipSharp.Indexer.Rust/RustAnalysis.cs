@@ -46,7 +46,8 @@ public static class RustAnalysis
     /// <param name="units">All scanned targets.</param>
     /// <param name="isExternalPackage">Packages whose sources are outside the project (their documents are not emitted).</param>
     /// <returns>SymbolInformation of referenced symbols defined outside the index (std, external path deps).</returns>
-    public static IReadOnlyList<SymbolInformation> Analyze(IReadOnlyList<ScanUnit> units, Func<CargoPackage, bool>? isExternalPackage = null)
+    /// <param name="log">Receives a line per file whose references could not be resolved completely.</param>
+    public static IReadOnlyList<SymbolInformation> Analyze(IReadOnlyList<ScanUnit> units, Func<CargoPackage, bool>? isExternalPackage = null, TextWriter? log = null)
     {
         var world = new RustWorld();
         Dictionary<ScanUnit, CrateData> crates = [];
@@ -88,7 +89,14 @@ public static class RustAnalysis
         {
             foreach (var file in crate.Files)
             {
-                new RustResolver(world, world.Files[file], externals).Run();
+                try
+                {
+                    new RustResolver(world, world.Files[file], externals).Run();
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    log?.WriteLine($"{file.Path}: reference resolution incomplete: {e.GetType().Name}: {e.Message}");
+                }
             }
         }
 

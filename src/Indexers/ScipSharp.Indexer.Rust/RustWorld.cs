@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace ScipSharp.Indexer.Rust;
@@ -25,6 +26,61 @@ internal sealed class FileInfo
     public Dictionary<string, int> LocalDeclTok { get; } = [];
 
     public Dictionary<string, SymbolInformation> LocalInfo { get; } = [];
+
+    // Innermost generic scope at each token and each scope's enclosing scope (generic scopes nest like items).
+    private int[]? _genericAt;
+    private int[]? _genericParent;
+
+    /// <summary>
+    /// Symbol of the generic parameter <paramref name="name"/> declared by the innermost generic scope enclosing token
+    /// <paramref name="tok"/>. Walks outwards from a per-token table instead of testing every scope of the file for
+    /// every identifier (quadratic in files with thousands of generic items).
+    /// </summary>
+    public string? GenericSymbol(int tok, string name)
+    {
+        var scopes = File.Generics;
+        if (scopes.Count == 0)
+        {
+            return null;
+        }
+
+        if (_genericAt is null)
+        {
+            var n = File.Tokens.Count;
+            var at = new int[n];
+            Array.Fill(at, -1);
+            var parent = new int[scopes.Count];
+            Array.Fill(parent, -1);
+            // longest first so inner scopes overwrite outer ones; among equal ranges the earliest ends on top
+            foreach (var k in Enumerable.Range(0, scopes.Count).OrderByDescending(k => scopes[k].End - scopes[k].Start).ThenByDescending(k => k))
+            {
+                var (s, e) = (Math.Max(0, scopes[k].Start), Math.Min(n, scopes[k].End));
+                if (s < e)
+                {
+                    parent[k] = at[s];
+                    Array.Fill(at, k, s, e - s);
+                }
+            }
+
+            (_genericAt, _genericParent) = (at, parent);
+        }
+
+        if (tok < 0 || tok >= _genericAt.Length)
+        {
+            return null;
+        }
+
+        for (var g = _genericAt[tok]; g >= 0; g = _genericParent![g])
+        {
+            var scope = scopes[g];
+            if (scope.Start <= tok && tok < scope.End && scope.Names.TryGetValue(name, out var sym))
+            {
+                return sym;
+            }
+        }
+
+        return null;
+    }
 }
 
 /// <summary>
@@ -460,6 +516,12 @@ internal sealed class RustWorld
         {
             crate.Files.Add(f);
             Files[f] = new FileInfo { File = f, Crate = crate };
+            Dictionary<string, ImplRange> implRanges = [];
+            foreach (var r in f.ImplRanges)
+            {
+                implRanges.TryAdd(r.Symbol, r); // first wins, as FirstOrDefault did (a linear search per impl was quadratic)
+            }
+
             foreach (var info in f.Symbols)
             {
                 if (info.Symbol.StartsWith("local ", StringComparison.Ordinal) || crate.BySymbol.ContainsKey(info.Symbol)
@@ -476,7 +538,7 @@ internal sealed class RustWorld
                         var impl = new ImplData(info.Symbol, crate)
                         {
                             File = f,
-                            Range = f.ImplRanges.FirstOrDefault(r => r.Symbol == info.Symbol),
+                            Range = implRanges.GetValueOrDefault(info.Symbol),
                         };
                         crate.ImplBySymbol[info.Symbol] = impl;
                         _allImpls.Add(impl);
@@ -663,7 +725,34 @@ internal sealed class RustWorld
         {
             LinkImpl(impl);
         }
+
+        // The item graph and imports are complete: from now on module lookups are pure and can be filtered/memoised.
+        _knownNames = [];
+        foreach (var crate in Crates)
+        {
+            _knownNames.UnionWith(crate.MemberNames);
+        }
+
+        foreach (var list in _imports.Values)
+        {
+            foreach (var u in list)
+            {
+                if (u.Name is { } n)
+                {
+                    _knownNames.Add(n);
+                }
+            }
+        }
     }
+
+    /// <summary>Names that any module/type member or import binding has; null until <see cref="Prepare"/> finished.</summary>
+    private HashSet<string>? _knownNames;
+
+    /// <summary>Results of top-level <see cref="LookupIn"/> calls (each walks the glob-import graph).</summary>
+    private readonly Dictionary<(Item Module, string Name, NameSpaces Want), Item?> _lookupCache = [];
+
+    /// <summary>Number of use bindings currently being resolved (lookups made meanwhile depend on that state).</summary>
+    private int _resolvingUses;
 
     public IEnumerable<ImplData> AllImpls => _allImpls;
 
@@ -724,27 +813,35 @@ internal sealed class RustWorld
 
         public CrateData Crate => File.Crate;
 
-        public string? GenericSymbol(string name)
-        {
-            string? best = null;
-            var bestLen = int.MaxValue;
-            foreach (var g in File.File.Generics)
-            {
-                if (g.Start <= Tok && Tok < g.End && g.End - g.Start < bestLen && g.Names.TryGetValue(name, out var sym))
-                {
-                    best = sym;
-                    bestLen = g.End - g.Start;
-                }
-            }
-
-            return best;
-        }
+        public string? GenericSymbol(string name) => File.GenericSymbol(Tok, name);
     }
 
     private static bool Matches(Item i, NameSpaces want) => (i.Spaces & want) != 0;
 
     public Item? LookupIn(Item module, string name, NameSpaces want, HashSet<(Item, string)>? visited = null)
     {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            return null; // a very long chain of glob re-exports
+        }
+
+        if (_knownNames is not null && !_knownNames.Contains(name))
+        {
+            return null; // nothing anywhere is called that: skip walking every glob import (quadratic in big crates)
+        }
+
+        if (visited is null && _knownNames is not null && _resolvingUses == 0)
+        {
+            // A fresh top-level lookup on the finished graph is a pure function of its arguments.
+            var key = (module, name, want);
+            if (!_lookupCache.TryGetValue(key, out var cached))
+            {
+                _lookupCache[key] = cached = LookupIn(module, name, want, []);
+            }
+
+            return cached;
+        }
+
         visited ??= [];
         if (!visited.Add((module, name)))
         {
@@ -817,6 +914,7 @@ internal sealed class RustWorld
     private Item? ResolveUsePath(UseBinding u, int count, NameSpaces want, HashSet<(Item, string)> visited)
     {
         u.Resolving = true;
+        _resolvingUses++;
         try
         {
             var fi = Files[u.File!];
@@ -826,6 +924,7 @@ internal sealed class RustWorld
         finally
         {
             u.Resolving = false;
+            _resolvingUses--;
         }
     }
 
@@ -963,6 +1062,25 @@ internal sealed class RustWorld
 
     /// <summary>Associated item lookup: enum variants, inherent impl items, trait impl items, trait items.</summary>
     public Item? FindAssoc(Item type, string name, bool methodsOnly = false)
+    {
+        if (_knownNames is null)
+        {
+            return FindAssocUncached(type, name, methodsOnly);
+        }
+
+        // after Prepare the impl graph is fixed: memoise (a type with thousands of impls was re-sorted per call)
+        var key = (type, name, methodsOnly);
+        if (!_assocCache.TryGetValue(key, out var found))
+        {
+            _assocCache[key] = found = FindAssocUncached(type, name, methodsOnly);
+        }
+
+        return found;
+    }
+
+    private readonly Dictionary<(Item Type, string Name, bool MethodsOnly), Item?> _assocCache = [];
+
+    private Item? FindAssocUncached(Item type, string name, bool methodsOnly)
     {
         if (type.Members.TryGetValue(name, out var direct) && direct.FirstOrDefault(x => !methodsOnly || x.Kind != Kind.Field) is { } directHit)
         {

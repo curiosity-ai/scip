@@ -72,6 +72,11 @@ public sealed class RustIndexer() : IIndexer
             {
                 var scanner = new RustCrateScanner(package, target, seen);
                 scanner.Scan();
+                foreach (var error in scanner.Errors)
+                {
+                    log.WriteLine(error);
+                }
+
                 units.Add(new ScanUnit(package, target, scanner));
             }
         }
@@ -79,7 +84,7 @@ public sealed class RustIndexer() : IIndexer
         bool IsExternal(CargoPackage p) =>
             Path.GetRelativePath(root, Path.GetDirectoryName(Path.GetFullPath(p.ManifestPath))!).StartsWith("..", StringComparison.Ordinal);
 
-        var externals = RustAnalysis.Analyze(units, IsExternal);
+        var externals = RustAnalysis.Analyze(units, IsExternal, log);
         List<Document> documents = [];
         foreach (var unit in units)
         {

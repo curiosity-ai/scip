@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace ScipSharp.Indexer.Clang;
 
 /// <summary>Receives definitions and references found by <see cref="CppParser"/>.</summary>
@@ -42,6 +44,10 @@ public sealed partial class CppParser
     private readonly Dictionary<int, int> _localCounters = [];
     private readonly Dictionary<int, int> _anonCounters = [];
     private readonly Dictionary<string, List<Entity>> _members = [];
+    private readonly Dictionary<string, (int Count, List<Entity>? Cands)> _memberCands = [];
+
+    /// <summary>For each token, the index of the innermost unclosed '(' / '[' / '{' before it, or -1.</summary>
+    private readonly int[] _enclosing;
     private bool _pass2;
     private readonly TypeCanon _canon;
     private readonly List<Entity> _entities = [];
@@ -59,9 +65,11 @@ public sealed partial class CppParser
         _canon = new TypeCanon(static (sc, name, leading) => leading ? Root(sc).LookupHere(name) : sc.Lookup(name));
         _match = new int[tokens.Count];
         Array.Fill(_match, -1);
+        _enclosing = new int[tokens.Count];
         var stack = new List<int>();
         for (var i = 0; i < tokens.Count; i++)
         {
+            _enclosing[i] = stack.Count > 0 ? stack[^1] : -1;
             if (tokens[i].Kind != TokKind.Punct)
             {
                 continue;
@@ -252,7 +260,7 @@ public sealed partial class CppParser
 
         var e = new Entity(name, kind, symbol, into, _files.Relative(at.File) is not null) { SymbolKind = sk, Path = path, Disambiguator = desc.Disambiguator };
         _entities.Add(e);
-        into.Add(e, key);
+        into.Add(e, key, isNew: true);
         if (into.Kind == SKind.Class && kind is EKind.Func or EKind.Field or EKind.Var)
         {
             if (!_members.TryGetValue(name, out var l))
@@ -295,7 +303,8 @@ public sealed partial class CppParser
 
     private int ParseDecl(Scope scope, int p, int end)
     {
-        if (p >= end)
+        // Pathologically deep nesting (namespaces/classes/blocks/lambdas): skip the rest rather than overflow the stack.
+        if (p >= end || !RuntimeHelpers.TryEnsureSufficientExecutionStack())
         {
             return end;
         }
@@ -1811,10 +1820,12 @@ public sealed partial class CppParser
                 var open = j + 1;
                 if (P(open, "<"))
                 {
-                    open = SkipAngles(open, b) + 1;
+                    // an unclosed '<' yields -1: `open` would become 0 and the loop would jump backwards forever
+                    var close = SkipAngles(open, b);
+                    open = close > open ? close + 1 : -1;
                 }
 
-                if ((P(open, "(") || P(open, "{")) && M(open) > open)
+                if (open > i && (P(open, "(") || P(open, "{")) && M(open) > open)
                 {
                     List<Entity>? cands = null;
                     if (i == j && cls is not null)
@@ -1863,6 +1874,11 @@ public sealed partial class CppParser
 
     private int Statement(Scope s, int p, int end)
     {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            return end; // see ParseDecl
+        }
+
         var t = _t[p];
         if (t.Kind == TokKind.Punct)
         {
@@ -1912,7 +1928,9 @@ public sealed partial class CppParser
                     var next = Statement(cs, close + 1, end);
                     if (t.Text == "if" && P(next, "else"))
                     {
-                        next = Statement(cs, next + 1, end);
+                        // Only chain the else branch under the condition scope when it declared something: otherwise a
+                        // long else-if chain nests one scope per branch and every lookup walks all of them (quadratic).
+                        next = Statement(cs.Names.Count > 0 || cs.Usings.Count > 0 ? cs : s, next + 1, end);
                     }
 
                     return next;
@@ -2185,7 +2203,7 @@ public sealed partial class CppParser
         {
             if (_t[term].Kind == TokKind.Punct && _t[term].Text is "(" or "[" or "{" or "=" or ";" or "," or ":" )
             {
-                if (_t[term].Text == "[" && P(term + 1, "["))
+                if (_t[term].Text == "[" && P(term + 1, "[") && M(term) > term) // unmatched: M is -1, would restart at 0
                 {
                     term = M(term) + 1;
                     continue;
@@ -2407,13 +2425,9 @@ public sealed partial class CppParser
                 var cls = ClassScopeOf(recv);
                 var argc = P(i + 1, "(") ? CountArgs(i + 1) : -1;
                 List<Entity>? cands = cls?.LookupHere(t.Text);
-                if (cands is null && cls is null && _members.TryGetValue(t.Text, out var all))
+                if (cands is null && cls is null)
                 {
-                    var distinct = all.Where(static x => x.Kind != EKind.Func || true).ToList();
-                    if (distinct.Count == 1 || distinct.All(x => x.DeclScope == distinct[0].DeclScope))
-                    {
-                        cands = distinct;
-                    }
+                    cands = MembersNamed(t.Text);
                 }
 
                 var ent = Pick(cands, argc);
@@ -2469,7 +2483,9 @@ public sealed partial class CppParser
             Emit(tok, picked, false);
             ent = picked;
             var after = next;
-            if (P(after, "<"))
+            // `x < ...` after a variable/enumerator is a comparison, never `T<args>::`; don't scan for a '>' (in a long
+            // initializer list such as `{ A < 1, A < 2, ... }` that scan runs to the closing brace each time).
+            if (P(after, "<") && picked.Kind is not (EKind.Var or EKind.Local or EKind.Param or EKind.Field or EKind.EnumConst))
             {
                 var c = SkipAngles(after, b);
                 if (c > 0 && P(c + 1, "::") && IsName(c + 2))
@@ -2492,6 +2508,28 @@ public sealed partial class CppParser
         last = ent;
         lastIdx = j;
         return j + 1;
+    }
+
+    /// <summary>
+    /// Members called <paramref name="name"/> when they all belong to one class (receiver of unknown type), else null.
+    /// Memoised per name: <c>_members</c> lists only grow, so a cached answer stays valid while the count is unchanged.
+    /// </summary>
+    private List<Entity>? MembersNamed(string name)
+    {
+        if (!_members.TryGetValue(name, out var all))
+        {
+            return null;
+        }
+
+        if (_memberCands.TryGetValue(name, out var cached) && cached.Count == all.Count)
+        {
+            return cached.Cands;
+        }
+
+        var distinct = all.ToList();
+        var result = distinct.Count == 1 || distinct.All(x => x.DeclScope == distinct[0].DeclScope) ? distinct : null;
+        _memberCands[name] = (all.Count, result);
+        return result;
     }
 
     private bool IsLambdaStart(int i, int a, int b)
