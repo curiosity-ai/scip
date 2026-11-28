@@ -129,8 +129,10 @@ internal sealed class SymbolNamer(string packageName, string packageVersion)
                     var path = new List<Decl>();
                     for (var x = d; x is not null; x = x.Parent)
                     {
-                        path.Insert(0, x);
+                        path.Add(x);
                     }
+
+                    path.Reverse();
 
                     var root = path[0];
                     var descriptors = root.IsExternal && root.Kind != DeclKind.Parameter ? [] : BlockPrefix(root.Block);
@@ -187,33 +189,30 @@ internal sealed class SymbolNamer(string packageName, string packageVersion)
     /// <summary>Descriptors naming a block; external procedures (directly in the file) are top level.</summary>
     internal static List<SymbolDescriptor> BlockPrefix(Block b)
     {
-        var name = b.Decl?.Name ?? b.AnonymousName ?? "$block";
-        switch (b.Kind)
+        // Iterative (blocks can nest arbitrarily deep in malformed input): collect innermost first, then reverse.
+        var prefix = new List<SymbolDescriptor>();
+        for (Block? x = b; x is not null; x = x.Parent)
         {
-            case BlockKind.File:
-                return [D(name, Suffix.Namespace)];
-            case BlockKind.Package:
-                return [D(name, Suffix.Namespace)];
-            case BlockKind.Procedure:
-                {
-                    var prefix = b.Parent is null or { Kind: BlockKind.File } ? [] : BlockPrefix(b.Parent);
-                    prefix.Add(D(name, Suffix.Method));
-                    return prefix;
-                }
+            var name = x.Decl?.Name ?? x.AnonymousName ?? "$block";
+            if (x.Kind is BlockKind.File or BlockKind.Package)
+            {
+                prefix.Add(D(name, Suffix.Namespace));
+                break;
+            }
 
-            case BlockKind.PreprocessorProcedure:
-                {
-                    var prefix = b.Parent is null ? [] : BlockPrefix(b.Parent);
-                    prefix.Add(D(name, Suffix.Macro));
-                    return prefix;
-                }
-
-            default:
-                {
-                    var prefix = b.Parent is null ? [] : BlockPrefix(b.Parent);
-                    prefix.Add(D(name, Suffix.Namespace));
-                    return prefix;
-                }
+            prefix.Add(D(name, x.Kind switch
+            {
+                BlockKind.Procedure => Suffix.Method,
+                BlockKind.PreprocessorProcedure => Suffix.Macro,
+                _ => Suffix.Namespace,
+            }));
+            if (x.Kind == BlockKind.Procedure && x.Parent is null or { Kind: BlockKind.File })
+            {
+                break;
+            }
         }
+
+        prefix.Reverse();
+        return prefix;
     }
 }

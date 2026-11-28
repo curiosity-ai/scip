@@ -64,4 +64,30 @@ public class RobustnessTests
         await Assert.That(docs.Count).IsEqualTo(1);
         await Assert.That(docs[0].Occurrences.Count).IsGreaterThan(5);
     }
+
+    [Test]
+    public async Task DeeplyNestedInterpolationDoesNotOverflowTheStack()
+    {
+        const int depth = 20000;
+        var src = "x = " + string.Concat(Enumerable.Repeat("\"#{", depth)) + "1" + string.Concat(Enumerable.Repeat("}\"", depth)) + "\ny = x\n";
+        var docs = RubyIndexer.IndexSources([("interp.rb", src)], new GemMetadata("t", "1"));
+        await Assert.That(docs.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task GlobalSigilAtEndOfFileIsLexed()
+    {
+        var docs = RubyIndexer.IndexSources([("g.rb", "x = 1\n$")], new GemMetadata("t", "1"));
+        await Assert.That(docs.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task LongTypedMethodChainResolvesInLinearTime()
+    {
+        // Each link used to evaluate its receiver's type twice: 2^40 evaluations.
+        var src = "x = \"s\"\ny = x" + string.Concat(Enumerable.Repeat(".strip", 40)) + "\n";
+        var docs = RubyIndexer.IndexSources([("chain.rb", src)], new GemMetadata("t", "1"));
+        var strips = docs[0].Occurrences.Where(o => o.Symbol.EndsWith("String#strip().", StringComparison.Ordinal)).ToList();
+        await Assert.That(strips.Count).IsEqualTo(40);
+    }
 }

@@ -6,17 +6,31 @@ using System.Diagnostics;
 namespace ScipSharp.Indexer.DotNet;
 
 /// <summary>
-/// Walks a single VisualBasic syntax tree and produces a SCIP <code>Document</code>.
+/// Visits every node of a single VisualBasic syntax tree and produces a SCIP <code>Document</code>.
 /// </summary>
-internal sealed class ScipVisualBasicSyntaxWalker : VisualBasicSyntaxWalker
+internal sealed class ScipVisualBasicSyntaxWalker : VisualBasicSyntaxVisitor
 {
     private readonly SemanticModel _semanticModel;
     private readonly ScipDocumentIndexer _scipDocumentIndexer;
 
-    public ScipVisualBasicSyntaxWalker(ScipDocumentIndexer scipSymbolFormatter, SemanticModel semanticModel, SyntaxWalkerDepth depth = SyntaxWalkerDepth.Node) : base(depth)
+    public ScipVisualBasicSyntaxWalker(ScipDocumentIndexer scipSymbolFormatter, SemanticModel semanticModel)
     {
         _scipDocumentIndexer = scipSymbolFormatter;
         _semanticModel = semanticModel;
+    }
+
+    /// <summary>
+    /// Visits every node of <paramref name="root"/> in document (pre-)order, as a node-depth syntax walker would, but
+    /// iteratively: the recursive walker throws <see cref="InsufficientExecutionStackException"/> on deeply nested
+    /// syntax such as a generated expression with thousands of operands. The <c>base.Visit*</c> calls of the
+    /// overrides below are no-ops on a visitor.
+    /// </summary>
+    public void Walk(SyntaxNode root)
+    {
+        foreach (var node in root.DescendantNodesAndSelf())
+        {
+            Visit(node);
+        }
     }
 
     public override void VisitIdentifierName(IdentifierNameSyntax node)

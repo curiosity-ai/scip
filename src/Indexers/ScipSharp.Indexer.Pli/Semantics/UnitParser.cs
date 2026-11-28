@@ -15,11 +15,19 @@ internal sealed class UnitParser
     private const int MaxIncludeDepth = 32;
     private const int MaxStatementNesting = 200;
 
+    /// <summary>
+    /// How often one member may be spliced into the same block of a unit. Re-including it there yields the very same
+    /// tokens resolved in the same scope, so the cap loses nothing for normal code but stops a diamond of includes
+    /// (each member including two others) from expanding 2^depth times.
+    /// </summary>
+    private const int MaxIncludesPerBlock = 8;
+
     private readonly bool _caseSensitive;
     private readonly Func<string, int, SourceFileEntry?> _include;
     private readonly Stack<(List<Token> Tokens, int Pos, int File)> _sources = new();
     private readonly List<Open> _open = [];
     private readonly List<PpOpen> _ppOpen = [];
+    private readonly Dictionary<(int File, Block Block), int> _includeCounts = [];
     private Unit _unit = null!;
     private Block _current = null!;
     private int _anonymous;
@@ -54,6 +62,7 @@ internal sealed class UnitParser
         _open.Clear();
         _ppOpen.Clear();
         _sources.Clear();
+        _includeCounts.Clear();
         _anonymous = 0;
         _sources.Push((main.Tokens, 0, main.Id));
         while (NextStatement() is { } statement)
@@ -62,7 +71,7 @@ internal sealed class UnitParser
             {
                 ProcessStatement(statement, 0);
             }
-            catch (ArgumentOutOfRangeException)
+            catch (Exception e) when (e is ArgumentOutOfRangeException or InsufficientExecutionStackException)
             {
                 // Malformed statement: keep going with the next one.
                 _unit.Warnings.Add($"{main.RelativePath}: could not parse statement at {statement[0]}");
@@ -638,6 +647,8 @@ internal sealed class UnitParser
         var result = new List<Leaf>();
         if (j < end && t[j].Is("("))
         {
+            // Factored declarations nest `((a, b) FIXED, c)`; pathological nesting fails this statement only.
+            System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
             var close = MatchParen(t, j, end);
             var k = j + 1;
             while (k < close)
@@ -1116,6 +1127,17 @@ internal sealed class UnitParser
             if (_sources.Any(s => s.File == file.Id))
             {
                 _unit.Warnings.Add($"{_unit.File.RelativePath}: recursive %INCLUDE {m} ignored");
+                continue;
+            }
+
+            var count = _includeCounts[(file.Id, _current)] = _includeCounts.GetValueOrDefault((file.Id, _current)) + 1;
+            if (count > MaxIncludesPerBlock)
+            {
+                if (count == MaxIncludesPerBlock + 1)
+                {
+                    _unit.Warnings.Add($"{_unit.File.RelativePath}: %INCLUDE {m} repeated more than {MaxIncludesPerBlock} times in one block; further copies ignored");
+                }
+
                 continue;
             }
 

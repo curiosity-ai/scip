@@ -59,8 +59,42 @@ internal sealed partial class RubyWalker
 
     private void SetExpr(TypeFn? fn, int index)
     {
-        _exprType = fn;
+        _exprType = fn is null ? null : TypeMemo.Wrap(fn);
         _exprEnd = index;
+    }
+
+    /// <summary>
+    /// Caches a type closure's result. A call chain <c>x.a.b.c</c> builds closures that evaluate their receiver twice
+    /// (once for the call target, once for the return type), so without caching an N-link chain costs 2^N evaluations.
+    /// Closures only run once all files are walked, when the project tables no longer change; the result can still
+    /// depend on <see cref="RubyProject.Guarded"/>'s depth, so it is cached per depth.
+    /// </summary>
+    private sealed class TypeMemo(TypeFn fn)
+    {
+        private RubyProject? _project;
+        private int _depth;
+        private RType? _value;
+
+        public static TypeFn Wrap(TypeFn fn) => fn.Target is TypeMemo ? fn : new TypeMemo(fn).Eval;
+
+        private RType? Eval(RubyProject p)
+        {
+            if (ReferenceEquals(_project, p) && _depth == p.TypeDepth)
+            {
+                return _value;
+            }
+
+            // Long chains nest one closure per link: give up on the type rather than overflow the stack.
+            if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            {
+                return null;
+            }
+
+            var depth = p.TypeDepth;
+            var value = fn(p);
+            (_project, _depth, _value) = (p, depth, value);
+            return value;
+        }
     }
 
     private string LocalSym(int id) => id < 0 ? _kwSymbols[id] : $"local {id}";
@@ -258,7 +292,9 @@ internal sealed partial class RubyWalker
 
     private (TypeFn? Fn, int End) ParseType(int i)
     {
-        if (!TryReadChain(i, out var last, out var segs, out _, out var abs))
+        // `T.nilable(T.nilable(...))` recurses; pathological nesting is left untyped.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack()
+            || !TryReadChain(i, out var last, out var segs, out _, out var abs))
         {
             return (null, i);
         }
