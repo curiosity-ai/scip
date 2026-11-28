@@ -687,6 +687,14 @@ public abstract class Expression : IStatementRunnable
 
     public IReadOnlyList<Result> Run(IReadOnlyList<Result> r)
     {
+        // Not in abaplint: the grammar is recursive (Source in Source in ...), so a long or deeply nested statement
+        // recursed until the stack ran out, which kills the process. Give up on the statement instead, Combi.Run
+        // catches this and the statement stays Unknown.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new InsufficientExecutionStackException();
+        }
+
         var runnable = this.runnable ??= GetRunnable();
 
         if (r.Count == 1)
@@ -1151,6 +1159,11 @@ public static class Combi
         }
         catch (FailCombinatorException)
         {
+            return null;
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            // too deep to match on this thread's stack, see Expression.Run
             return null;
         }
 

@@ -116,6 +116,9 @@ public sealed class StatementParser
 {
     public const int STATEMENT_MAX_TOKENS = 20000;
 
+    /// <summary>How many line splits <see cref="LazyUnknown"/> tries on one unknown statement.</summary>
+    private const int LAZY_UNKNOWN_MAX_SPLITS = 50;
+
     private static readonly AbstractToken[] EMPTY_PRAGMAS = [];
 
     private static readonly Lazy<StatementMap> map = new(() => new StatementMap(), LazyThreadSafetyMode.ExecutionAndPublication);
@@ -193,16 +196,25 @@ public sealed class StatementParser
                     && !concat.StartsWith("SELECT SINGLE ", StringComparison.Ordinal)
                     && !concat.StartsWith("CALL FUNCTION ", StringComparison.Ordinal))
                 {
-                    foreach (var (first, second) in BuildSplits(statement.GetTokens()))
+                    var tokens = statement.GetTokens();
+                    var attempts = 0;
+                    foreach (var split in BuildSplits(tokens))
                     {
-                        if (second.Count == 1)
+                        if (tokens.Count - split == 1)
                         {
                             continue; // probably punctuation
                         }
-                        var st = CategorizeStatement(new StatementNode(new Unknown()).SetChildren(TokensToNodes(second)));
+                        // Not in abaplint: every attempt parses the rest of the statement, so an unknown statement of
+                        // n lines cost n parses of up to n lines. Recovering from a missing period only needs the first
+                        // few splits, so the attempts are capped.
+                        if (++attempts > LAZY_UNKNOWN_MAX_SPLITS)
+                        {
+                            break;
+                        }
+                        var st = CategorizeStatement(new StatementNode(new Unknown()).SetChildren(TokensToNodes(tokens.Skip(split))));
                         if (st.Get() is not Unknown && st.Get() is not Empty)
                         {
-                            result.Add(new StatementNode(new Unknown()).SetChildren(TokensToNodes(first)));
+                            result.Add(new StatementNode(new Unknown()).SetChildren(TokensToNodes(tokens.Take(split))));
                             statement = st;
                             break;
                         }
@@ -215,23 +227,19 @@ public sealed class StatementParser
         wa.Statements = result;
     }
 
-    private static List<(List<AbstractToken> First, List<AbstractToken> Second)> BuildSplits(IReadOnlyList<AbstractToken> tokens)
+    /// <summary>The token indexes at which a new line starts: the statement is split into [0, i) and [i, end).</summary>
+    private static IEnumerable<int> BuildSplits(IReadOnlyList<AbstractToken> tokens)
     {
-        var res = new List<(List<AbstractToken>, List<AbstractToken>)>();
-        var before = new List<AbstractToken>();
         var prevRow = tokens[0].GetRow();
 
         for (var i = 0; i < tokens.Count; i++)
         {
             if (tokens[i].GetRow() != prevRow)
             {
-                res.Add((new List<AbstractToken>(before), tokens.Skip(i).ToList()));
+                yield return i;
             }
             prevRow = tokens[i].GetRow();
-            before.Add(tokens[i]);
         }
-
-        return res;
     }
 
     private static void NativeSQL(WorkArea wa)

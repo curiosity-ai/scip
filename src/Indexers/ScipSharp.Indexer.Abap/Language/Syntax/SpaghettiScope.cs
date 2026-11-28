@@ -38,6 +38,47 @@ public class SpaghettiScopeNode : ScopeData, ISpaghettiScopeNode
         return this.parent;
     }
 
+    // Not in abaplint: FORMs looked up by name. Every PERFORM and every FORM searched the list of all FORMs of the
+    // program, quadratic in the number of FORMs. The list is changed in place elsewhere (forms are added, and replaced
+    // by a resolved version), so the index catches up with what was added and is rebuilt when a lookup finds it stale.
+    private Dictionary<string, int>? formIndex;
+    private int formIndexed;
+
+    /// <summary>The index in <c>GetData().Forms</c> of the first FORM with the (upper case) name here, -1 if none.</summary>
+    internal int IndexOfForm(string upper)
+    {
+        var forms = this.GetData().Forms;
+        if (this.formIndex == null || this.formIndexed > forms.Count)
+        {
+            this.formIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+            this.formIndexed = 0;
+        }
+        for (; this.formIndexed < forms.Count; this.formIndexed++)
+        {
+            this.formIndex.TryAdd(JsUtils.ToUpper(forms[this.formIndexed].GetName()), this.formIndexed);
+        }
+
+        if (!this.formIndex.TryGetValue(upper, out var i))
+        {
+            return -1;
+        }
+        if (JsUtils.ToUpper(forms[i].GetName()) == upper)
+        {
+            return i;
+        }
+
+        // stale, the form at the index was replaced by one with another name: search the list and index anew
+        this.formIndex = null;
+        for (var j = 0; j < forms.Count; j++)
+        {
+            if (JsUtils.ToUpper(forms[j].GetName()) == upper)
+            {
+                return j;
+            }
+        }
+        return -1;
+    }
+
     public void AddChild(ISpaghettiScopeNode node)
     {
         this.children.Add((SpaghettiScopeNode)node);
@@ -142,12 +183,10 @@ public class SpaghettiScopeNode : ScopeData, ISpaghettiScopeNode
         var upper = JsUtils.ToUpper(name);
         while (search != null)
         {
-            foreach (var form in search.GetData().Forms)
+            var i = search.IndexOfForm(upper);
+            if (i >= 0)
             {
-                if (JsUtils.ToUpper(form.GetName()) == upper)
-                {
-                    return form;
-                }
+                return search.GetData().Forms[i];
             }
             search = search.GetParent();
         }

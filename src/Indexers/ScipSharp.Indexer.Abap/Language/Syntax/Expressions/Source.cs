@@ -22,6 +22,11 @@ public class Source
 {
     public static AbstractType? RunSyntax(ExpressionNode? node, SyntaxInput input, AbstractType? targetType = null, bool writeReference = false, bool allowGenericDeference = false, bool readReference = true)
     {
+        // Not in abaplint: recursion over nested source, give up on the object rather than overflow the stack
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new InsufficientExecutionStackException();
+        }
 
         if (node == null)
         {

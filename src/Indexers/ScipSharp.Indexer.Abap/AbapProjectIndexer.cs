@@ -119,10 +119,12 @@ internal sealed class AbapProjectIndexer
             StatementOccurrences(f);
         }
 
+        // grouped once: picking each file's symbols out of all symbols made writing the documents quadratic
+        var symbolsByFile = _symbolStates.Values.ToLookup(s => s.File, StringComparer.Ordinal);
         foreach (var f in _files.Values.OrderBy(f => f.Path, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var doc = f.Build(_symbolStates, _external);
+            var doc = f.Build(_symbolStates, symbolsByFile[f.Path], _external);
             if (doc.Occurrences.Count > 0 || doc.Symbols.Count > 0 || f.Abap != null)
             {
                 onDocument(doc);
@@ -843,6 +845,33 @@ internal sealed class AbapProjectIndexer
             return null;
         }
 
+        private Dictionary<int, List<StatementNode>>? _statementsByRow;
+
+        /// <summary>
+        /// The statements that span the row, in file order. Looking the statement of a declaration up among all statements
+        /// of the file made declaring a file's names quadratic.
+        /// </summary>
+        private List<StatementNode> StatementsOnRow(int row)
+        {
+            if (_statementsByRow == null)
+            {
+                _statementsByRow = [];
+                foreach (var s in Abap!.GetStatements())
+                {
+                    for (var r = s.GetStart().GetRow(); r <= s.GetEnd().GetRow(); r++)
+                    {
+                        if (!_statementsByRow.TryGetValue(r, out var list))
+                        {
+                            _statementsByRow[r] = list = [];
+                        }
+                        list.Add(s);
+                    }
+                }
+            }
+
+            return _statementsByRow.TryGetValue(row, out var found) ? found : [];
+        }
+
         /// <summary>The declaring statement, preceded by its ABAP Doc comment (<c>"!</c> lines).</summary>
         public string? Documentation(AbstractToken token)
         {
@@ -852,7 +881,7 @@ internal sealed class AbapProjectIndexer
             }
 
             var p = token.GetStart();
-            var statement = Abap.GetStatements().FirstOrDefault(s => !p.IsBefore(s.GetStart()) && !s.GetEnd().IsBefore(p));
+            var statement = StatementsOnRow(p.GetRow()).FirstOrDefault(s => !p.IsBefore(s.GetStart()) && !s.GetEnd().IsBefore(p));
             if (statement == null)
             {
                 return null;
@@ -880,7 +909,7 @@ internal sealed class AbapProjectIndexer
             return b.Append(text.Length > 400 ? text[..400] + " …" : text).ToString();
         }
 
-        public Document Build(Dictionary<string, SymbolState> symbols, Dictionary<string, SymbolInformation> external)
+        public Document Build(Dictionary<string, SymbolState> symbols, IEnumerable<SymbolState> declaredHere, Dictionary<string, SymbolInformation> external)
         {
             bool Known(string symbol) => SymbolParser.IsLocalSymbol(symbol) || symbols.ContainsKey(symbol) || external.ContainsKey(symbol);
 
@@ -891,7 +920,7 @@ internal sealed class AbapProjectIndexer
                 PositionEncoding = PositionEncoding.Utf16CodeUnitOffsetFromLineStart,
             };
             doc.Occurrences.AddRange(_list.Where(o => Known(o.Occurrence.Symbol)).OrderBy(o => o.Range[0]).ThenBy(o => o.Range[1]).Select(o => o.Occurrence));
-            foreach (var info in symbols.Values.Where(s => s.File == Path).Select(s => s.Info).OrderBy(s => s.Symbol, StringComparer.Ordinal))
+            foreach (var info in declaredHere.Select(s => s.Info).OrderBy(s => s.Symbol, StringComparer.Ordinal))
             {
                 var dangling = info.Relationships.Where(r => !Known(r.Symbol)).ToList();
                 foreach (var r in dangling)

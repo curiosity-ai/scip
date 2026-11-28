@@ -162,9 +162,17 @@ public class CurrentScope
     public void UpdateFormDefinition(IFormDefinition f)
     {
         SpaghettiScopeNode? search = this.current;
+        var upper = JsUtils.ToUpper(f.GetName());
         while (search != null)
         {
             var forms = search.GetData().Forms;
+            // usually the first FORM of the name, see SpaghettiScopeNode.IndexOfForm; else search them all
+            var first = search.IndexOfForm(upper);
+            if (first >= 0 && forms[first].Equals(((global::ScipSharp.Indexer.Abap.FileInformation.Identifier?)f)))
+            {
+                forms[first] = f;
+                return;
+            }
             for (var i = 0; i < forms.Count; i++)
             {
                 if (forms[i].Equals(((global::ScipSharp.Indexer.Abap.FileInformation.Identifier?)f)))
@@ -578,7 +586,11 @@ public class CurrentScope
         {
             return null;
         }
-        name = new Regex(@"^!", RegexOptions.ECMAScript).Replace(name, "", 1);
+        // the TS replace(/^!/, ""); not a Regex, which was compiled anew on each of these very frequent calls
+        if (name.StartsWith('!'))
+        {
+            name = name.Substring(1);
+        }
         var found = this.current?.FindVariable(name);
         if (found != null)
         {

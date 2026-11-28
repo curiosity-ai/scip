@@ -68,7 +68,17 @@ public static class StructureParser
     {
         var parent = new StructureNode(structure);
         var matcher = singletons.GetOrAdd(structure.GetType(), _ => structure.GetMatcher());
-        var result = matcher.Run(statements, parent);
+        IMatch result;
+        try
+        {
+            result = matcher.Run(statements, parent);
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            // see SubStructure.RunAt
+            var issue = Issue.AtPosition(file, new Position(1, 1), "Structure nested too deeply to parse", "structure", Severity.Error);
+            return new IStructureResult([issue], null);
+        }
 
         if (result.Error)
         {

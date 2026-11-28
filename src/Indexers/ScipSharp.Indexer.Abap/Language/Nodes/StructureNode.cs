@@ -26,39 +26,58 @@ public class StructureNode : AbstractNode<IStructureOrStatementNode>, IStructure
         return this;
     }
 
+    // Not in abaplint: the walks below over nested structures (IF in IF in ...) use an explicit stack instead of
+    // recursion, see NodeWalk; they visit the nodes in the same order as the recursive versions.
+
+    /// <summary>The nodes below this one in pre-order; the children of a structure only when <paramref name="descend"/> says so.</summary>
+    private IEnumerable<IStructureOrStatementNode> Descendants(Func<StructureNode, bool>? descend = null)
+    {
+        var stack = new Stack<IStructureOrStatementNode>();
+        PushChildren(stack, this);
+        while (stack.Count > 0)
+        {
+            var node = stack.Pop();
+            yield return node;
+            if (node is StructureNode sn && (descend == null || descend(sn)))
+            {
+                PushChildren(stack, sn);
+            }
+        }
+    }
+
+    private static void PushChildren(Stack<IStructureOrStatementNode> stack, StructureNode node)
+    {
+        var children = node.GetChildren();
+        for (var i = children.Count - 1; i >= 0; i--)
+        {
+            stack.Push(children[i]);
+        }
+    }
+
+    /// <summary>The statements below this node, in order.</summary>
+    private IEnumerable<StatementNode> Statements() => Descendants().OfType<StatementNode>();
+
     // todo, remove this method, the logic should never go up in the tree
     public StructureNode? FindParent(StatementNode node)
     {
-        foreach (var child in GetChildren())
+        foreach (var child in Descendants())
         {
-            if (ReferenceEquals(child, node))
+            if (child is StructureNode sn && sn.GetChildren().Any(c => ReferenceEquals(c, node)))
             {
-                return this;
-            }
-            else if (child is StatementNode)
-            {
-                continue;
-            }
-            else if (child is StructureNode sn)
-            {
-                var res = sn.FindParent(node);
-                if (res != null)
-                {
-                    return res;
-                }
+                return sn;
             }
         }
-        return null;
+        return GetChildren().Any(c => ReferenceEquals(c, node)) ? this : null;
     }
 
     public string ConcatTokens()
     {
-        var concat = "";
-        foreach (var child in GetChildren())
+        var concat = new System.Text.StringBuilder();
+        foreach (var statement in Statements())
         {
-            concat = concat + child.ConcatTokens();
+            concat.Append(statement.ConcatTokens());
         }
-        return concat;
+        return concat.ToString();
     }
 
     public StatementNode? FindDirectStatement<T>() where T : IStatement => FindDirectStatement(typeof(T));
@@ -109,23 +128,11 @@ public class StructureNode : AbstractNode<IStructureOrStatementNode>, IStructure
 
     public StatementNode? FindFirstStatement(Type type)
     {
-        foreach (var child in GetChildren())
+        foreach (var child in Descendants(sn => !NodeTypeCheck.Is(sn.Get(), type)))
         {
             if (NodeTypeCheck.Is(child.Get(), type))
             {
                 return child as StatementNode;
-            }
-            else if (child is StatementNode)
-            {
-                continue;
-            }
-            else if (child is StructureNode sn)
-            {
-                var res = sn.FindFirstStatement(type);
-                if (res != null)
-                {
-                    return res;
-                }
             }
         }
         return null;
@@ -135,9 +142,9 @@ public class StructureNode : AbstractNode<IStructureOrStatementNode>, IStructure
 
     public ExpressionNode? FindFirstExpression(Type type)
     {
-        foreach (var child in GetChildren())
+        foreach (var statement in Statements())
         {
-            var res = child.FindFirstExpression(type);
+            var res = statement.FindFirstExpression(type);
             if (res != null)
             {
                 return res;
@@ -148,49 +155,31 @@ public class StructureNode : AbstractNode<IStructureOrStatementNode>, IStructure
 
     public StatementNode? GetFirstStatement()
     {
-        foreach (var child in GetChildren())
+        IStructureOrStatementNode node = this;
+        while (node is StructureNode sn)
         {
-            if (child is StatementNode sn)
+            var first = sn.GetFirstChild();
+            if (first == null)
             {
-                return sn;
+                return null;
             }
-            return ((StructureNode)child).GetFirstStatement();
+            node = first;
         }
-        return null;
+        return (StatementNode)node;
     }
 
-    public override AbstractToken GetFirstToken()
-    {
-        var child = GetFirstChild();
+    public override AbstractToken GetFirstToken() => NodeWalk.FirstToken(this, "StructureNode");
 
-        if (child != null)
-        {
-            return child.GetFirstToken();
-        }
-
-        throw new InvalidOperationException("StructureNode, getFirstToken, unexpected type");
-    }
-
-    public override AbstractToken GetLastToken()
-    {
-        var child = GetLastChild();
-
-        if (child != null)
-        {
-            return child.GetLastToken();
-        }
-
-        throw new InvalidOperationException("StructureNode, getLastToken, unexpected type");
-    }
+    public override AbstractToken GetLastToken() => NodeWalk.LastToken(this, "StructureNode");
 
     public List<ExpressionNode> FindAllExpressions<T>() where T : IStatementRunnable => FindAllExpressions(typeof(T));
 
     public List<ExpressionNode> FindAllExpressions(Type type)
     {
         var ret = new List<ExpressionNode>();
-        foreach (var child in GetChildren())
+        foreach (var statement in Statements())
         {
-            ret.AddRange(child.FindAllExpressions(type));
+            ret.AddRange(statement.FindAllExpressions(type));
         }
         return ret;
     }
@@ -200,9 +189,9 @@ public class StructureNode : AbstractNode<IStructureOrStatementNode>, IStructure
     public List<ExpressionNode> FindAllExpressionsRecursive(Type type)
     {
         var ret = new List<ExpressionNode>();
-        foreach (var child in GetChildren())
+        foreach (var statement in Statements())
         {
-            ret.AddRange(child.FindAllExpressionsRecursive(type));
+            ret.AddRange(statement.FindAllExpressionsRecursive(type));
         }
         return ret;
     }
@@ -211,131 +200,40 @@ public class StructureNode : AbstractNode<IStructureOrStatementNode>, IStructure
     public List<ExpressionNode> FindAllExpressionsMulti(Type[] type, bool recursive = false)
     {
         var ret = new List<ExpressionNode>();
-        foreach (var child in GetChildren())
+        foreach (var statement in Statements())
         {
-            ret.AddRange(child.FindAllExpressionsMulti(type));
+            ret.AddRange(statement.FindAllExpressionsMulti(type));
         }
         return ret;
     }
 
     public List<StatementNode> FindAllStatements<T>() where T : IStatement => FindAllStatements(typeof(T));
 
-    public List<StatementNode> FindAllStatements(Type type)
-    {
-        var ret = new List<StatementNode>();
-        foreach (var child in GetChildren())
-        {
-            if (child is StructureNode sn)
-            {
-                ret.AddRange(sn.FindAllStatements(type));
-            }
-            else if (child is StatementNode st && NodeTypeCheck.Is(st.Get(), type))
-            {
-                ret.Add(st);
-            }
-        }
-        return ret;
-    }
+    public List<StatementNode> FindAllStatements(Type type) => Statements().Where(st => NodeTypeCheck.Is(st.Get(), type)).ToList();
 
-    public List<StatementNode> FindAllStatementNodes()
-    {
-        var ret = new List<StatementNode>();
-        foreach (var child in GetChildren())
-        {
-            if (child is StatementNode st)
-            {
-                ret.Add(st);
-            }
-            else if (child is StructureNode sn)
-            {
-                ret.AddRange(sn.FindAllStatementNodes());
-            }
-        }
-        return ret;
-    }
+    public List<StatementNode> FindAllStatementNodes() => Statements().ToList();
 
     public List<StructureNode> FindAllStructuresRecursive<T>() where T : IStructure => FindAllStructuresRecursive(typeof(T));
 
-    public List<StructureNode> FindAllStructuresRecursive(Type type)
+    public List<StructureNode> FindAllStructuresRecursive(Type type) =>
+        Descendants().OfType<StructureNode>().Where(sn => NodeTypeCheck.Is(sn.Get(), type)).ToList();
+
+    /// <summary>The outermost structures of one of the types: this one, or those below it, not looking inside a match.</summary>
+    private List<StructureNode> FindOutermostStructures(Type[] type)
     {
-        var ret = new List<StructureNode>();
-
-        foreach (var child in GetChildren())
-        {
-            if (child is not StructureNode sn)
-            {
-                continue;
-            }
-            else if (NodeTypeCheck.Is(sn.Get(), type))
-            {
-                ret.Add(sn);
-            }
-            ret.AddRange(sn.FindAllStructuresRecursive(type));
-        }
-        return ret;
-    }
-
-    public List<StructureNode> FindAllStructuresMulti(params Type[] type)
-    {
-        var ret = new List<StructureNode>();
-        foreach (var t in type)
-        {
-            if (NodeTypeCheck.Is(Get(), t))
-            {
-                return [this];
-            }
-        }
-        foreach (var child in GetChildren())
-        {
-            if (child is not StructureNode sn)
-            {
-                continue;
-            }
-
-            var found = false;
-            foreach (var t in type)
-            {
-                // faithful to upstream, which checks this.get() here
-                if (NodeTypeCheck.Is(Get(), t))
-                {
-                    ret.Add(sn);
-                    found = true;
-                }
-            }
-            if (!found)
-            {
-                ret.AddRange(sn.FindAllStructuresMulti(type));
-            }
-        }
-        return ret;
-    }
-
-    public List<StructureNode> FindAllStructures<T>() where T : IStructure => FindAllStructures(typeof(T));
-
-    public List<StructureNode> FindAllStructures(Type type)
-    {
-        var ret = new List<StructureNode>();
-        if (NodeTypeCheck.Is(Get(), type))
+        bool matches(StructureNode sn) => type.Any(t => NodeTypeCheck.Is(sn.Get(), t));
+        if (matches(this))
         {
             return [this];
         }
-        foreach (var child in GetChildren())
-        {
-            if (child is not StructureNode sn)
-            {
-                continue;
-            }
-            else if (NodeTypeCheck.Is(sn.Get(), type))
-            {
-                ret.Add(sn);
-            }
-            else
-            {
-                ret.AddRange(sn.FindAllStructures(type));
-            }
-        }
-        return ret;
+        return Descendants(sn => !matches(sn)).OfType<StructureNode>().Where(matches).ToList();
     }
+
+    public List<StructureNode> FindAllStructuresMulti(params Type[] type) => FindOutermostStructures(type);
+
+    public List<StructureNode> FindAllStructures<T>() where T : IStructure => FindAllStructures(typeof(T));
+
+    public List<StructureNode> FindAllStructures(Type type) => FindOutermostStructures([type]);
 
     public StructureNode? FindDirectStructure<T>() where T : IStructure => FindDirectStructure(typeof(T));
 
@@ -363,26 +261,7 @@ public class StructureNode : AbstractNode<IStructureOrStatementNode>, IStructure
         {
             return this;
         }
-        foreach (var child in GetChildren())
-        {
-            if (child is not StructureNode sn)
-            {
-                continue;
-            }
-            else if (NodeTypeCheck.Is(sn.Get(), type))
-            {
-                return sn;
-            }
-            else
-            {
-                var res = sn.FindFirstStructure(type);
-                if (res != null)
-                {
-                    return res;
-                }
-            }
-        }
-        return null;
+        return Descendants().OfType<StructureNode>().FirstOrDefault(sn => NodeTypeCheck.Is(sn.Get(), type));
     }
 
     public override string ToString() => "StructureNode " + structure.GetType().Name;

@@ -168,6 +168,11 @@ public class SyntaxLogic
     private ABAPFile currentFile;
     // files the traversal walked into through INCLUDEs, outermost first
     private readonly List<string> includeStack = new List<string>();
+    // Not in abaplint: how often each include was walked in this run. An include that is INCLUDEd from several places
+    // is walked again each time (it may sit in different scopes), but includes that include the same includes (a
+    // diamond) would be walked 2^depth times, so each include is walked at most MaxWalksPerInclude times.
+    private const int MaxWalksPerInclude = 8;
+    private readonly Dictionary<string, int> includeWalks = new Dictionary<string, int>();
     private List<Issue> issues;
     private List<Action> deferred;
 
@@ -297,6 +302,11 @@ public class SyntaxLogic
 
     private void Traverse(IStructureOrStatementNode node)
     {
+        // Not in abaplint: recursion over nested source, give up on the object rather than overflow the stack
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new InsufficientExecutionStackException();
+        }
         var loop = node is StructureNode && (((StructureNode)node).Get()) is global::ScipSharp.Indexer.Abap.Structures.Structures.Loop && this.loopTables.Push(((StructureNode)node), this.scope);
 
         foreach (var child in node.GetChildren())
@@ -331,8 +341,10 @@ public class SyntaxLogic
                 var file = this.helpers.proc.FindInclude(((StatementNode)(((StatementNode)child))), this.@object);
                 // an INCLUDE that leads back to a file already being walked is not followed again
                 var cyclic = file != null && (file.GetFilename() == this.currentFile.GetFilename() || this.includeStack.Contains(file.GetFilename()));
-                if (file != null && file.GetStructure() != null && cyclic == false)
+                var walks = file == null ? 0 : this.includeWalks.GetValueOrDefault(file.GetFilename());
+                if (file != null && file.GetStructure() != null && cyclic == false && walks < MaxWalksPerInclude)
                 {
+                    this.includeWalks[file.GetFilename()] = walks + 1;
                     var old = this.currentFile;
                     this.includeStack.Add(old.GetFilename());
                     this.currentFile = file;

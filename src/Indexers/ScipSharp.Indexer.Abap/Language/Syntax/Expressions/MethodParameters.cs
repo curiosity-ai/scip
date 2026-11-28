@@ -26,7 +26,7 @@ public class MethodParameters
 
     internal static string NormalizeParameterName(string name)
     {
-        return JsUtils.ToUpper(new Regex(@"^!", RegexOptions.ECMAScript).Replace(name, "", 1));
+        return JsUtils.ToUpper(name.StartsWith('!') ? name.Substring(1) : name); // TS replace(/^!/, "")
     }
 
     private HashSet<string>? requiredParameters = null;

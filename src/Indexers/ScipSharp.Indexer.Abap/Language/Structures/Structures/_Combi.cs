@@ -287,6 +287,12 @@ internal sealed class SubStructure : IStructureRunnable
 
     public IMatchAt RunAt(List<StatementNode> statements, int index, INode parent)
     {
+        // Not in abaplint: structures nest (IF in IF in ...) and are matched recursively, so deep nesting could run
+        // out of stack, which kills the process. Give up instead, StructureParser reports the file as not parsed.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            throw new InsufficientExecutionStackException();
+        }
         var nparent = new StructureNode(s);
         var ret = matcher.Value.RunAt(statements, index, nparent);
         if (ret.Next == index)
