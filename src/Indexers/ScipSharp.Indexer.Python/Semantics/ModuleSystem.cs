@@ -256,7 +256,21 @@ public sealed class ModuleSystem
     public ResolvedModule? Resolve(ModuleNameNode node, SourceModule from) =>
         Resolve(node.NameParts.Select(p => p.Value).ToList(), node.LeadingDots, from);
 
+    private readonly Dictionary<(string Parts, int Dots, string? FromDir), ResolvedModule?> _resolved = [];
+
+    /// <summary>Resolves an import (memoized: the evaluator resolves the same imports over and over, each a few file probes).</summary>
     public ResolvedModule? Resolve(IReadOnlyList<string> parts, int leadingDots, SourceModule? from)
+    {
+        var key = (string.Join('/', parts), leadingDots, from is null ? null : Path.GetDirectoryName(from.Path));
+        if (!_resolved.TryGetValue(key, out var result))
+        {
+            _resolved[key] = result = ResolveUncached(parts, leadingDots, from);
+        }
+
+        return result;
+    }
+
+    private ResolvedModule? ResolveUncached(IReadOnlyList<string> parts, int leadingDots, SourceModule? from)
     {
         if (leadingDots > 0)
         {

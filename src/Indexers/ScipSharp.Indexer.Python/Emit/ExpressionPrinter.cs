@@ -28,20 +28,10 @@ public static class ExpressionPrinter
             {
                 case NameNode n:
                     return n.Value;
-                case MemberAccessNode m:
-                    return Print(m.Left) + "." + m.Member.Value;
-                case CallNode c:
-                    return Print(c.Left) + "(" + string.Join(", ", c.Arguments.Select(PrintArgument)) + ")";
-                case IndexNode i:
-                    return Print(i.Left) + "[" + string.Join(", ", i.Items.Select(PrintArgument)) +
-                           "]";
+                case MemberAccessNode or CallNode or IndexNode or BinaryNode:
+                    return PrintChain(node);
                 case UnaryNode u:
                     return UnaryOperator(u) + Print(u.Operand);
-                case BinaryNode b:
-                {
-                    var s = Print(b.Left) + " " + b.Operator + " " + Print(b.Right);
-                    return IsParenthesized(b) ? "(" + s + ")" : s;
-                }
 
                 case NumberNode:
                     return Source(node);
@@ -156,6 +146,63 @@ public static class ExpressionPrinter
             }
 
             return "<Expression>";
+        }
+
+        /// <summary>
+        /// Left-deep chains (<c>a.b(c)[d]</c>, <c>a + b + c</c>) printed iteratively: <c>Print(left) + suffix</c> for each link,
+        /// with a parenthesized binary's <c>(</c> emitted before its left operand.
+        /// </summary>
+        private string PrintChain(Node node)
+        {
+            var spine = new List<(Node Node, bool Parens)>();
+            Node? cur = node;
+            while (cur is MemberAccessNode or CallNode or IndexNode or BinaryNode)
+            {
+                spine.Add((cur, cur is BinaryNode bn && IsParenthesized(bn)));
+                cur = cur switch
+                {
+                    MemberAccessNode m => m.Left,
+                    CallNode c => c.Left,
+                    IndexNode i => i.Left,
+                    _ => ((BinaryNode)cur).Left,
+                };
+            }
+
+            var sb = new StringBuilder();
+            foreach (var (_, parens) in spine)
+            {
+                if (parens)
+                {
+                    sb.Append('(');
+                }
+            }
+
+            sb.Append(cur is null ? "<Expression>" : Print(cur));
+            for (var k = spine.Count - 1; k >= 0; k--)
+            {
+                switch (spine[k].Node)
+                {
+                    case MemberAccessNode m:
+                        sb.Append('.').Append(m.Member.Value);
+                        break;
+                    case CallNode c:
+                        sb.Append('(').AppendJoin(", ", c.Arguments.Select(PrintArgument)).Append(')');
+                        break;
+                    case IndexNode i:
+                        sb.Append('[').AppendJoin(", ", i.Items.Select(PrintArgument)).Append(']');
+                        break;
+                    case BinaryNode b:
+                        sb.Append(' ').Append(b.Operator).Append(' ').Append(Print(b.Right));
+                        if (spine[k].Parens)
+                        {
+                            sb.Append(')');
+                        }
+
+                        break;
+                }
+            }
+
+            return sb.ToString();
         }
 
         private bool IsParenthesized(BinaryNode b)

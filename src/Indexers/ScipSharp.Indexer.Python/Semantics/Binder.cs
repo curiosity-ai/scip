@@ -37,6 +37,27 @@ public sealed class Symbol(string name)
     public string Name { get; } = name;
 
     public List<Declaration> Declarations { get; } = [];
+
+    private Declaration[] _nonMember = [];
+    private int _nonMemberCount;
+
+    /// <summary>
+    /// The declarations that are not <c>self.x</c> members, cached: name lookups ask for them on every reference, which is
+    /// quadratic for a variable assigned thousands of times. Declarations are only ever appended, so the count detects changes.
+    /// </summary>
+    public Declaration[] NonMemberDeclarations
+    {
+        get
+        {
+            if (_nonMemberCount != Declarations.Count)
+            {
+                _nonMember = Declarations.Where(d => d.MemberOwner is null).ToArray();
+                _nonMemberCount = Declarations.Count;
+            }
+
+            return _nonMember;
+        }
+    }
 }
 
 public enum ScopeKind { Module, Class, Function, Lambda, Comprehension }
@@ -401,62 +422,112 @@ public sealed class Binder(SourceModule module)
             case NameNode or NumberNode or ConstantNode:
                 return;
             default:
-                foreach (var child in node.Children())
-                {
-                    Visit(child, scope);
-                }
-
+                VisitChildren(node, scope);
                 return;
         }
     }
 
-    private void BindPattern(Node pattern, Scope scope)
+    /// <summary>
+    /// The default case of <see cref="Visit"/>: plain nodes (expressions, suites, if/while...) only visit their children, so
+    /// they are expanded with an explicit stack in the same pre-order. Long chains (<c>a + b + ...</c>, <c>a.b().c</c>,
+    /// elif) then do not recurse once per link.
+    /// </summary>
+    private void VisitChildren(Node node, Scope scope)
     {
-        switch (pattern)
+        var stack = new Stack<Node>();
+        PushChildren(stack, node);
+        while (stack.Count > 0)
         {
-            case NameNode n:
-                if (n.Value != "_")
-                {
-                    Add(scope, n.Value, new Declaration { Kind = DeclKind.Variable, Node = n, Module = module });
-                }
+            var n = stack.Pop();
+            if (IsPlain(n))
+            {
+                PushChildren(stack, n);
+            }
+            else
+            {
+                Visit(n, scope);
+            }
+        }
+    }
 
-                break;
-            case CallNode c:
-                foreach (var a in c.Arguments)
-                {
-                    BindPattern(a.Value, scope);
-                }
+    private readonly List<Node> _children = [];
 
-                break;
-            case BinaryNode b:
-                BindPattern(b.Left, scope);
-                BindPattern(b.Right, scope);
-                break;
-            case SequenceNode s:
-                foreach (var i in s.Items)
-                {
-                    BindPattern(i, scope);
-                }
+    private void PushChildren(Stack<Node> stack, Node node)
+    {
+        _children.Clear();
+        foreach (var child in node.Children())
+        {
+            if (child is not null)
+            {
+                _children.Add(child);
+            }
+        }
 
-                break;
-            case WrapperNode { Expression: { } e }:
-                BindPattern(e, scope);
-                break;
-            case DictionaryNode d:
-                foreach (var e in d.Entries)
-                {
-                    switch (e)
+        // pushed in reverse so the first child is popped first
+        for (var i = _children.Count - 1; i >= 0; i--)
+        {
+            stack.Push(_children[i]);
+        }
+    }
+
+    /// <summary>True for the nodes <see cref="Visit"/> handles in its default case (keep in sync with its switch).</summary>
+    private static bool IsPlain(Node node) => node is not (FunctionNode or LambdaNode or ClassNode or ComprehensionNode
+        or AssignmentNode or AugAssignmentNode or TypeAnnotationNode or ForNode or WithItemNode or ExceptNode
+        or AssignmentExpressionNode or GlobalNode or ImportAsNode or ImportFromNode or CaseNode);
+
+    private void BindPattern(Node root, Scope scope)
+    {
+        // Iterative (an or-pattern `1 | 2 | ...` is a left-deep chain); children are pushed in reverse to keep the order.
+        var stack = new Stack<Node>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            switch (stack.Pop())
+            {
+                case NameNode n:
+                    if (n.Value != "_")
                     {
-                        case DictKeyEntryNode k:
-                            BindPattern(k.Value, scope);
-                            break;
-                        case DictExpandEntryNode x:
-                            BindPattern(x.Expression, scope);
-                            break;
+                        Add(scope, n.Value, new Declaration { Kind = DeclKind.Variable, Node = n, Module = module });
                     }
-                }
 
-                break;
+                    break;
+                case CallNode c:
+                    for (var i = c.Arguments.Count - 1; i >= 0; i--)
+                    {
+                        stack.Push(c.Arguments[i].Value);
+                    }
+
+                    break;
+                case BinaryNode b:
+                    stack.Push(b.Right);
+                    stack.Push(b.Left);
+                    break;
+                case SequenceNode s:
+                    for (var i = s.Items.Count - 1; i >= 0; i--)
+                    {
+                        stack.Push(s.Items[i]);
+                    }
+
+                    break;
+                case WrapperNode { Expression: { } e }:
+                    stack.Push(e);
+                    break;
+                case DictionaryNode d:
+                    for (var i = d.Entries.Count - 1; i >= 0; i--)
+                    {
+                        switch (d.Entries[i])
+                        {
+                            case DictKeyEntryNode k:
+                                stack.Push(k.Value);
+                                break;
+                            case DictExpandEntryNode x:
+                                stack.Push(x.Expression);
+                                break;
+                        }
+                    }
+
+                    break;
+            }
         }
     }
 

@@ -70,6 +70,7 @@ public sealed class PhpProjectIndexer
                 continue;
             }
 
+            types.BeginFile();
             var indexer = new DocIndexer(composer, namer, types, parsed.Source);
             try
             {

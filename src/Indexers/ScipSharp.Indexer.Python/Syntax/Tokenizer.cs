@@ -188,7 +188,9 @@ public sealed class Tokenizer
     {
         var start = _pos;
         var c = _s[_pos];
-        if (IsIdStart(c))
+        // A character that may start but not continue a name (`²`, emoji surrogates, U+200B) would lex as an empty name
+        // without advancing; it falls through to the single-character (error) token below instead.
+        if (IsIdStart(c) && IsIdPart(c))
         {
             while (_pos < _end && IsIdPart(_s[_pos]))
             {
@@ -257,6 +259,13 @@ public sealed class Tokenizer
         }
 
         _pos++;
+        if (char.IsHighSurrogate(c) && _pos < _end && char.IsLowSurrogate(_s[_pos]))
+        {
+            _pos++;
+            _tokens.Add(new Token(TokenKind.Op, start, _pos, _s[start.._pos]));
+            return;
+        }
+
         if (c is '(' or '[' or '{')
         {
             _depth++;
