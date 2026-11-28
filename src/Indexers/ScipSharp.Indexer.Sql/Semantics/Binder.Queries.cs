@@ -18,6 +18,12 @@ internal sealed partial class Binder
 
     private Shape BindQuery(Query q, Scope parent, AliasDefiner? definer)
     {
+        EnsureStack();
+        if (q is SetOpQuery top)
+        {
+            return BindSetOps(top, parent, definer);
+        }
+
         var scope = new Scope(parent);
         BindWith(q.With, scope, q.Recursive);
         Shape shape;
@@ -27,13 +33,6 @@ internal sealed partial class Binder
             case SelectQuery s:
                 shape = BindSelect(s, scope, definer ?? LocalAlias);
                 inner = scope;
-                break;
-            case SetOpQuery so:
-                shape = BindQuery(so.Left, scope, definer);
-                var right = BindQuery(so.Right, scope, null);
-                shape.Opaque &= right.Opaque || shape.Columns.Count == 0;
-                inner = new Scope(scope);
-                inner.SelectAliases.AddRange(shape.Columns.Where(c => c.Symbol is not null));
                 break;
             case ValuesQuery v:
                 BindExprs(v.Rows, scope);
@@ -46,6 +45,41 @@ internal sealed partial class Binder
 
         BindExprs(q.OrderBy, inner);
         BindExprs(q.Tail, inner);
+        return shape;
+    }
+
+    /// <summary>
+    /// Binds a set-operation chain. The parser builds <c>a UNION b UNION c ...</c> left-deep, so the left spine is walked
+    /// iteratively (recursion overflowed the stack on long chains); the bind order is that of the recursive walk.
+    /// </summary>
+    private Shape BindSetOps(SetOpQuery top, Scope parent, AliasDefiner? definer)
+    {
+        var spine = new List<(SetOpQuery Op, Scope Scope)>();
+        var scope = parent;
+        Query q = top;
+        while (q is SetOpQuery so)
+        {
+            // A level without WITH adds nothing to its scope: share the enclosing one so that long chains do not build
+            // equally long scope chains (every name lookup walks them).
+            var levelScope = spine.Count == 0 || so.With.Count > 0 ? new Scope(scope) : scope;
+            BindWith(so.With, levelScope, so.Recursive);
+            spine.Add((so, levelScope));
+            scope = levelScope;
+            q = so.Left;
+        }
+
+        var shape = BindQuery(q, scope, definer);
+        for (var i = spine.Count - 1; i >= 0; i--)
+        {
+            var (so, levelScope) = spine[i];
+            var right = BindQuery(so.Right, levelScope, null);
+            shape.Opaque &= right.Opaque || shape.Columns.Count == 0;
+            var inner = new Scope(levelScope);
+            inner.SelectAliases.AddRange(shape.Columns.Where(c => c.Symbol is not null));
+            BindExprs(so.OrderBy, inner);
+            BindExprs(so.Tail, inner);
+        }
+
         return shape;
     }
 
@@ -266,6 +300,37 @@ internal sealed partial class Binder
 
     private void AddSource(TableRef r, Scope scope)
     {
+        EnsureStack();
+        if (r is JoinRef)
+        {
+            // Join chains are left-deep (a JOIN b JOIN c ...): walk the left spine iteratively, innermost join first.
+            var joins = new Stack<JoinRef>();
+            var leftmost = r;
+            while (leftmost is JoinRef jr)
+            {
+                joins.Push(jr);
+                leftmost = jr.Left;
+            }
+
+            AddSource(leftmost, scope);
+            while (joins.TryPop(out var j))
+            {
+                AddSource(j.Right, scope);
+                BindExpr(j.On, scope);
+                if (j.Using is { } usingCols)
+                {
+                    foreach (var id in usingCols)
+                    {
+                        ResolveUnqualified(id, scope);
+                    }
+                }
+
+                BindExprs(j.Misc, scope);
+            }
+
+            return;
+        }
+
         switch (r)
         {
             case NamedTableRef n:
@@ -365,19 +430,6 @@ internal sealed partial class Binder
                     break;
                 }
 
-            case JoinRef j:
-                AddSource(j.Left, scope);
-                AddSource(j.Right, scope);
-                BindExpr(j.On, scope);
-                if (j.Using is { } usingCols)
-                {
-                    foreach (var id in usingCols)
-                    {
-                        ResolveUnqualified(id, scope);
-                    }
-                }
-
-                break;
         }
 
         BindExprs(r.Misc, scope);

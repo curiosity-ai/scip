@@ -74,9 +74,25 @@ internal sealed class StructureParser
     private DataItem? _lastItem;
     private Procedure? _section;
 
+    /// <summary>
+    /// <c>_nextPeriod[i]</c> / <c>_nextGlobal[i]</c>: index of the first period / <c>GLOBAL</c> word at or after i (or the
+    /// token count). Precomputed so that runs of entries missing their periods do not rescan to the end of the file.
+    /// </summary>
+    private readonly int[] _nextPeriod;
+    private readonly int[] _nextGlobal;
+
     private StructureParser(List<Token> tokens, int fileId, bool standalone)
     {
         _t = tokens;
+        _nextPeriod = new int[tokens.Count + 1];
+        _nextGlobal = new int[tokens.Count + 1];
+        _nextPeriod[tokens.Count] = _nextGlobal[tokens.Count] = tokens.Count;
+        for (var k = tokens.Count - 1; k >= 0; k--)
+        {
+            _nextPeriod[k] = tokens[k].Kind == TokenKind.Period ? k : _nextPeriod[k + 1];
+            _nextGlobal[k] = tokens[k].Is("GLOBAL") ? k : _nextGlobal[k + 1];
+        }
+
         _r = new ParsedSource(tokens);
         _fileId = fileId;
         if (standalone)
@@ -113,16 +129,10 @@ internal sealed class StructureParser
         }
     }
 
-    private int PeriodAfter(int i)
-    {
-        var k = i;
-        while (k < _t.Count && _t[k].Kind != TokenKind.Period)
-        {
-            k++;
-        }
+    private int PeriodAfter(int i) => (uint)i < (uint)_t.Count ? _nextPeriod[i] : i;
 
-        return k;
-    }
+    /// <summary>True when a <c>GLOBAL</c> word occurs in tokens <c>[from, to)</c>.</summary>
+    private bool HasGlobal(int from, int to) => (uint)from < (uint)_t.Count && _nextGlobal[from] < to;
 
     private int SkipPeriod(int i) => i < _t.Count && _t[i].Kind == TokenKind.Period ? i + 1 : i;
 
@@ -448,10 +458,7 @@ internal sealed class StructureParser
                     _r.RefAt[j] = file;
                 }
 
-                for (var k = j; k < end; k++)
-                {
-                    file.IsGlobal |= _t[k].Is("GLOBAL");
-                }
+                file.IsGlobal |= HasGlobal(j, end);
 
                 Mark(i, j + 1, Region.Environment);
                 return j + 1;
@@ -524,10 +531,7 @@ internal sealed class StructureParser
                 _r.RefAt[i + 1] = file;
             }
 
-            for (var k = i; k < end; k++)
-            {
-                file.IsGlobal |= _t[k].Is("GLOBAL");
-            }
+            file.IsGlobal |= HasGlobal(i, end);
 
             _fd = file;
             _levels.Clear();

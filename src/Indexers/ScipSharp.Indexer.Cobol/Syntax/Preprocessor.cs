@@ -34,9 +34,19 @@ internal sealed record ReplacingPair(IReadOnlyList<Token> Left, IReadOnlyList<To
 /// LEADING/TRAILING) and then <c>REPLACE ... . / REPLACE OFF.</c> to the expanded text. Drops <c>EJECT</c>,
 /// <c>SKIPn</c> and <c>TITLE</c>.
 /// </summary>
-internal sealed class Preprocessor(Func<int, IReadOnlyList<Token>> lexFile, Func<string, string?, int, int> resolve, Action<string>? warn = null)
+internal sealed class Preprocessor(
+    Func<int, IReadOnlyList<Token>> lexFile, Func<string, string?, int, int> resolve, Action<string>? warn = null, int maxExpandedTokens = Preprocessor.MaxExpandedTokens)
 {
     private const int MaxDepth = 32;
+
+    /// <summary>
+    /// Upper bound on the copybook tokens expanded into one compilation unit. The cycle guard only looks at the current
+    /// COPY path, so a diamond-shaped graph (each copybook copying the next one twice) legitimately expands to 2^depth
+    /// copies; past this budget further COPY statements are left unexpanded (with a warning) instead of hanging.
+    /// </summary>
+    internal const int MaxExpandedTokens = 1_000_000;
+
+    private int _expandedTokens;
 
     /// <summary>Copybook names supplied by the DB2 precompiler; not finding them is normal.</summary>
     private static readonly HashSet<string> SystemIncludes = new(StringComparer.OrdinalIgnoreCase) { "SQLCA", "SQLDA", "SQLIMSCA" };
@@ -45,6 +55,7 @@ internal sealed class Preprocessor(Func<int, IReadOnlyList<Token>> lexFile, Func
     {
         var copies = new List<CopyDirective>();
         var included = new HashSet<int>();
+        _expandedTokens = 0;
         var expanded = Expand(tokens, fileId, -1, 0, [fileId], copies, included);
         return new PreprocessedSource(ApplyReplaceStatements(expanded), copies, included);
     }
@@ -270,8 +281,16 @@ internal sealed class Preprocessor(Func<int, IReadOnlyList<Token>> lexFile, Func
             return;
         }
 
+        var source = lexFile(target);
+        if (_expandedTokens + source.Count > maxExpandedTokens)
+        {
+            warn?.Invoke($"COPY of {name.Value} ignored: more than {maxExpandedTokens} copybook tokens expanded");
+            return;
+        }
+
+        _expandedTokens += source.Count;
         included.Add(target);
-        var copyTokens = lexFile(target).Select(t => t with { Origin = target }).ToList();
+        var copyTokens = source.Select(t => t with { Origin = target }).ToList();
         if (pairs.Count > 0)
         {
             copyTokens = ApplyReplacing(copyTokens, pairs, target);

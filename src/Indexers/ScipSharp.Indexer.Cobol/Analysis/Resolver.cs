@@ -478,27 +478,23 @@ internal sealed class Resolver
     {
         var name = _t[i].Upper;
         DataItem? target = null;
-        if (owner.Level == 66)
+        if (unit.ItemsByName.TryGetValue(name, out var named))
         {
-            // RENAMES: an item of the immediately preceding record.
-            var idx = unit.Items.IndexOf(owner);
-            for (var k = idx - 1; k >= 0 && target is null; k--)
+            // The nearest preceding candidate: ItemsByName lists are in source order. (Scanning unit.Items / the sibling
+            // list from IndexOf(owner) was quadratic in programs with thousands of REDEFINES / RENAMES.)
+            for (var k = named.Count - 1; k >= 0 && target is null; k--)
             {
-                if (unit.Items[k].Name == name && unit.Items[k].IsNamed)
+                var c = named[k];
+                if (c.StartIndex >= owner.StartIndex)
                 {
-                    target = unit.Items[k];
+                    continue;
                 }
-            }
-        }
-        else
-        {
-            var siblings = owner.Parent?.Children ?? unit.Items.Where(x => x.Parent is null && x.Level == owner.Level).ToList();
-            var at = siblings.IndexOf(owner);
-            for (var k = (at < 0 ? siblings.Count : at) - 1; k >= 0 && target is null; k--)
-            {
-                if (siblings[k].IsNamed && siblings[k].Name == name)
+
+                // RENAMES: an item of the immediately preceding record; REDEFINES: a preceding entry of the same record
+                // (or a preceding record of the same level).
+                if (owner.Level == 66 || (owner.Parent is { } parent ? c.Parent == parent : c.Parent is null && c.Level == owner.Level))
                 {
-                    target = siblings[k];
+                    target = c;
                 }
             }
         }

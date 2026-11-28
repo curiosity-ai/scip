@@ -74,6 +74,7 @@ public sealed partial class SqlParser
 
     private Query ParseQuery()
     {
+        EnsureStack();
         var ctes = new List<Cte>();
         var recursive = Is("WITH") && ParseWithClause(ctes);
         var q = ParseSetOps();
@@ -650,6 +651,7 @@ public sealed partial class SqlParser
 
     private TableRef? ParseTablePrimary()
     {
+        EnsureStack();
         var lateral = Accept("LATERAL");
         Accept("ONLY");
         TableRef? r;

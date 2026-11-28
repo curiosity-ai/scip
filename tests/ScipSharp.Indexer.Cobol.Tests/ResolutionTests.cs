@@ -274,4 +274,58 @@ public class ResolutionTests
         await Assert.That(doc.SymbolsOnLine(IndexQueries.LineOf(src, "add 1"))).IsEquivalentTo(new[] { "MIXED/TOTAL-AMOUNT." });
         await Assert.That(doc.Symbols.Single(s => s.Symbol.EndsWith("TOTAL-AMOUNT.", StringComparison.Ordinal)).DisplayName).IsEqualTo("Total-Amount");
     }
+
+    private const string ClauseOperands = """
+        IDENTIFICATION DIVISION.
+        PROGRAM-ID. R.
+        DATA DIVISION.
+        WORKING-STORAGE SECTION.
+        01  BASE PIC X(4).
+        01  OTHER-REC.
+            05 BASE PIC X(4).
+            05 ALT-1 REDEFINES BASE PIC 9(4).
+        01  ALT-2 REDEFINES BASE PIC 9(4).
+        66  RN RENAMES ALT-1.
+        PROCEDURE DIVISION.
+            GOBACK.
+        """;
+
+    [Test]
+    public async Task RedefinesAndRenamesResolveToTheNearestPrecedingCandidate()
+    {
+        using var p = new TempProject(new() { ["R.cbl"] = TempProject.Fixed(ClauseOperands) });
+        var doc = p.Index().Doc("R.cbl");
+        // Inside a group: the sibling; at level 01: the preceding 01 record (not the field of OTHER-REC).
+        await Assert.That(doc.SymbolsOnLine(IndexQueries.LineOf(ClauseOperands, "ALT-1 REDEFINES"))).IsEquivalentTo(new[] { "R/OTHER-REC.BASE." });
+        await Assert.That(doc.SymbolsOnLine(IndexQueries.LineOf(ClauseOperands, "ALT-2 REDEFINES"))).IsEquivalentTo(new[] { "R/BASE." });
+        await Assert.That(doc.SymbolsOnLine(IndexQueries.LineOf(ClauseOperands, "RENAMES"))).IsEquivalentTo(new[] { "R/OTHER-REC.ALT-1." });
+    }
+
+    [Test]
+    public async Task ThousandsOfRedefinesAndUnterminatedEntriesStayLinear()
+    {
+        // Each REDEFINES used to rescan every item of the program, and each SELECT / FD missing its period rescanned
+        // to the end of the file: ~25 s for these 16k entries.
+        const int n = 16_000;
+        var text = new System.Text.StringBuilder();
+        text.Append("IDENTIFICATION DIVISION.\nPROGRAM-ID. BIG.\nENVIRONMENT DIVISION.\nINPUT-OUTPUT SECTION.\nFILE-CONTROL.\n");
+        for (var i = 0; i < n; i++)
+        {
+            text.Append($"    SELECT F{i} ASSIGN TO X{i}\n");
+        }
+
+        text.Append("DATA DIVISION.\nWORKING-STORAGE SECTION.\n01 BASE PIC X(10).\n");
+        for (var i = 0; i < n; i++)
+        {
+            text.Append($"01 R{i} REDEFINES BASE PIC X(10).\n");
+        }
+
+        text.Append("PROCEDURE DIVISION.\n    GOBACK.\n");
+        var source = text.ToString();
+        using var p = new TempProject(new() { ["BIG.cbl"] = TempProject.Fixed(source) });
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var doc = p.Index().Doc("BIG.cbl");
+        await Assert.That(stopwatch.Elapsed).IsLessThan(TimeSpan.FromSeconds(10));
+        await Assert.That(doc.SymbolsOnLine(IndexQueries.LineOf(source, $"R{n - 1} REDEFINES"))).IsEquivalentTo(new[] { "BIG/BASE." });
+    }
 }
